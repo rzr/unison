@@ -1,0 +1,20 @@
+Document: unison-manual
+Title: Unison Installation and Usage Manual
+Author: Benjamin Pierce <bcpierce@cis.upenn.edu>
+Abstract: Unison is a file-synchronization tool for Unix and
+ Windows. It allows two replicas of a collection of files and
+ directories to be stored on different hosts (or different
+ disks on the same host), modified separately, and then brought
+ up to date by propagating the changes in each replica to the
+ other. This manual describes how to install and use Unison.
+Section: Apps/Tools
+
+Format: postscript
+Files: /usr/share/doc/unison/unison-manual.ps.gz
+
+Format: text
+Files: /usr/share/doc/unison/unison-manual.text.gz
+
+Format: HTML
+Index: /usr/share/doc/unison/unison-manual.html
+Files: /usr/share/doc/unison/unison-manual.html

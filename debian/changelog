@@ -1,0 +1,109 @@
+unison (2.9.1-2) unstable; urgency=low
+
+  * Version to fix maintainer fields
+
+ -- Sylvain LE GALL <sylvain.le-gall@polytechnique.org>  Mon,  7 Jun 2004 22:58:50 +0200
+
+unison (2.9.1-1) unstable; urgency=medium
+
+  * New upstream version.				(closes: #142748)
+  * Medium urgency to make woody release. Rationale:
+     - upstream versions of unison are rarely, if ever, broken, and if 
+       they are, are fixed within days. this release has had a week or
+       two to sweat it out.
+     - the previous version had problems on windows. seeing as
+       cross-platform compatibility is a major feature of unison, this 
+       could cause long-term aggrivation for people hoping to sync their
+       woody box with their windows box.
+     - unison's protocol is version specific, and if I waited until sid 
+       released to upload this new version, I'd have to provide an old
+       version in sid sooner than I'd have liked.
+     - it'd really annoy me if the version in woody wasn't the latest 
+       when it released. =)
+
+ -- Robert McQueen <robot101@debian.org>  Wed, 24 Apr 2002 19:05:08 +0100
+
+unison (2.8.1-2) unstable; urgency=low
+
+  * Moved to main.
+
+ -- Robert McQueen <robot101@debian.org>  Sat, 30 Mar 2002 04:13:46 +0000
+
+unison (2.8.1-1) unstable; urgency=low
+
+  * New upstream version.				(closes: #138576)
+  * Added menu entry for unison-gtk.			(closes: #133039)
+  * Changed 'lablgtk, libgtk1.2-dev' build dep to 'liblablgtk-ocaml-dev'.
+  * Updated manpage for new/removed options.
+
+ -- Robert McQueen <robot101@debian.org>  Fri, 29 Mar 2002 19:22:33 +0000
+
+unison (2.7.7-1) unstable; urgency=medium
+
+  * New upstream version. Fixes bugs in connecting and the client
+     startup sequence.
+
+ -- Robert McQueen <robot101@debian.org>  Sun, 23 Sep 2001 19:27:27 +0100
+
+unison (2.7.1-2) unstable; urgency=low
+
+  * Added libgtk1.2-dev build dep, but this is really a bug in lablgtk.
+  * Optimised debian/rules to only call shell once to set a variable, and
+     use that instead of an elaborate (and fallible) if construct.
+
+ -- Robert McQueen <robot101@debian.org>  Thu, 30 Aug 2001 12:57:44 +0100
+
+unison (2.7.1-1) unstable; urgency=low
+
+  * New upstream version.				(closes: #106983)
+  * Moved package to non-US/main - it recommends ssh.	(closes: #109406)
+  * Added the GTK interface version in a seperate unison-gtk package.
+							(closes: #105911)
+  * Added symlinks from unison-gtk's documentation and manpage to
+     unison's.
+  * Amended the manpage to detail the unison-gtk binary and changed
+     command line options.
+  * Install 'NEWS' file as upstream changelog, which it is, and remove
+     some extraneous docs.
+
+ -- Robert McQueen <robot101@debian.org>  Thu, 30 Aug 2001 01:21:14 +0100
+
+unison (2.6.11-2) unstable; urgency=low
+
+  * Added newline before descriptions are returned.	(closes: #86621)
+  * Fixed gratuitous debhelperism - version 3 is not required.
+							(closes: #97563)
+
+ -- Robert McQueen <robot101@debian.org>  Tue, 15 May 2001 20:36:43 +0100
+
+unison (2.6.11-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Robert McQueen <robot101@debian.org>  Mon, 30 Apr 2001 19:06:03 +0100
+
+unison (2.6.1-2) unstable; urgency=low
+
+  * Fixed to take account of no native (ocamlopt) compiler on some archs.
+  * Minor debian/rules cleanups.
+
+ -- Robert McQueen <robot101@debian.org>  Thu, 28 Dec 2000 18:23:55 +0000
+
+unison (2.6.1-1) unstable; urgency=low
+
+  * Package adopted by new Debian maintainer. (closes: #75968)
+  * New upstream version. (closes: #65601)
+
+ -- Robert McQueen <robot101@debian.org>  Fri, 10 Nov 2000 23:12:02 +0000
+
+unison (1.180-2) unstable; urgency=low
+
+  * Changed the architecture field from all to any.
+
+ -- Sven LUTHER <luther@debian.org>  Mon, 10 Jan 2000 19:50:16 +0100
+
+unison (1.180-1) unstable; urgency=low
+
+  * Initial release.
+
+ -- Sven LUTHER <luther@debian.org>  Tue, 21 Dec 1999 12:15:49 +0100

@@ -1,0 +1,3 @@
+?package(unison-gtk):needs="x11" section="Apps/Net" \
+ title="Unison (GTK)" command="/usr/bin/unison-gtk" \
+ longtitle="Unison file synchronizer (GTK interface)"

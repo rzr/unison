@@ -1,0 +1,19 @@
+Documentation for Unison is in the manual, which is available
+in HTML, PostScript and text formats in /usr/share/doc/unison.
+The same documentation can also be accessed over the command
+line, and you can list the available topics by executing
+'unison -doc topics'. Of particular interest for new users
+is the tutorial at 'unison -doc tutorial'.
+
+The most common usage of this package is to use ssh to connect
+to the remote host via to synchronise files. The 'Install'
+section of the manual details how to set up ssh with a key
+file and authentication agent to avoid repeatedly entering
+passwords or pass-phrases. Assuming your key file remains
+private, this is a more secure authentication method than
+passwords.
+
+The GTK+ interface for Unison is now available separately in
+the unison-gtk package.
+
+ -- Robert McQueen <robot101@debian.org>  Wed, 29 Aug 2001 21:18:29 +0100
