@@ -1,0 +1,362 @@
+###################################################################
+#         Makefile rules for compiling ocaml programs              #
+####################################################################
+
+####################################################################
+### Project infos
+
+# Project name
+# $Format: "NAME=$Project$"$
+NAME=unison
+
+# When this changes, be sure to change the similar definitions in 
+#    doc/local.tex 
+#    src/util.ml
+VERSIONPREFIX=2.
+
+# $Format: "MAJORVERSION=$(VERSIONPREFIX)$ProjectMajorVersion$"$
+MAJORVERSION=$(VERSIONPREFIX)9
+
+# $Format: "VERSION=$(VERSIONPREFIX)$ProjectVersion$"$
+VERSION=$(VERSIONPREFIX)9.1
+
+####################################################################
+### Try to automatically guess OS
+
+ifeq (${OSCOMP},cygwingnuc) # Define this if compiling with Cygwin GNU C
+  OSARCH=win32gnuc
+  ETAGS=c:/emacs/bin/etags
+  buildexecutable:: win32rc/unison.res.lib   
+else
+# Win32 system
+ifeq (${OSTYPE},cygwin32) # Cygwin Beta 19
+  OSARCH=win32
+  ETAGS=c:/emacs/bin/etags
+else
+ifeq (${OSTYPE},cygwin)	  # Cygwin Beta 20
+  OSARCH=win32
+  ETAGS=c:/emacs/bin/etags
+else
+
+# Unix system
+ifeq ($(shell hostname),saul.cis.upenn.edu)
+  OSARCH=solaris
+else
+  OSARCH=linux
+endif
+  ETAGS=etags
+endif
+endif
+endif
+
+####################################################################
+### Default parameters
+
+INCLFLAGS=-I lwt -I ubase
+CAMLFLAGS+=$(INCLFLAGS)
+
+ifeq ($(OSARCH),win32)
+  # Win32 system
+  EXEC_EXT=.exe
+  OBJ_EXT=.obj
+  CWD=.
+  CAMLFLAGS+=-noautolink
+  CLIBS+=-cclib win32rc/unison.res \
+         -cclib -lunix -cclib -lstr
+#  CLIBS+=-cclib -lunix -cclib -lstr  # If compiling with gcc
+  STATICLIBS+=-cclib win32rc/unison.res \
+              -cclib -lunix -cclib -lstr
+  buildexecutable:: 
+	@echo Building for Windows
+else
+  # Unix system, or Cygwin with GNU C compiler
+  OBJ_EXT=.o
+  CWD=$(shell pwd)
+  ifeq ($(OSARCH),win32gnuc)
+    EXEC_EXT=.exe
+    CLIBS+=-cclib win32rc/unison.res.lib
+    STATIC=false                      # Cygwin is not MinGW :-(
+    buildexecutable::
+	@echo Building for Windows with Cygwin GNU C
+  else
+    EXEC_EXT=
+    buildexecutable:: 
+	@echo Building for Unix
+  endif
+endif
+
+buildexecutable:: 
+	@echo NATIVE = $(NATIVE)
+	@echo THREADS = $(THREADS)
+	@echo STATIC = $(STATIC)
+	@echo OSTYPE = $(OSTYPE)
+	@echo OSARCH = $(OSARCH)
+
+####################################################################
+### Unison objects and libraries
+
+buildexecutable:: $(NAME)$(EXEC_EXT)
+
+# OCaml objects for the bytecode version
+# File extensions will be substituted for the native code version
+OCAMLOBJS += \
+          ubase/safelist.cmo ubase/uprintf.cmo \
+          ubase/util.cmo ubase/rx.cmo ubase/uarg.cmo \
+          ubase/prefs.cmo ubase/trace.cmo \
+          \
+          lwt/pqueue.cmo lwt/lwt.cmo lwt/lwt_util.cmo lwt/lwt_unix.cmo \
+          \
+          case.cmo pred.cmo uutil.cmo \
+          fileutil.cmo name.cmo path.cmo fspath.cmo \
+          props.cmo fileinfo.cmo os.cmo lock.cmo uri.cmo common.cmo \
+          tree.cmo checksum.cmo \
+          transfer.cmo xferhint.cmo remote.cmo globals.cmo update.cmo  \
+	  files.cmo sortri.cmo recon.cmo transport.cmo \
+          strings.cmo uicommon.cmo uitext.cmo main.cmo
+
+# OCaml libraries for the bytecode version
+# File extensions will be substituted for the native code version
+OCAMLLIBS+=unix.cma str.cma
+
+########################################################################
+### User Interface setup
+
+## Text UI
+ifeq ($(UISTYLE), text)
+  OCAMLOBJS+=linktext.cmo
+endif
+
+## Graphic UI
+
+# Setup the lib directories
+
+# Win32 system : this very Makefile must be used with GNU Make, so that we
+#                expect CygWin Bash to be used.
+# The directory must be provided following one of the model below :
+# - unix, relative      ../../ocaml/lib/labltk
+# - unix, absolute      d:/home/foobar/ocaml/lib/labltk
+# -  dos, relative      ..\\..\\ocaml\\lib\\labltk
+# -  dos, absolute      d:\\home\\foobar\\ocaml\\lib\\labltk
+
+# The OCaml lib dir is used by all versions
+# It is extracted from 'ocamlc -v' and Windows '\' separators are turned
+# to Unix '/' separators, and extraneous control-M's are deleted.
+# Unfortunately there is a literal control-M buried in this, I'd rather
+# get rid of it...
+OCAMLLIBDIR=$(shell ocamlc -v | tail -1 | sed -e 's/.* //g' | sed -e 's/\\/\//g' | sed -e 's///g')
+
+# Standard GUI libraries directories
+STDLIBDIR=/usr/lib
+X11LIBDIR=$(STDLIBDIR)
+GUILIBDIR=$(STDLIBDIR)
+
+# Arch-specific directories 
+ifeq ($(OSARCH), win32)
+  GUILIBDIR=$(OCAMLLIBDIR)/guilib
+endif
+ifeq ($(OSARCH), win32gnuc)
+  GUILIBDIR=$(OCAMLLIBDIR)/lablgtk/cclibs
+endif
+ifeq ($(OSARCH), linux)
+  X11LIBDIR=/usr/X11R6/lib
+endif
+
+# Developer-only directories
+ifeq ($(shell hostname), saul.cis.upenn.edu)
+  GUILIBDIR=/plclub/ocaml-3.00/lib
+endif
+ifeq ($(shell hostname), ambert.cis.upenn.edu)
+  GUILIBDIR=/new/home/gommier/ocaml-3.00/lib
+endif
+ifeq ($(shell hostname), raptor.research.att.com)
+  GUILIBDIR=/usr/common/gtk-1.2.6/lib
+  X11LIBDIR=/usr/lib32
+endif
+
+# Patch to make a Windows GUI version come up with no 
+# console when click-started
+#  ifeq ($(OSARCH), win32)
+#    COBJS+=winmain.c
+#    CFLAGS+=-cclib /subsystem:windows
+#  endif
+
+# Gtk GUI
+ifeq ($(UISTYLE), gtk)
+  CAMLFLAGS+=-I $(OCAMLLIBDIR)/lablgtk
+  OCAMLOBJS+=pixmaps.cmo uigtk.cmo linkgtk.cmo
+  OCAMLLIBS+=lablgtk.cma
+  OCAMLLIBS+=str.cma	
+  ifeq ($(OSARCH), win32)
+    WINSYSLIBS=user32.lib advapi32.lib wsock32.lib gdi32.lib \
+               imm32.lib shell32.lib ole32.lib uuid.lib
+    CLIBS+=-cclib -llablgtk \
+           $(GUILIBDIR)/glib-1.3.lib \
+           $(GUILIBDIR)/gmodule-1.3.lib \
+           $(GUILIBDIR)/gdk-1.3.lib \
+           $(GUILIBDIR)/gtk-1.3.lib \
+           $(WINSYSLIBS)
+    STATICLIBS+=-cclib -llablgtk \
+                $(GUILIBDIR)/static/glib-1.3.lib \
+                $(GUILIBDIR)/static/gmodule-1.3.lib \
+                $(GUILIBDIR)/static/gdk-1.3.lib \
+                $(GUILIBDIR)/static/gtk-1.3.lib \
+                $(WINSYSLIBS)
+  else
+    ifeq ($(OSARCH), win32gnuc)
+      WINSYSLIBS=
+#-cclib user32.lib -cclib advapi32.lib -cclib wsock32.lib \
+#               -cclib gdi32.lib -cclib imm32.lib -cclib shell32.lib \
+#               -cclib ole32.lib -cclib uuid.lib
+      CLIBS+=-cclib -llablgtk \
+           -cclib $(GUILIBDIR)/glib-1.3.lib \
+           -cclib $(GUILIBDIR)/gmodule-1.3.lib \
+           -cclib $(GUILIBDIR)/gdk-1.3.lib \
+           -cclib $(GUILIBDIR)/gtk-1.3.lib \
+           $(WINSYSLIBS)
+      STATICLIBS+=-cclib -llablgtk \
+                -cclib $(GUILIBDIR)/cclibs/glib-1.3.lib \
+                -cclib $(GUILIBDIR)/cclibs/gmodule-1.3.lib \
+                -cclib $(GUILIBDIR)/cclibs/gdk-1.3.lib \
+                -cclib $(GUILIBDIR)/cclibs/gtk-1.3.lib \
+                $(WINSYSLIBS)
+    else
+      ifeq ($(OSARCH), solaris)
+        STATICLIBS+=-cclib -llablgtk \
+                  $(GUILIBDIR)/libgtk.a \
+                  $(GUILIBDIR)/libgdk.a \
+                  $(GUILIBDIR)/libgmodule.a \
+                  $(GUILIBDIR)/libglib.a \
+                  $(X11LIBDIR)/libXext.a \
+                  $(X11LIBDIR)/libX11.a
+      endif
+    endif
+  endif
+endif
+
+####################################################################
+### Static build setup
+
+ifeq ($(STATIC), true)
+  ifeq ($(OSARCH), solaris)
+    CAMLFLAGS+=-noautolink
+    STATICLIBS+=-cclib -lunix -cclib -lstr -cclib -ldl
+    # libcurses is not in a standard place in older Solaris releases.
+    STATICLIBS+=-cclib -R/usr/xpg4/lib
+  endif
+  ifeq ($(OSARCH), linux)
+    STATICLIBS+=-cclib -static
+  endif
+  CLIBS=$(STATICLIBS)
+endif
+
+####################################################################
+### Dependencies
+
+# Include an automatically generated list of dependencies
+include .depend
+
+ifeq ($(shell echo type -t ocamldot | bash), file)
+  OCAMLDOT=true
+endif
+
+# Rebuild dependencies (must be invoked manually)
+.PHONY: depend
+depend::
+	ocamldep $(INCLFLAGS) *.mli *.ml */*.ml */*.mli > .depend
+ifdef OCAMLDOT
+	echo 'digraph G {' > dot.tmp
+	echo '{ rank = same; "Fileinfo"; "Props"; "Fspath"; "Os"; "Path"; }'\
+           >>dot.tmp
+	echo '{ rank = same; "Uitext"; "Uigtk"; }'>>dot.tmp
+	echo '{ rank = same; "Recon"; "Update"; "Transport"; "Files"; }'\
+           >>dot.tmp
+	echo '{ rank = same; "Tree"; "Safelist"; }'>>dot.tmp
+	echo '{ rank = same; "Uarg"; "Prefs"; }'>>dot.tmp
+	ocamldot .depend | tail +2 >> dot.tmp
+	-dot -Tps -o DEPENDENCIES.ps dot.tmp
+endif
+
+####################################################################
+### Compilation boilerplate
+
+ifeq ($(DEBUGGING), false)
+  ifneq ($(OSARCH), win32)
+    # Strip the binary (does not work with MS compiler)
+    CFLAGS+=-cclib -Wl,-s 
+  endif
+endif
+
+ifeq ($(PROFILING), true)
+  OCAMLC=ocamlcp
+else
+  OCAMLC=ocamlc
+endif
+OCAMLOPT=ocamlopt
+
+ifeq ($(NATIVE), true)
+  ## Set up for native code compilation
+
+  CAMLC=$(OCAMLOPT)
+  ifeq ($(PROFILING), true)
+    CAMLFLAGS+=-p
+    CLIBS+=-cclib -ldl
+  endif
+
+  CAMLOBJS=$(subst .cmo,.cmx, $(OCAMLOBJS))
+  CAMLLIBS=$(subst .cma,.cmxa, $(OCAMLLIBS))
+
+else
+  ## Set up for bytecode compilation
+
+  CAMLC=$(OCAMLC)
+  CAMLFLAGS+=-custom
+  ifeq ($(DEBUGGING), true)
+    COMPFLAGS+=-g
+  endif
+
+  CAMLOBJS=$(OCAMLOBJS)
+  CAMLLIBS=$(OCAMLLIBS)
+
+endif
+
+win32rc/unison.res.lib: win32rc/unison.res
+	windres win32rc/unison.res win32rc/unison.res.lib
+
+%.ml: %.mll
+	-$(RM) -f $@
+	ocamllex $<
+
+%.cmi : %.mli
+	@echo "$(CAMLC): $< ---> $@"
+	$(CAMLC) $(CAMLFLAGS) -c $(CWD)/$<
+
+%.cmo: %.ml
+	@echo "$(OCAMLC): $< ---> $@"
+	$(OCAMLC) $(CAMLFLAGS) -c $(CWD)/$<
+
+%.cmx: %.ml
+	@echo "$(OCAMLOPT): $< ---> $@"
+	$(OCAMLOPT) $(CAMLFLAGS) -c $(CWD)/$<
+
+$(NAME)$(EXEC_EXT): $(CAMLOBJS) $(COBJS)
+	@echo Linking $@
+	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $(CLIBS) $^
+
+%$(EXEC_EXT): %.ml
+	$(OCAMLC) -verbose -o $@ $^
+
+######################################################################
+### Misc
+
+clean::
+	-$(RM) -rf *.cmi *.cmo *.cmx *.cma *.cmxa TAGS tags
+	-$(RM) -rf *.o core gmon.out *~ .*~
+	-$(RM) -rf *.obj *.lib *.exp
+	-$(RM) -rf *.tmp *.bak?.tmp .*.bak?.tmp
+
+
+paths:
+	@echo PATH = $(PATH)
+	@echo OCAMLLIBDIR = $(OCAMLLIBDIR)
+	@echo GUILIBDIR = $(GUILIBDIR)
+
