@@ -1,13 +1,15 @@
 #!/usr/bin/make -f
 
-# export DH_VERBOSE=1
-export DH_COMPAT=2
+# In order to use dpatch 
+include /usr/share/dpatch/dpatch.make
+
+PACKAGE=unison
 
 # set $(NATIVE) to true if this arch has an optimising compiler
-NATIVE := $(shell test -x /usr/bin/ocamlopt && echo true || echo false)
+NATIVE := $(shell test -x /usr/bin/ocamlopt -o -x /usr/bin/ocamlopt.opt && echo true || echo false)
 
 build: build-stamp
-build-stamp:
+build-stamp: patch-stamp
 	dh_testdir
 #	if we have the optimising compiler, build natively with debugging because
 #	we can strip it later. if we don't, disable debugging because stripping
@@ -17,9 +19,15 @@ build-stamp:
 	mv unison unison-gtk
 	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) DEBUGGING=$(NATIVE)
 	$(CURDIR)/unison -doc all > $(CURDIR)/unison-manual.txt
+
+#	remove the chrpath of unison-gtk
+	if [ "$(NATIVE)" = "true" ]; then       \
+		/usr/bin/chrpath -d unison-gtk;  \
+	fi
+
 	touch build-stamp
 
-clean:
+clean: unpatch
 	dh_testdir
 	dh_testroot
 	rm -f build-stamp configure-stamp
@@ -40,33 +48,20 @@ install: build
 binary-indep: build install
 
 binary-arch: build install
-#	dh_testversion
 	dh_testdir
 	dh_testroot
-#	dh_installdebconf
 	dh_installdocs
-#	dh_installexamples
 	dh_installmenu
-#	dh_installemacsen
-#	dh_installpam
-#	dh_installinit
-#	dh_installcron
 	dh_installman debian/unison.1
-#	dh_installinfo
-#	dh_undocumented
 	dh_installchangelogs NEWS
-#	dh_link
 #	only strip it if it's native or it breaks
-	set -e;					\
-	if [ -x "/usr/bin/ocamlopt" ]; then	\
+	if [ "$(NATIVE)" = "true" ]; then	\
 		dh_strip;			\
 	fi
 	dh_compress
 	dh_fixperms
-#	dh_suidregister
 #	dh_makeshlibs
 	dh_installdeb
-#	dh_perl
 	dh_shlibdeps
 	dh_gencontrol
 	dh_md5sums
