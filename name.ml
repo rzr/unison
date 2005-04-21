@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/name.ml $ *)
-(* $I2: Last modified by bcpierce on Tue, 22 Jan 2002 08:23:59 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Wed, 17 Apr 2002 12:03:26 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* NOTE: IF YOU CHANGE TYPE "NAME", THE ARCHIVE FORMAT CHANGES;
    INCREMENT "UPDATE.ARCHIVEFORMAT" *)
@@ -27,10 +27,3 @@ let fromString s =
 
 let hash n =
   Hashtbl.hash (if Case.insensitive () then String.lowercase n else n)
-
-module Set =
-  Set.Make(struct
-    type u = t
-    type t = u
-    let compare = compare
-  end)

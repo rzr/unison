@@ -1,18 +1,9 @@
 #######################################################################
 # $I1: Unison file synchronizer: src/Makefile $
-# $I2: Last modified by zheyang on Thu, 11 Apr 2002 00:39:31 -0400 $
-# $I3: Copyright 1999-2002 (see COPYING for details) $
+# $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $
+# $I3: Copyright 1999-2004 (see COPYING for details) $
 #######################################################################
 ## User Settings
-
-# User interface style: 
-#   Legal values are
-#     UISTYLE=text
-#   or
-#     UISTYLE=tk
-#   of
-#     UISTYLE=gtk
-UISTYLE=gtk
 
 # Set NATIVE=false if you are not using the native code compiler (ocamlopt)
 # This is not advised, though: Unison runs much slower when byte-compiled.
@@ -26,6 +17,13 @@ NATIVE=true
 # -with-pthreads option.  (Unison will crash when compiled with THREADS=true
 # if the -with-pthreads configuration option was not used.)
 THREADS=false
+
+# User interface style.  For legal values, see Makefile.OCaml.
+# You probably don't need to set this yourself -- it will be set to
+# an appropriate value automatically, depending on whether the lablgtk
+# library is available.
+#
+# UISTYLE=text
 
 ########################################################################
 ########################################################################
@@ -54,7 +52,7 @@ include Makefile.OCaml
 
 all:: strings.ml buildexecutable
 
-all:: INSTALL 
+all:: INSTALL
 
 INSTALL: $(NAME)$(EXEC_EXT)
 	./$(NAME) -doc install > INSTALL
@@ -98,18 +96,18 @@ setupdemo-old: all
 	echo "Dear friend, I received your letter ..."    > alice.tmp/letter
 	echo "And then the big bad wolf" > bob.tmp/book/page3
 	echo "Title : three little pigs" > alice.tmp/book/page1
-	echo "there was upon a time ..." > alice.tmp/book/page2 
+	echo "there was upon a time ..." > alice.tmp/book/page2
 
-setupdemo: 
+setupdemo:
 	rm -rf a.tmp b.tmp
-	mkdir a.tmp 
-	touch a.tmp/a a.tmp/b a.tmp/c 
+	mkdir a.tmp
+	touch a.tmp/a a.tmp/b a.tmp/c
 	mkdir a.tmp/d
 	touch a.tmp/d/f
 	touch a.tmp/d/g
 	cp -r a.tmp b.tmp
 
-modifydemo: 
+modifydemo:
 	-rm a.tmp/a
 	echo "Hello" > a.tmp/b
 	echo "Hello" > b.tmp/b
@@ -126,7 +124,7 @@ run: all
 	-mkdir a.tmp b.tmp
 	-date > a.tmp/x
 	-date > b.tmp/y
-	./$(NAME) default a.tmp b.tmp 
+	./$(NAME) default a.tmp b.tmp
 
 runbatch: all
 	-mkdir a.tmp b.tmp
@@ -150,13 +148,13 @@ runp: all
 	-echo cat > b.tmp/cat
 	-chmod 765 a.tmp/cat
 	-chmod 700 b.tmp/cat
-	./$(NAME) a.tmp b.tmp 
+	./$(NAME) a.tmp b.tmp
 
 runtext: all
 	-mkdir a.tmp b.tmp
 	-date > a.tmp/x
 	-date > b.tmp/y
-	./$(NAME) -ui text a.tmp b.tmp 
+	./$(NAME) -ui text a.tmp b.tmp
 
 runsort: all
 	-mkdir a.tmp b.tmp
@@ -200,25 +198,141 @@ runlocal: all
 
 rshsaul: all
 	-date > a.tmp/x
-	./$(NAME) a.tmp rsh://saul/$(HOME)/current/unison/src/b.tmp 
+	./$(NAME) a.tmp rsh://saul/$(HOME)/current/unison/src/b.tmp
 
 byte:
 	$(MAKE) all NATIVE=false
 
-runtest: 
+runtest:
 	$(MAKE) all NATIVE=false DEBUG=true
-	./unison test 
+	./unison test
 
-runbare: 
+runbare:
 	$(MAKE) all NATIVE=false DEBUG=true
-	./unison 
+	./unison
 
-runtesttext: 
+runtesttext:
 	$(MAKE) all NATIVE=false DEBUG=true UISTYLE=text
 	./unison test -ui text -batch
 
 runjunk: byte
 	./unison current -debug all
+
+temp:
+	$(MAKE) UISTYLE=text
+	echo "A " > a.tmp/xxx
+	date >> a.tmp/xxx
+	echo "B " > b.tmp/xxx
+	date >> b.tmp/xxx
+	md5 a.tmp/xxx
+	md5 b.tmp/xxx
+	echo m | ./unison test -debug all
+
+testmerge:
+	$(MAKE) all NATIVE=false UISTYLE=text
+	-rm -rf a.tmp b.tmp
+	-rm -rf $(HOME)/.unison/backup/file.txt*
+	mkdir a.tmp b.tmp
+	@echo
+	@echo -----------------------------------------------------------
+	@echo
+	./unison testmerge -ui text -batch
+	echo 1OO >> a.tmp/file.txt
+	echo 2oo >> a.tmp/file.txt
+	echo 3oo >> a.tmp/file.txt
+	echo 4oo >> a.tmp/file.txt
+	echo 5oo >> a.tmp/file.txt
+	echo 6oo >> a.tmp/file.txt
+	echo 7oo >> a.tmp/file.txt
+	echo 8oo >> a.tmp/file.txt
+	echo 9oo >> a.tmp/file.txt
+	echo 0oo >> a.tmp/file.txt
+	echo 1oo >> a.tmp/file.txt
+	echo 2oo >> a.tmp/file.txt
+	echo 3oo >> a.tmp/file.txt
+	echo 4oo >> a.tmp/file.txt
+	echo 5oo >> a.tmp/file.txt
+	echo 6oo >> a.tmp/file.txt
+	echo 5oo >> a.tmp/file.txt
+	echo 6oo >> a.tmp/file.txt
+	echo 7oo >> a.tmp/file.txt
+	echo 8oo >> a.tmp/file.txt
+	echo 9oo >> a.tmp/file.txt
+	echo 0oo >> a.tmp/file.txt
+	echo 1oo >> a.tmp/file.txt
+	echo 2oo >> a.tmp/file.txt
+	echo 3OO >> a.tmp/file.txt
+	echo 4oo >> a.tmp/file.txt
+	./unison testmerge -ui text -batch
+	rm a.tmp/file.txt b.tmp/file.txt
+	echo 1OO >> a.tmp/file.txt
+	echo second >> a.tmp/file.txt
+	echo 3oo >> a.tmp/file.txt
+	echo 4oo >> a.tmp/file.txt
+	echo 5oo >> a.tmp/file.txt
+	echo 6oo >> a.tmp/file.txt
+	echo 7oo >> a.tmp/file.txt
+	echo 8oo >> a.tmp/file.txt
+	echo 9oo >> a.tmp/file.txt
+	echo 0oo >> a.tmp/file.txt
+	echo 1oo >> a.tmp/file.txt
+	echo 2oo >> a.tmp/file.txt
+	echo 3oo >> a.tmp/file.txt
+	echo 4oo >> a.tmp/file.txt
+	echo 5oo >> a.tmp/file.txt
+	echo 6oo >> a.tmp/file.txt
+	echo 5oo >> a.tmp/file.txt
+	echo 6oo >> a.tmp/file.txt
+	echo 7oo >> a.tmp/file.txt
+	echo 8oo >> a.tmp/file.txt
+	echo 9oo >> a.tmp/file.txt
+	echo 0oo >> a.tmp/file.txt
+	echo 1oo >> a.tmp/file.txt
+	echo 2oo >> a.tmp/file.txt
+	echo 3OO >> a.tmp/file.txt
+	echo 4oo >> a.tmp/file.txt
+	echo ---
+	echo 1OO >> b.tmp/file.txt
+	echo 2oo >> b.tmp/file.txt
+	echo 3oo >> b.tmp/file.txt
+	echo 4oo >> b.tmp/file.txt
+	echo 5oo >> b.tmp/file.txt
+	echo 6oo >> b.tmp/file.txt
+	echo 7oo >> b.tmp/file.txt
+	echo 8oo >> b.tmp/file.txt
+	echo 9oo >> b.tmp/file.txt
+	echo 0oo >> b.tmp/file.txt
+	echo 1oo >> b.tmp/file.txt
+	echo 2oo >> b.tmp/file.txt
+	echo 3oo >> b.tmp/file.txt
+	echo 4oo >> b.tmp/file.txt
+	echo 5oo >> b.tmp/file.txt
+	echo 6oo >> b.tmp/file.txt
+	echo 5oo >> b.tmp/file.txt
+	echo 6oo >> b.tmp/file.txt
+	echo 7oo >> b.tmp/file.txt
+	echo 8oo >> b.tmp/file.txt
+	echo 9oo >> b.tmp/file.txt
+	echo 0oo >> b.tmp/file.txt
+	echo 1oo >> b.tmp/file.txt
+	echo 2oo >> b.tmp/file.txt
+	echo 3OO >> b.tmp/file.txt
+	echo end >> b.tmp/file.txt
+	@echo
+	@echo -----------------------------------------------------------
+	@echo
+	./unison testmerge -ui text -batch -debug files -debug update -debug backup
+	@echo
+	@echo -----------------------------------------------------------
+	@echo
+	./unison testmerge -ui text -batch
+	@echo
+	@echo -----------------------------------------------------------
+	@echo
+	cat a.tmp/file.txt
+	cat b.tmp/file.txt
+	cat $(HOME)/.unison/backup/file.txt
+
 
 ######################################################################
 # Tags
@@ -229,23 +343,30 @@ runjunk: byte
 .PHONY: tags
 
 tags:
-	-$(ETAGS) {*,*/*}.mli {*,*/*}.ml *.txt 
+	-$(ETAGS) *.mli */*.mli *.ml */*.ml *.m */*.m *.c */*.c *.txt
 
 all:: TAGS
 
-TAGS: 
+TAGS:
 	$(MAKE) tags
 
 ######################################################################
 # Misc
 
 clean::
-	-$(RM) -rf *.log *.aux *.log *.dvi *.out obsolete *.bak
-	-$(RM) -rf $(NAME) $(NAME).exe
+	-$(RM) *.log *.aux *.log *.dvi *.out *.bak
+	-$(RM) -r obsolete
+	-$(RM) $(NAME) $(NAME).exe
+	-$(RM) $(NAME)-blob.o
 
 clean::
 	$(MAKE) -C ubase clean
 	$(MAKE) -C lwt clean
+
+ifeq (${OSARCH},osx)
+clean::
+	-(cd uimac; xcodebuild clean)
+endif
 
 checkin:
 	$(MAKE) -C .. checkin
@@ -254,9 +375,9 @@ checkin:
 # Documentation strings
 
 # Cons up a fake strings.ml if necessary (the real one is generated when
-# we build the documentation, but we need to be able to compile the 
+# we build the documentation, but we need to be able to compile the
 # executable here to do that!)
-strings.ml: 
+strings.ml:
 	echo "(* Dummy strings.ml *)" > strings.ml
 	echo "let docs = []" >> strings.ml
 

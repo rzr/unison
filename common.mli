@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/common.mli $ *)
-(* $I2: Last modified by zheyang on Tue, 09 Apr 2002 17:08:59 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (***************************************************************************)
 (*               COMMON TYPES USED BY ALL MODULES                          *)
@@ -42,12 +42,14 @@ type 'a oneperpath = ONEPERPATH of 'a list
    filesystem below a given path and the state recorded in the archive below
    that path.  The other types are helpers. *)
 
-type prevState = Previous of Fileinfo.typ * Props.t * Os.fingerprint | New
+type prevState =
+    Previous of Fileinfo.typ * Props.t * Os.fullfingerprint * Osx.ressStamp
+  | New
 
 type contentschange =
     ContentsSame
-  | ContentsUpdated of Os.fingerprint * Fileinfo.stamp
-type permchange     = PropsSame    | PropsUpdated
+  | ContentsUpdated of Os.fullfingerprint * Fileinfo.stamp * Osx.ressStamp
+type permchange = PropsSame | PropsUpdated
 
 (* Variable name prefix: "ui" *)
 type updateItem =
@@ -88,6 +90,7 @@ type replicaContent = Fileinfo.typ * status * Props.t * updateItem
 
 type direction =
     Conflict
+  | Merge
   | Replica1ToReplica2
   | Replica2ToReplica1
 
@@ -108,10 +111,13 @@ type reconItem =
     {path : Path.t;
      replicas : replicas}
 
-val ucLength : updateContent -> Uutil.filesize
-val uiLength : updateItem -> Uutil.filesize
+val ucLength : updateContent -> Uutil.Filesize.t
+val uiLength : updateItem -> Uutil.Filesize.t
 val riLength : reconItem -> Uutil.Filesize.t
-val uiFingerprint: updateItem -> Os.fingerprint option
+val fileInfos :
+  updateItem -> updateItem ->
+  Props.t * Os.fullfingerprint * Osx.ressStamp *
+  Props.t * Os.fullfingerprint * Osx.ressStamp
 
 (* True if the ri's type is Problem or if it is Different and the direction
    is Conflict *)

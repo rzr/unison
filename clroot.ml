@@ -1,6 +1,6 @@
-(* $I1: Unison file synchronizer: src/uri.ml $ *)
-(* $I2: Last modified by zheyang on Sat, 09 Mar 2002 02:42:40 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I1: Unison file synchronizer: src/clroot.ml $ *)
+(* $I2: Last modified by tjim on Wed, 15 Jan 2003 16:46:16 -0500 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (*
   This file parses the unison command-line arguments that
@@ -87,7 +87,7 @@ let getProtocolSlashSlash s =
     | _ -> None
   else None
 
-let userAtRegexp = Str.regexp "[-_a-zA-Z0-9]+@"
+let userAtRegexp = Str.regexp "[-_a-zA-Z0-9.]+@"
 let getUser s =
   if Str.string_match userAtRegexp s 0
   then

@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/fspath.ml $ *)
-(* $I2: Last modified by bcpierce on Wed, 16 Jan 2002 01:55:28 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Wed, 26 May 2004 09:43:22 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* Defines an abstract type of absolute filenames (fspaths).  Keeping the    *)
 (* type abstract lets us enforce some invariants which are important for     *)
@@ -15,6 +15,7 @@
 (*                                                                         - *)
 
 let debug = Util.debug "fspath"
+let debugverbose = Util.debug "verbose"
 
 type t = Fspath of string
 
@@ -22,10 +23,11 @@ let toString (Fspath f) = f
 
 (* Needed to hack around some ocaml/Windows bugs, see comment at stat, below *)
 let winRootRx = Rx.rx "(([a-zA-Z]:)?/|//[^/]+/[^/]+/)"
-let isRootDir d = 
+(* FIX I think we could just check the last character of [d]. *)
+let isRootDir d =
 (* We assume all path separators are slashes in d                            *)
   d="/" ||
-  (Util.osType= `Win32 && Rx.match_string winRootRx d)
+  (Util.osType = `Win32 && Rx.match_string winRootRx d)
 let winRootFixRx = Rx.rx "//[^/]+/[^/]+"
 let winRootFix d =
   if Rx.match_string winRootFixRx d then d^"/" else d
@@ -61,12 +63,28 @@ let differentSuffix (Fspath f1) (Fspath f2) =
     (s1,s2)
   end
 
+(* When an HFS file is stored on a non-HFS system it is stored as two
+   files, the data fork, and the rest of the file including resource
+   fork is stored in the AppleDouble file, which has the same name as
+   the data fork file with ._ prepended. *)
+let appleDouble (Fspath f) =
+  if isRootDir f then raise(Invalid_argument "Fspath.appleDouble") else
+  let len = String.length f in
+  let i = String.rindex f '/' in
+  let before = String.sub f 0 i in
+  let after = String.sub f (i+1) (len-i-1) in
+  Fspath(before^"/._"^after)
+
+let rsrc (Fspath f) =
+  if isRootDir f then raise(Invalid_argument "Fspath.appleDouble") else
+  Fspath(f^"/..namedfork/rsrc")
+
 (* WRAPPED SYSTEM CALLS *)
 
 (* CAREFUL!
    Windows porting issue:
-     Unix.stat "c:\\windows\\" will fail, you must use
-     Unix.stat "c:\\windows" instead.
+     Unix.LargeFile.stat "c:\\windows\\" will fail, you must use
+     Unix.LargeFile.stat "c:\\windows" instead.
      The standard file selection dialog, however, will return a directory
      with a trailing backslash.
      Therefore, be careful to remove a trailing slash or backslash before
@@ -74,34 +92,35 @@ let differentSuffix (Fspath f1) (Fspath f2) =
      BUT Windows shares are weird!
        //raptor/trevor and //raptor/trevor/mirror are directories
        and //raptor/trevor/.bashrc is a file.  We observe the following:
-       Unix.stat "//raptor" will fail.
-       Unix.stat "//raptor/" will fail.
-       Unix.stat "//raptor/trevor" will fail.
-       Unix.stat "//raptor/trevor/" will succeed.
-       Unix.stat "//raptor/trevor/mirror" will succeed.
-       Unix.stat "//raptor/trevor/mirror/" will fail.
-       Unix.stat "//raptor/trevor/.bashrc/" will fail.
-       Unix.stat "//raptor/trevor/.bashrc" will succeed.
+       Unix.LargeFile.stat "//raptor" will fail.
+       Unix.LargeFile.stat "//raptor/" will fail.
+       Unix.LargeFile.stat "//raptor/trevor" will fail.
+       Unix.LargeFile.stat "//raptor/trevor/" will succeed.
+       Unix.LargeFile.stat "//raptor/trevor/mirror" will succeed.
+       Unix.LargeFile.stat "//raptor/trevor/mirror/" will fail.
+       Unix.LargeFile.stat "//raptor/trevor/.bashrc/" will fail.
+       Unix.LargeFile.stat "//raptor/trevor/.bashrc" will succeed.
        Not sure what happens for, e.g.,
-         Unix.stat "//raptor/FOO"
+         Unix.LargeFile.stat "//raptor/FOO"
        where //raptor/FOO is a file.
        I guess the best we can do is:
          To stat //host/xxx, assume xxx is a directory, and use
-         Unix.stat "//host/xxx/".  If xxx is not a directory, who knows.
+         Unix.LargeFile.stat "//host/xxx/". If xxx is not a directory,
+         who knows.
          To stat //host/path where path has length >1, don't use
          a trailing slash.
        The way I did this was to assume //host/xxx/ is a root directory.
          Then by the invariants of fspath it should always end in /.
 
-     Unix.stat "c:" will fail.
-     Unix.stat "c:/" will succeed.
-     Unix.stat "c://" will fail.
+     Unix.LargeFile.stat "c:" will fail.
+     Unix.LargeFile.stat "c:/" will succeed.
+     Unix.LargeFile.stat "c://" will fail.
    (The Unix version of ocaml handles either a trailing slash or no
    trailing slash.)
 *)
 (* Invariant on fspath will guarantee that argument is OK for stat           *)
-let stat (Fspath f) = Unix.stat f
-let lstat (Fspath f) = Unix.lstat f
+let stat (Fspath f) = Unix.LargeFile.stat f
+let lstat (Fspath f) = Unix.LargeFile.lstat f
 
 (* HACK:
    Under Windows 98,
@@ -123,7 +142,7 @@ let opendir (Fspath d) =
   with _ -> (* FIX: should not catch ALL exceptions *)
     Unix.opendir (d^"*")
 
-let child0 (Fspath f) n =
+let child (Fspath f) n =
   (* Note, f is not "" by invariants on Fspath *)
   if
     (* We use the invariant that f ends in / iff f is a root filename *)
@@ -133,30 +152,26 @@ let child0 (Fspath f) n =
   else
     Fspath (Printf.sprintf "%s%c%s" f '/' (Name.toString n))
 
-let child fspath n =
-  if Util.osType=`Unix && Case.insensitive () then
-    (* This is bound to be slow, and, childFspath is called often.  So we    *)
-    (* may need to do this another way...  FIX: Besides, it is not reliable  *)
-    (* to look at the filesystem                                             *)
-    let n =
-      try
-        let h = opendir fspath in
-        let ns = Name.toString n in
-        let rec loop() =
-          let s = Unix.readdir h in
-          if Util.nocase_eq ns s
-          then (Unix.closedir h; Name.fromString s)
-          else loop() in
-        (try loop() with _ -> (Unix.closedir h; n)) (* End-of-file *)
-      (* FIX: should not catch ALL exceptions *)
-      with _ -> n in (* opendir failed *)
-    child0 fspath n
-  else
-    child0 fspath n
-
 let concat fspath path =
-  let nl = Path.toNames path in
-  List.fold_left child fspath nl
+  if Path.isEmpty path then
+    fspath
+  else begin
+    let Fspath fspath = fspath in
+    if
+      (* We use the invariant that f ends in / iff f is a root filename *)
+      isRootDir fspath
+    then
+      Fspath (fspath ^ Path.toString path)
+    else
+      let p = Path.toString path in
+      let l = String.length fspath in
+      let l' = String.length p in
+      let s = String.create (l + l' + 1) in
+      String.blit fspath 0 s 0 l;
+      s.[l] <- '/';
+      String.blit p 0 s (l + 1) l';
+      Fspath s
+  end
 
 (* Filename.dirname is screwed up in Windows so we use this function.  It    *)
 (* assumes that path separators are slashes.                                 *)

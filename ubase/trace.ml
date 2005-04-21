@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/ubase/trace.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 24 Mar 2002 11:24:03 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Mon, 15 Sep 2003 11:46:03 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* ---------------------------------------------------------------------- *)
 (* Debugging messages *)
@@ -15,7 +15,7 @@ let debugmods =
      ^ "Possible arguments for \\verb|debug| can be found "
      ^ "by looking for calls to \\verb|Util.debug| in the "
      ^ "sources (using, e.g., \\verb|grep|).  "
-     ^ "Setting \\verb|-debug all| causes information from {\em all} "
+     ^ "Setting \\verb|-debug all| causes information from {\\em all} "
      ^ "modules to be printed (this mode of usage is the first one to try, "
      ^ "if you are trying to understand something that Unison seems to be "
      ^ "doing wrong); \\verb|-debug verbose| turns on some additional "
@@ -34,7 +34,8 @@ let enabled modname =
   let m = Prefs.read debugmods in
   m <> [] && (   (modname = "")
               || (Safelist.mem "verbose" m)
-              || (Safelist.mem "all" m && modname <> "verbose")
+              || ((Safelist.mem "all" m || Safelist.mem "-all" m)
+                    && modname <> "verbose")
               || (Safelist.mem modname m))
 
 let enable modname onoff =
@@ -47,7 +48,7 @@ let debug modname thunk =
     let s = if !runningasserver then "server: " else "" in
     let time =
       if Prefs.read debugtimes then
-        let tm = Unix.localtime (Unix.time()) in
+        let tm = Util.localtime (Util.time()) in
         Printf.sprintf "%02d:%02d:%02d"
           tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
       else "" in
@@ -180,6 +181,12 @@ let gettime () = Unix.gettimeofday()
 let startTimer desc =
   if Prefs.read(printTimers) then
     (message (desc ^ "..."); (desc, gettime()))
+  else
+    (desc,0.0)
+
+let startTimerQuietly desc =
+  if Prefs.read(printTimers) then
+    (desc, gettime())
   else
     (desc,0.0)
 

@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/uicommon.ml $ *)
-(* $I2: Last modified by zheyang on Tue, 09 Apr 2002 17:08:59 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
 open Lwt
@@ -16,6 +16,7 @@ type interface =
 module type UI =
 sig
  val start : interface -> unit
+ val defaultUi : interface
 end
 
 
@@ -26,17 +27,11 @@ end
 let auto =
   Prefs.createBool "auto" false "automatically accept default actions"
     ("When set to {\\tt true}, this flag causes the user "
-     ^ "interface to skip asking for confirmations except for "
+     ^ "interface to skip asking for confirmations on "
      ^ "non-conflicting changes.  (More precisely, when the user interface "
      ^ "is done setting the propagation direction for one entry and is about "
      ^ "to move to the next, it will skip over all non-conflicting entries "
      ^ "and go directly to the next conflict.)" )
-
-let batch =
-  Prefs.createBool "batch" false "batch mode: ask no questions at all"
-    ("When this is set to {\\tt true}, the user "
-     ^ "interface will ask no questions at all.  Non-conflicting changes "
-     ^ "will be propagated; conflicts will be skipped.")
 
 (* This has to be here rather than in uigtk.ml, because it is part of what
    gets sent to the server at startup *)
@@ -86,6 +81,26 @@ let contactquietly =
     ("If this flag is set, Unison will skip displaying the "
      ^ "`Contacting server' window (which some users find annoying) "
      ^ "during startup.")
+
+let repeat =
+  Prefs.createString "repeat" ""
+    "synchronize repeatedly (text interface only)"
+    ("Setting this preference causes the text-mode interface to synchronize "
+     ^ "repeatedly, rather than doing it just once and stopping.  If the "
+     ^ "argument is a number, Unison will pause for that many seconds before "
+     ^ "beginning again.  If the argument is a path, Unison will wait for the "
+     ^ "file at this path---called a {\\em changelog}---to "
+     ^ "be modified (on either the client or the server "
+     ^ "machine), read the contents of the changelog (which should be a newline-"
+     ^ "separated list of paths) on both client and server, "
+     ^ "combine the results, "
+     ^ "and start again, using the list of paths read from the changelogs as the "
+     ^ " '-path' preference for the new run.  The idea is that an external "
+     ^ "process will watch the filesystem and, when it thinks something may have "
+     ^ "changed, write the changed pathname to its local changelog where Unison "
+     ^ "will find it the next time it looks.  If the changelogs have not been "
+     ^ "modified, Unison will wait, checking them again every few seconds."
+    )
 
 (**********************************************************************
                          Formatting functions
@@ -161,7 +176,7 @@ let roots2niceStrings length = function
 let details2string theRi sep =
   match theRi.replicas with
     Problem s ->
-      Printf.sprintf "Problem occured while scanning filesystems:\n%s\n" s
+      Printf.sprintf "Error: %s\n" s
   | Different(rc1, rc2, _, _) ->
       let root1str, root2str =
         roots2niceStrings 12 (Globals.roots()) in
@@ -197,6 +212,7 @@ let direction2niceString = function
     Conflict           -> "<-?->"
   | Replica1ToReplica2 -> "---->"
   | Replica2ToReplica1 -> "<----"
+  | Merge              -> "<-M->"
 
 let reconItem2string oldPath theRI status =
   let theLine =
@@ -227,32 +243,15 @@ let showDiffs ri printer errprinter id =
         "Can't diff files: there was a problem during update detection"
   | Different((`FILE, _, _, ui1), (`FILE, _, _, ui2), _, _) ->
       let (root1,root2) = Globals.roots() in
-      Files.diff root1 root2 p (uiFingerprint ui1) (uiFingerprint ui2) printer id
+      begin
+        try Files.diff root1 p ui1 root2 p ui2 printer id
+        with Util.Transient e -> errprinter e
+      end 
   | Different _ ->
       errprinter "Can't diff: path doesn't refer to a file in both replicas"
-	
-	
-exception Synch_props of Common.reconItem
 
-let applyMerge ri printError printQuestion id backups =  (*+++*)
-  match ri.replicas with
-    Problem _ ->
-      raise (Util.Transient "Can't merge these files: there was a problem during update detection")
-  | Different((`FILE, _, _, ui1), (`FILE, _, _, ui2), _, _) ->
-      let (root1,root2) = Globals.roots() in
-      Files.mergeFct
-        root1 root2 ri.path printError printQuestion id ui1 ui2 backups;
-      Lwt_unix.run
-        (Update.findOnRoot root1 [ri.path] >>= (fun newUi1 ->
-         Update.findOnRoot root2 [ri.path] >>= (fun newUi2 ->
-         let (newRi, _) =
-           Recon.reconcileTwo ri.path (List.hd newUi1) (List.hd newUi2) in
-         return
-           (match newRi with 
-              [] -> ()
-            | rihd::tl -> raise (Synch_props rihd)))))
-  | Different _ ->
-      raise (Util.Transient "Can't merge: path doesn't refer to a file in both replicas")
+
+exception Synch_props of Common.reconItem
 
 (**********************************************************************
                   Useful patterns for ignoring paths
@@ -322,29 +321,38 @@ let shortUsageMsg =
 
 let usageMsg = coreUsageMsg ^ "\nOptions: "
 
+let debug = Trace.debug "startup"
+
 (* ---- *)
 
 (* Determine the case sensitivity of a root (does filename FOO==foo?) *)
 let architecture =
   Remote.registerRootCmd
-    "caseInSensitive"
-    (fun (_,()) -> return Util.osType)
+    "architecture"
+    (fun (_,()) -> return (Util.osType = `Win32, Osx.isMacOSX))
 
 (* During startup the client determines the case sensitivity of each root.
    If any root is case insensitive, all roots must know this -- it's
    propagated in a pref. *)
+(* FIX: this does more than check case sensitivity, it also detects
+   HFS (needed for resource forks) and Windows (needed for permissions)...
+   needs a new name *)
 let checkCaseSensitivity () =
   Globals.allRootsMap (fun r -> architecture r ()) >>= (fun archs ->
-  let someWindows =
-    Safelist.exists (fun x -> x = `Win32) archs
-  in
-  Case.init someWindows;
-  Props.init someWindows;
+  let someHostIsRunningWindows =
+    Safelist.exists (fun (isWin, _) -> isWin) archs in
+  let someHostRunningOsX =
+    Safelist.exists (fun (_, isOSX) -> isOSX) archs in
+  let someHostIsCaseInsensitive =
+    someHostIsRunningWindows || someHostRunningOsX in
+  Case.init someHostIsCaseInsensitive;
+  Props.init someHostIsRunningWindows;
+  Osx.init someHostRunningOsX;
   return ())
 
 (* ---- *)
 
-let promptForRoots getFirstRoot getSecondRoot =    
+let promptForRoots getFirstRoot getSecondRoot =
   (* Ask the user for the roots *)
   let r1 = match getFirstRoot() with None -> exit 0 | Some r -> r in
   let r2 = match getSecondRoot() with None -> exit 0 | Some r -> r in
@@ -362,7 +370,8 @@ let promptForRoots getFirstRoot getSecondRoot =
    we ignore the command line *)
 let firstTime = ref(true)
 
-let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot =
+let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
+    ~termInteract =
   (* Restore prefs to their default values, if necessary *)
   if not !firstTime then Prefs.resetToDefaults();
 
@@ -376,18 +385,18 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot =
      Prefs.addComment "Unison preferences file";
 
   (* Load the profile *)
-  (Trace.debug "" (fun() -> Util.msg "about to load prefs");
+  (debug (fun() -> Util.msg "about to load prefs");
   Prefs.loadTheFile());
 
   (* Parse the command line.  This will temporarily override
      settings from the profile. *)
   if !firstTime then begin
-    Trace.debug "" (fun() -> Util.msg "about to parse command line");
+    debug (fun() -> Util.msg "about to parse command line");
     Prefs.parseCmdLine usageMsg;
   end;
 
   (* Print the preference settings *)
-  Trace.debug "" (fun() -> Prefs.dumpPrefsToStderr() );
+  debug (fun() -> Prefs.dumpPrefsToStderr() );
 
   (* If no roots are given either on the command line or in the profile,
      ask the user *)
@@ -402,7 +411,7 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot =
 
   (* Canonize the names of the roots, sort them (with local roots first),
      and install them in Globals. *)
-  Lwt_unix.run (Globals.installRoots ());
+  Lwt_unix.run (Globals.installRoots termInteract);
 
   (* If both roots are local, disable the xferhint table to save time *)
   begin match Globals.roots() with
@@ -429,14 +438,14 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot =
 
   Update.storeRootsName ();
 
-  Trace.debug ""
+  debug
     (fun() ->
        Printf.eprintf "Roots: \n";
        Safelist.iter (fun clr -> Printf.eprintf "        %s\n" clr)
          (Globals.rawRoots ());
        Printf.eprintf "  i.e. \n";
        Safelist.iter (fun clr -> Printf.eprintf "        %s\n"
-                    (Uri.clroot2string (Uri.parseRoot clr)))
+                    (Clroot.clroot2string (Clroot.parseRoot clr)))
          (Globals.rawRoots ());
        Printf.eprintf "  i.e. (in canonical order)\n";
        Safelist.iter (fun r -> 
@@ -480,7 +489,8 @@ let uiInit
     ~(displayWaitMessage : unit -> unit)
     ~(getProfile : unit -> string option)
     ~(getFirstRoot : unit -> string option)
-    ~(getSecondRoot : unit -> string option) =
+    ~(getSecondRoot : unit -> string option)
+    ~(termInteract : (string -> string) option) =
 
   (* Make sure we have a directory for archives and profiles *)
   Os.createUnisonDir();
@@ -505,11 +515,11 @@ let uiInit
   end;
 
   (* Print header for debugging output *)
-  Trace.debug "" (fun() ->
+  debug (fun() ->
     Printf.eprintf "%s, version %s\n\n" Uutil.myName Uutil.myVersion);
-  Trace.debug "" (fun() -> Util.msg "initializing UI");
+  debug (fun() -> Util.msg "initializing UI");
 
-  Trace.debug "" (fun () ->
+  debug (fun () ->
     (match !clprofile with
       None -> Util.msg "No profile given on command line"
     | Some s -> Printf.eprintf "Profile '%s' given on command line" s);
@@ -550,7 +560,7 @@ let uiInit
     end in
 
   (* Load the profile and command-line arguments *)
-  initPrefs profileName displayWaitMessage getFirstRoot getSecondRoot;
+  initPrefs profileName displayWaitMessage getFirstRoot getSecondRoot termInteract;
 
   (* Turn on GC messages, if the '-debug gc' flag was provided *)
   if Trace.enabled "gc" then Gc.set {(Gc.get ()) with Gc.verbose = 0x3F};
@@ -558,6 +568,33 @@ let uiInit
   if Prefs.read testServer then exit 0;
   (* BCPFIX: Should/can this be done earlier?? *)
   Files.processCommitLogs()
+
+(* Interacting with ssh *)
+type sshInfo =
+    Password of string
+  | HostAuthenticity of string * string
+  | Other of string
+
+let sshParse s =
+  if Rx.match_string (Rx.rx ".+'s password: ") s then
+    Password(String.sub s 0 (String.length s - String.length "'s password: "))
+  else 
+    (* Look for a string such as
+       "The authenticity of host 'saul.cis.upenn.edu (158.130.12.4)' can't be established.\n"^
+       "RSA key fingerprint is d1:d8:5e:08:8c:ae:56:15:66:af:4b:55:53:2a:bc:38.\n"^
+       "Are you sure you want to continue connecting (yes/no)? "
+    *)
+    let x = Rx.match_prefix
+        (Rx.rx "The authenticity of host \'.*\'.*fingerprint is ") s 0 in
+    match x with
+      None -> Other s
+    | Some fingerStart ->
+        let hostStart = String.length "The authenticity of host \'" in
+        let hostEnd = String.index_from s hostStart '\'' in
+        let host = String.sub s hostStart (hostEnd-hostStart) in
+        let fingerEnd = String.index_from s fingerStart '.' in
+        let finger = String.sub s fingerStart (fingerEnd-fingerStart) in
+        HostAuthenticity(host,finger)
 
 (* Exit codes *)
 let perfectExit = 0   (* when everything's okay *)

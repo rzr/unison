@@ -1,6 +1,8 @@
 Installation notes to build Unison on Windows systems, with Cygwin GNU C
 (unison-help@cis.upenn.edu)
 
+[The following instructions were tested for Unison 2.9.1 on a Windows
+2000 machine running OCaml 3.04.]
 
 Contents
 

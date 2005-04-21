@@ -1,26 +1,6 @@
 (* $I1: Unison file synchronizer: src/ubase/util.ml $ *)
-(* $I2: Last modified by zheyang on Sat, 06 Apr 2002 18:26:24 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
-
-(*****************************************************************************)
-(*                  GLOBAL DEBUGGING SWITCH                                  *)
-(*****************************************************************************)
-
-let debugPrinter = ref None
-
-let debug s th =
-  match !debugPrinter with
-    None -> ()
-  | Some p -> p s th
-
-(* This should be set by the UI to a function that can be used to warn users *)
-let warnPrinter = ref None
-
-(* The rest of the program invokes this function to warn users.              *)
-let warn message =
-  match !warnPrinter with
-    None -> ()
-  | Some p -> p message
+(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (*****************************************************************************)
 (*                        CASE INSENSITIVE COMPARISON                        *)
@@ -62,9 +42,44 @@ let stringSetFromList l =
 (*                    Debugging / error messages                             *)
 (*****************************************************************************)
 
-let msg f = Uprintf.eprintf (fun () -> flush stderr) f
+let infos = ref ""
+
+let clear_infos () =
+  if !infos <> "" then begin
+    print_string "\r";
+    print_string (String.make (String.length !infos) ' ');
+    print_string "\r";
+    flush stdout
+  end
+let show_infos () =
+  if !infos <> "" then begin print_string !infos; flush stdout end
+let set_infos s =
+  if s <> !infos then begin clear_infos (); infos := s; show_infos () end
+
+let msg f =
+  clear_infos (); Uprintf.eprintf (fun () -> flush stderr; show_infos ()) f
 
 let msg : ('a, out_channel, unit) format -> 'a = msg
+
+(*****************************************************************************)
+(*                  GLOBAL DEBUGGING SWITCH                                  *)
+(*****************************************************************************)
+
+let debugPrinter = ref None
+
+let debug s th =
+  match !debugPrinter with
+    None -> assert false
+  | Some p -> p s th
+
+(* This should be set by the UI to a function that can be used to warn users *)
+let warnPrinter = ref None
+
+(* The rest of the program invokes this function to warn users.              *)
+let warn message =
+  match !warnPrinter with
+    None -> ()
+  | Some p -> p message
 
 (*****************************************************************************)
 (*                    EXCEPTION HANDLING                                     *)
@@ -139,6 +154,11 @@ let convertUnixErrorsToExn m f n e =
       let s = "Not_found raised in " ^ m
               ^ " (this indicates a bug!)" in
         debug "exn" (fun() -> msg "Converting a Not_found to %s:\n%s\n" n s);
+        raise (e s)
+  | End_of_file ->
+      let s = "End_of_file exception raised in " ^ m
+              ^ " (this indicates a bug!)" in
+        debug "exn" (fun() -> msg "Converting an End_of_file to %s:\n%s\n" n s);
         raise (e s)
   | Sys_error(s) ->
       let s = "Error in " ^ m ^ ":\n" ^ s in
@@ -217,8 +237,14 @@ let monthname n =
     ["Jan";"Feb";"Mar";"Apr";"May";"Jun";"Jul";"Aug";"Sep";"Oct";"Nov";"Dec"]
     n
 
+let localtime f =
+  convertUnixErrorsToTransient "localtime" (fun()-> Unix.localtime f)
+
+let time () =
+  convertUnixErrorsToTransient "time" Unix.time
+
 let time2string timef =
-  let time = Unix.localtime timef in
+  let time = localtime timef in
   Printf.sprintf
     "%2d:%.2d on %2d %3s, %4d"
     time.Unix.tm_hour

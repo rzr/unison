@@ -1,6 +1,6 @@
-(* $I1: Unison file synchronizer: src/uri.mli $ *)
-(* $I2: Last modified by tjim on Mon, 14 Aug 2000 17:35:20 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I1: Unison file synchronizer: src/clroot.mli $ *)
+(* $I2: Last modified by tjim on Wed, 06 Nov 2002 18:48:47 -0500 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* Command-line roots *)
 type clroot =

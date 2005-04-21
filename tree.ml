@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/tree.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 24 Jan 2001 10:09:52 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Wed, 26 May 2004 17:01:49 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 type ('a, 'b) t =
     Node of ('a * ('a, 'b) t) list * 'b option
@@ -26,7 +26,7 @@ let leave t =
   | {anc = Some (t, n); node = Some v; children = []} ->
       {t with children = (n, Leaf v) :: t.children}
   | {anc = Some (t, n); node = v; children = l} ->
-      {t with children = (n, (Node (List.rev l, v))) :: t.children}
+      {t with children = (n, (Node (Safelist.rev l, v))) :: t.children}
   | {anc = None} ->
       invalid_arg "Tree.leave"
 
@@ -37,7 +37,7 @@ let finish t =
   | {anc = None; node = Some v; children = []} ->
       Leaf v
   | {anc = None; node = v; children = l} ->
-      Node (List.rev l, v)
+      Node (Safelist.rev l, v)
 
 let rec leave_all t =
   if t.anc = None then t else leave_all (leave t)
@@ -64,7 +64,7 @@ let is_empty t =
 let rec map f g t =
   match t with
     Node (l, v) ->
-      Node (List.map (fun (n, t') -> (f n, map f g t')) l,
+      Node (Safelist.map (fun (n, t') -> (f n, map f g t')) l,
             match v with None -> None | Some v -> Some (g v))
   | Leaf v ->
       Leaf (g v)
@@ -76,7 +76,7 @@ let rec iteri t path pcons f =
         Some v -> f path v
       | None   -> ()
       end;
-      List.iter (fun (n, t') -> iteri t' (pcons path n) pcons f) l
+      Safelist.iter (fun (n, t') -> iteri t' (pcons path n) pcons f) l
   | Leaf v ->
       f path v
 
@@ -84,7 +84,7 @@ let rec size_rec s t =
   match t with
     Node (l, v) ->
       let s' = if v = None then s else s + 1 in
-      List.fold_left (fun s (_, t') -> size_rec s t') s l
+      Safelist.fold_left (fun s (_, t') -> size_rec s t') s l
   | Leaf v ->
       s + 1
 

@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/remote.mli $ *)
-(* $I2: Last modified by vouillon on Mon, 25 Mar 2002 12:08:56 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 module Thread : sig
   val unwindProtect : (unit -> 'a Lwt.t) -> (exn -> unit Lwt.t) -> 'a Lwt.t
@@ -27,55 +27,74 @@ val registerHostCmd :
    <funcName>OnRoot and <funcName>Local *)
 val registerRootCmd :
     string                         (* command name *)
- -> ((Fspath.t * 'a) -> 'b Lwt.t) (* local command *)
+ -> ((Fspath.t * 'a) -> 'b Lwt.t)  (* local command *)
  -> (   Common.root                (* -> root *)
      -> 'a                         (*    additional arguments *)
-     -> 'b Lwt.t)                 (*    -> (suspended) result *)
-
-
-(* Transfer a file from the client to the server *)
-val putFile :
-    string           (* host *)
- -> [`Update of Uutil.filesize | `Copy]
- -> Fspath.t         (* fspath of source *)
- -> Path.t           (* path of source *)
- -> Fspath.t         (* fspath of target (on host) *)
- -> Path.t           (* path of target *)
- -> Path.t           (* path of "real" [original] target *)
- -> Props.t          (* permissions for new file *)
- -> Uutil.File.t     (* file's index in UI (for progress bars) *)
- -> Os.fingerprint option (* file's finger print, if readily available *)
- -> unit Lwt.t
-
-(* Transfer a file from the server to the client *)
-val getFile :
-    string           (* host *)
- -> [`Update of Uutil.filesize | `Copy]
- -> Fspath.t         (* fspath of source *)
- -> Path.t           (* path of source *)
- -> Fspath.t         (* fspath of target (on host) *)
- -> Path.t           (* path of target *)
- -> Path.t           (* path of "real" [original] target *)
- -> Props.t          (* permissions for new file *)
- -> Uutil.File.t     (* file's index in UI (for progress bars) *)
- -> Os.fingerprint option  (* file's finger print, if readily available *)
- -> unit Lwt.t
+     -> 'b Lwt.t)                  (*    -> (suspended) result *)
 
 (* Enter "server mode", reading and processing commands from a remote
    client process until killed *)
 val beAServer : unit -> unit
-val waitOnPort : int -> unit
+val waitOnPort : string option -> int -> unit
 
 (* Whether the server should be killed when the client terminates *)
 val killServer : bool Prefs.t
 
 (* Establish a connection to the remote server (if any) corresponding
    to the root and return the canonical name of the root *)
-val canonizeRoot : Uri.clroot -> Common.root Lwt.t
-
-(* Command line flag -rsync allows rsync to be activated *)
-val rsyncActivated : bool Prefs.t
+val canonizeRoot : Clroot.clroot -> (string -> string) option -> Common.root Lwt.t
 
 (* Statistics *)
 val emittedBytes : float ref
 val receivedBytes : float ref
+
+(* Establish a connection to the server.
+   First call openConnectionStart, then loop:
+     call openConnectionPrompt, if you get a prompt,
+     respond with openConnectionReply if desired.
+   After you get None from openConnectionPrompt,
+   call openConnectionEnd.
+   Call openConnectionCancel to abort the connection.
+*)
+type preconnection
+val openConnectionStart : Clroot.clroot -> preconnection option
+val openConnectionPrompt : preconnection -> string option
+val openConnectionReply : preconnection -> string -> unit
+val openConnectionEnd : preconnection -> unit
+val openConnectionCancel : preconnection -> unit
+
+(* return the canonical name of the root.  The connection
+   to the root must have already been established by
+   the openConnection sequence. *)
+val canonize : Clroot.clroot -> Common.root
+
+(****)
+
+type msgId = int
+module MsgIdMap : Map.S with type key = msgId
+val newMsgId : unit -> msgId
+
+type connection
+val connectionToRoot : Common.root -> connection
+
+val registerServerCmd :
+  string -> (connection -> 'a -> 'b Lwt.t) -> connection -> 'a -> 'b Lwt.t
+val registerSpecialServerCmd :
+  string ->
+  ('a -> (string * int * int) list -> (string * int * int) list * int) *
+  (string -> int -> 'a) ->
+  ('b -> (string * int * int) list -> (string * int * int) list * int) *
+  (string -> int -> 'b) ->
+  (connection -> 'a -> 'b Lwt.t) -> connection -> 'a -> 'b Lwt.t
+val defaultMarshalingFunctions :
+  ('a -> (string * int * int) list -> (string * int * int) list * int) *
+  (string -> int -> 'b)
+val encodeInt : int -> string
+val decodeInt : string -> int
+val registerRootCmdWithConnection :
+    string                          (* command name *)
+ -> (connection -> 'a -> 'b Lwt.t)  (* local command *)
+ ->    Common.root                  (* root on with the command is executed *)
+    -> Common.root                  (* other root *)
+    -> 'a                           (* additional arguments *)
+    -> 'b Lwt.t                     (* result *)

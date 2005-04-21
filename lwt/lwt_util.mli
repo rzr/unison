@@ -10,15 +10,15 @@ val iter : ('a -> unit Lwt.t) -> 'a list -> unit Lwt.t
        are started according to the list order, but then can run
        concurrently.  It terminates when all the threads are
        terminated, if all threads are successful.  It fails if any of
-       the thread fail. *)
+       the threads fail. *)
 
 val map : ('a -> 'b Lwt.t) -> 'a list -> 'b list Lwt.t
     (* [map f l] apply [f] to each element in [l] and collect the
        results of the threads thus created.  The threads are started
        according to the list order, but then can run concurrently.
-       [map f l] fails if any of the thread fail. *)
+       [map f l] fails if any of the threads fail. *)
 
-val map_with_waiting_action : 
+val map_with_waiting_action :
     ('a -> 'b Lwt.t) -> ('a -> unit) -> 'a list -> 'b list Lwt.t
     (* [map_with_waiting_action f wa l] apply [f] to each element   *)
     (* in [l] and collect the results of the threads thus created.  *)

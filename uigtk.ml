@@ -1,11 +1,11 @@
 (* $I1: Unison file synchronizer: src/uigtk.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 10 Apr 2002 10:04:21 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
 open Lwt
 
-module Private : Uicommon.UI = struct
+module Private = struct
 
 let debug = Trace.debug "ui"
 
@@ -203,7 +203,7 @@ let twoBox ~title ~message ~alabel ~blabel =
    delete events even when it is not sensitive) *)
 let inExit = ref false
 
-let doExit () = Update.unlockArchives (); exit 0
+let doExit () = Lwt_unix.run (Update.unlockArchives ()); exit 0
 
 let safeExit () =
   if not !inExit then begin
@@ -221,7 +221,7 @@ let safeExit () =
 (* warnBox: Display a warning message in a window and wait (unless
    we're in batch mode) for the user to hit "OK" or "Exit". *)
 let warnBox title message =
-  if Prefs.read Uicommon.batch then begin
+  if Prefs.read Globals.batch then begin
     (* In batch mode, just pop up a window and go ahead *)
     let t = GWindow.dialog ~title ~wm_name:title ~position:`CENTER () in
     let h = GPack.hbox ~packing:(t#vbox#pack ~expand:false ~padding:20) () in
@@ -463,7 +463,7 @@ let statistics () =
         if v > 9.9e6 then
           Format.sprintf "%4.0f MiB/s" (v /. 1e6)
         else if v > 999e3 then
-          Format.sprintf "%4.1f MiB/s" (v /. 1e3)
+          Format.sprintf "%4.1f MiB/s" (v /. 1e6)
         else
           Format.sprintf "%4.0f KiB/s" (v /. 1e3)
       end else begin
@@ -565,7 +565,7 @@ let getFirstRoot() =
   GMain.Main.main ();
   match !result with None -> None
   | Some file ->
-      Some(Uri.clroot2string(Uri.ConnectLocal(Some file)))
+      Some(Clroot.clroot2string(Clroot.ConnectLocal(Some file)))
 
 (* ------ *)
 
@@ -653,24 +653,24 @@ let getSecondRoot () =
     let host = hostE#text in
     match !varLocalRemote with
       `Local ->
-        Uri.clroot2string(Uri.ConnectLocal(Some file))
+        Clroot.clroot2string(Clroot.ConnectLocal(Some file))
     | `SSH | `RSH ->
         let portOpt =
           (* FIX: report an error if the port entry is not well formed *)
           try Some(int_of_string(portE#text))
           with _ -> None in
-        Uri.clroot2string(
-        Uri.ConnectByShell((if !varLocalRemote=`SSH then "ssh" else "rsh"),
-                           host,
-                           (if user="" then None else Some user),
-                           portOpt,
-                           Some file))
+        Clroot.clroot2string(
+        Clroot.ConnectByShell((if !varLocalRemote=`SSH then "ssh" else "rsh"),
+                              host,
+                              (if user="" then None else Some user),
+                              portOpt,
+                              Some file))
     | `SOCKET ->
-        Uri.clroot2string(
+        Clroot.clroot2string(
         (* FIX: report an error if the port entry is not well formed *)
-        Uri.ConnectBySocket(host,
-                            int_of_string(portE#text),
-                            Some file)) in
+        Clroot.ConnectBySocket(host,
+                               int_of_string(portE#text),
+                               Some file)) in
   let contCommand() =
     try
       let root = getRoot() in
@@ -700,6 +700,15 @@ let getSecondRoot () =
 (* ------ *)
 
 type profileInfo = {roots:string list; label:string option}
+
+(* ------ *)
+
+let termInteract() =
+(*
+  if Util.isOSX then Some(fun s -> "") (*FIXTJ*)
+  else
+*)
+    None
 
 (* ------ *)
 
@@ -1067,11 +1076,13 @@ let rec createToplevelWindow () =
       else if label="" then p
       else p ^ " (" ^ label ^ ")" in
     let s = if s="" then "" else "Profile: " ^ s in
-    profileLabel#set_text s in
+    profileLabel#set_text s
+  in
 
-    match !Prefs.profileName with
-      None -> ()
-    | Some(p) -> displayNewProfileLabel p;
+  begin match !Prefs.profileName with
+    None -> ()
+  | Some(p) -> displayNewProfileLabel p
+  end;
 
   (*********************************************************************
     Create the menus
@@ -1137,10 +1148,12 @@ let rec createToplevelWindow () =
     | Some row ->
         let (activate1, activate2) =
           match !theState.(row).whatHappened, !theState.(row).ri.replicas with
-            Some _, _ ->
-              (false, false)
           | None,   Different((`FILE, _, _, _),(`FILE, _, _, _), _, _) ->
               (true, true)
+          | Some _,   Different((`FILE, _, _, _),(`FILE, _, _, _), _, _) ->
+              (false, true)
+          | Some _, _ ->
+              (false, false)
           | None,   _ ->
               (true, false) in
         grSet grAction activate1;
@@ -1280,6 +1293,8 @@ let rec createToplevelWindow () =
   let failedIcon = buildPixmap Pixmaps.failure in
   let rightArrowBlack = buildPixmap (Pixmaps.copyAB blackPixel) in
   let leftArrowBlack = buildPixmap (Pixmaps.copyBA blackPixel) in
+  let mergeLogo = buildPixmaps Pixmaps.mergeLogo greenPixel in
+  let mergeLogoBlack = buildPixmap (Pixmaps.mergeLogo blackPixel) in
 
   let displayArrow i action =
     let changedFromDefault = match !theState.(i).ri.replicas with
@@ -1288,11 +1303,12 @@ let rec createToplevelWindow () =
     let sel pixmaps =
       if changedFromDefault then snd pixmaps else fst pixmaps in
     match action with
-      "<-?->" -> mainWindow#set_cell ~pixmap:(sel ignoreAct) i 1
-    | "---->" -> mainWindow#set_cell ~pixmap:(sel rightArrow) i 1
-    | "<----" -> mainWindow#set_cell ~pixmap:(sel leftArrow) i 1
-    | "error" -> mainWindow#set_cell ~pixmap:failedIcon i 1
-    |    _    -> assert false in
+	"<-?->" -> mainWindow#set_cell ~pixmap:(sel ignoreAct) i 1
+      | "<-M->" -> mainWindow#set_cell ~pixmap:(sel mergeLogo) i 1
+      | "---->" -> mainWindow#set_cell ~pixmap:(sel rightArrow) i 1
+      | "<----" -> mainWindow#set_cell ~pixmap:(sel leftArrow) i 1
+      | "error" -> mainWindow#set_cell ~pixmap:failedIcon i 1
+      |    _    -> assert false in
 
   let displayStatusIcon i status =
     match status with
@@ -1402,7 +1418,7 @@ let rec createToplevelWindow () =
               clientWritten := !clientWritten +. Uutil.Filesize.toFloat bytes
             else
               serverWritten := !serverWritten +. Uutil.Filesize.toFloat bytes
-        | Conflict           ->
+        | Conflict | Merge ->
             (* Diff / merge *)
             clientWritten := !clientWritten +. Uutil.Filesize.toFloat bytes
         end
@@ -1589,7 +1605,9 @@ in
                 else
                   catch (fun () ->
                            Transport.transportItem
-                             theSI.ri (Uutil.File.ofLine i) >>= (fun () ->
+                             theSI.ri (Uutil.File.ofLine i)
+                             (fun title text -> Trace.status (Printf.sprintf "\n%s\n\n%s\n\n" title text))
+                           >>= (fun () ->
                            return Util.Succeeded))
                         (fun e ->
                            match e with
@@ -1677,8 +1695,8 @@ in
   let detectCmdName = "Restart" in
   let detectCmd () =
     getLock detectUpdatesAndReconcile;
-    if Prefs.read Uicommon.batch then begin
-      Prefs.set Uicommon.batch false; synchronize()
+    if Prefs.read Globals.batch then begin
+      Prefs.set Globals.batch false; synchronize()
     end
  in
   actionBar#insert_space ();
@@ -1686,7 +1704,7 @@ in
     (actionBar#insert_button ~text:detectCmdName ~callback:detectCmd ());
 
   (*********************************************************************
-    Buttons for <--, -->, Skip
+    Buttons for <--, M, -->, Skip
    *********************************************************************)
   let doAction f =
     match !current with
@@ -1705,12 +1723,18 @@ in
   let leftAction     _ = doAction (fun dir -> dir := Replica2ToReplica1) in
   let rightAction    _ = doAction (fun dir -> dir := Replica1ToReplica2) in
   let questionAction _ = doAction (fun dir -> dir := Conflict) in
+  let mergeAction    _ = doAction (fun dir -> dir := Merge) in
 
   actionBar#insert_space ();
   grAdd grAction
     (actionBar#insert_button
        ~icon:((GMisc.pixmap leftArrowBlack ())#coerce)
        ~callback:leftAction ());
+  actionBar#insert_space ();
+  grAdd grAction
+    (actionBar#insert_button
+       ~icon:((GMisc.pixmap mergeLogoBlack())#coerce)
+       ~callback:mergeAction ());
   actionBar#insert_space ();
   grAdd grAction
     (actionBar#insert_button
@@ -1743,19 +1767,16 @@ in
           toplevelWindow#misc#set_sensitive false;
           begin try
             Uicommon.applyMerge !theState.(i).ri
-              Trace.status
-              (fun text -> twoBox "" text "Yes" "No")
-              (Uutil.File.ofLine i) true;
-
+              (Uutil.File.ofLine i)
+              (fun title text ->
+                 Trace.status (Printf.sprintf "%s: %s" title text))
+              true;
             !theState.(i).whatHappened <- Some(Util.Succeeded);
             toplevelWindow#misc#set_sensitive true
           with
             Util.Transient(s) ->
               toplevelWindow#misc#set_sensitive true;
               oneBox "Merge failed" s "Continue"
-          | Uicommon.Synch_props newRi ->
-              !theState.(i).ri <- newRi;
-              toplevelWindow#misc#set_sensitive true
           end;
           redisplay i;
           nextInteresting();
@@ -1796,6 +1817,11 @@ in
       ("Propagate this path " ^ descr) in
   grAdd grAction left;
   left#add_accelerator ~group:accel_group ~modi:[`SHIFT] GdkKeysyms._greater;
+
+  let merge = actionsMenu#add_item ~key:GdkKeysyms._m ~callback:mergeAction
+		"Merge the files" in
+  grAdd grAction merge;
+  merge#add_accelerator ~group:accel_group GdkKeysyms._m;
 
   let descl =
     if loc1 = loc2 then "right to left" else
@@ -1877,6 +1903,14 @@ in
             !theState;
           displayMain()))
        "Force older files to replace newer ones");
+  grAdd grAction
+    (actionsMenu#add_item
+       ~callback:(fun () -> getLock (fun () ->
+          Array.iter
+            (fun si -> Recon.setDirection si.ri `Merge `Force)
+            !theState;
+          displayMain()))
+       "Revert all paths to the merging default, if avaible");
   ignore (actionsMenu#add_separator ());
   grAdd grAction
     (actionsMenu#add_item
@@ -1885,29 +1919,60 @@ in
             (fun si -> Recon.revertToDefaultDirection si.ri)
             !theState;
           displayMain()))
-       "Revert to Unison's recommendations");
+       "Revert all paths to Unison's recommendations");
+  grAdd grAction
+    (actionsMenu#add_item
+       ~callback:(fun () -> getLock (fun () ->
+          match !current with
+            Some i ->
+              let theSI = !theState.(i) in
+              Recon.revertToDefaultDirection theSI.ri;
+              redisplay i;
+              nextInteresting ()
+          | None ->
+              ()))
+       "Revert selected path to Unison's recommendations");
 
   (* Diff *)
   ignore (actionsMenu#add_separator ());
   grAdd grDiff (actionsMenu#add_item ~key:GdkKeysyms._d ~callback:diffCmd
-                  "Show diffs");
-  grAdd grDiff (actionsMenu#add_item ~key:GdkKeysyms._m ~callback:mergeCmd
-                  "Merge");
+                  "Show diffs for selected path");
+(*  grAdd grDiff (actionsMenu#add_item ~key:GdkKeysyms._m ~callback:mergeCmd
+                  "Merge versions of selected path");*)
 
   (*********************************************************************
     Synchronization menu
    *********************************************************************)
+
+  let loadProfile p =
+    debug (fun()-> Util.msg "Loading profile %s..." p);
+    Uicommon.initPrefs p displayWaitMessage getFirstRoot getSecondRoot
+      (termInteract());
+    displayNewProfileLabel p;
+    setMainWindowColumnHeaders()
+  in
+
+  let reloadProfile () =
+    match !Prefs.profileName with
+      None -> ()
+    | Some(n) -> loadProfile n in
+
   grAdd grGo
     (fileMenu#add_item ~key:GdkKeysyms._g
        ~callback:(fun () ->
                     getLock synchronize)
        "Go");
   grAdd grRestart
-    (fileMenu#add_item ~key:GdkKeysyms._r ~callback:detectCmd detectCmdName);
+    (fileMenu#add_item ~key:GdkKeysyms._r
+       ~callback:(fun () -> reloadProfile(); detectCmd())
+       detectCmdName);
   grAdd grRestart
     (fileMenu#add_item ~key:GdkKeysyms._a
-       ~callback:(fun () -> Prefs.set Uicommon.batch true; detectCmd())
-       "Atomically detect updates and proceed");
+       ~callback:(fun () ->
+                    reloadProfile();
+                    Prefs.set Globals.batch true;
+                    detectCmd())
+       "Detect updates and proceed (without waiting)");
   grAdd grRestart
     (fileMenu#add_item ~key:GdkKeysyms._f
        ~callback:(
@@ -1915,7 +1980,10 @@ in
            let rec loop i acc =
              if i >= Array.length (!theState) then acc else
              let notok =
-                 !theState.(i).whatHappened = None
+               (match !theState.(i).whatHappened with
+                   None-> true
+                 | Some(Util.Failed _) -> true
+                 | Some(Util.Succeeded) -> false)
               || match !theState.(i).ri.replicas with
                    Problem _ -> true
                  | Different(rc1,rc2,dir,_) ->
@@ -1932,24 +2000,16 @@ in
                                            (fun p -> "'"^(Path.toString p)^"'")
                                            failedpaths)));
            Prefs.set Globals.paths failedpaths; detectCmd())
-       "Retry on unsynchronized items");
+       "Recheck unsynchronized items");
 
   ignore (fileMenu#add_separator ());
-
-  let newProfile p =
-    debug (fun()-> Util.msg "Loading new profile %s..." p);
-    Uicommon.initPrefs p
-      displayWaitMessage getFirstRoot getSecondRoot;
-    displayNewProfileLabel p;
-    setMainWindowColumnHeaders();
-    detectCmd() in
 
   grAdd grRestart
     (fileMenu#add_item ~key:GdkKeysyms._p
        ~callback:(fun _ ->
           match getProfile() with
             None -> ()
-          | Some(p) -> newProfile p)
+          | Some(p) -> loadProfile p; detectCmd())
        "Select a new profile from the profile dialog");
 
   let fastProf name key =
@@ -1958,7 +2018,7 @@ in
             ~callback:(fun _ ->
                if Sys.file_exists (Prefs.profilePathname name) then begin
                  Trace.status ("Loading profile " ^ name);
-                 newProfile name
+                 loadProfile name; detectCmd()
                end else
                  Trace.status ("Profile " ^ name ^ " not found"))
             ("Select profile " ^ name)) in
@@ -2051,7 +2111,8 @@ let start _ =
       displayWaitMessage
       getProfile
       getFirstRoot
-      getSecondRoot;
+      getSecondRoot
+      (termInteract());
 
     scanProfiles();
     createToplevelWindow();
@@ -2085,5 +2146,7 @@ let start = function
       in
       if displayAvailable then Private.start Uicommon.Graphic
       else Uitext.Body.start Uicommon.Text
+
+let defaultUi = Uicommon.Graphic
 
 end (* module Body *)

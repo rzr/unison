@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/main.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 24 Mar 2002 11:24:03 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* ---------------------------------------------------------------------- *)
 
@@ -10,21 +10,13 @@
    The Main module is actually a functor that takes the user interface
    (e.g., Uitext or Uigtk) as a parameter.  This allows us to build with
    just one user interface at a time, which avoids having to always link
-   in all the libraries needed by all the user interfaces. *)
+   in all the libraries needed by all the user interfaces.
+
+   A non-functor interface is provided to allow the Mac GUI to reuse the
+   startup code for non-GUI options.
+*)
 
 (* ---------------------------------------------------------------------- *)
-
-module Body = functor(Ui : Uicommon.UI) -> struct
-
-(* This code snippet tests for presence of potential stack overflows (e.g.
-   from use of non-tail-recursive list operations on large lists)
-   by setting the stack limit very small.  Uncomment it when you want
-   to stress-test the code. *)
-(*
-let _ = 
-  Gc.set {(Gc.get ()) with Gc.stack_limit = 1 * 1024 / 4; Gc.verbose = 12}
-in Util.msg "REMEMBER TO REMOVE GC DEBUGGING STUFF!!\n" ;;
-*)
 
 (* Some command-line arguments are handled specially during startup, e.g.
        -doc
@@ -43,6 +35,9 @@ in Util.msg "REMEMBER TO REMOVE GC DEBUGGING STUFF!!\n" ;;
    command-line parsing. This is because we want to run the actions
    without loading a profile; and then we can't do command-line
    parsing because it is intertwined with profile loading.
+
+   NB: the Mac GUI handles these options and needs to change if they
+   any more are added.
 *)
 
 let versionPrefName = "version"
@@ -83,13 +78,22 @@ let socket =
          raise(Prefs.IllegalValue "-socket must be followed by a number")))
     (function None -> [] | Some(i) -> [string_of_int i]) ;;
 
+let serverHostName = "host"
+let serverHost =
+  Prefs.createString serverHostName ""
+    "bind the socket to this host name in server socket mode" ""
+
 (* User preference for which UI to use if there is a choice *)
 let uiPrefName = "ui"
 let interface =
   Prefs.create uiPrefName Uicommon.Graphic
-    "select user interface ('text' or 'graphic')"
+    "select user interface ('text' or 'graphic'); command-line only"
     ("This preference selects either the graphical or the textual user "
-     ^ "interface.  Legal values are \\verb|graphic| or \\verb|text|.  \n\nIf "
+     ^ "interface.  Legal values are \\verb|graphic| or \\verb|text|.  "
+     ^ "\n\nBecause this option is processed specially during Unison's "
+     ^ "start-up sequence, it can {\\em only} be used on the command line.  "
+     ^ "In preference files it has no effect."
+     ^ "\n\nIf "
      ^ "the Unison executable was compiled with only a textual interface, "
      ^ "this option has "
      ^ "no effect.  (The pre-compiled binaries are all compiled with both "
@@ -102,99 +106,128 @@ let interface =
                                       text -> textual user interface\n\
                                       graphic -> graphic user interface\n"
                                       ^other^ " is not a legal value")))
-    (function Uicommon.Text -> ["text"] | Uicommon.Graphic -> ["graphic"]);;
+    (function Uicommon.Text -> ["text"]
+      | Uicommon.Graphic -> ["graphic"]);;
 
-let argv = Prefs.scanCmdLine Uicommon.usageMsg;;
+let init() = begin
+  ignore (Gc.set {(Gc.get ()) with Gc.max_overhead = 150});
 
-let catch_all f =
-  try f () with e -> Util.msg "%s\n" (Uicommon.exn2string e); exit 1;;
+  let argv = Prefs.scanCmdLine Uicommon.usageMsg in
 
-(* Print version if requested *)
-if Util.StringMap.mem versionPrefName argv then begin
-  Printf.printf "%s version %s\n" Uutil.myName Uutil.myVersion;
-  exit 0
-end;
+  let catch_all f =
+    (try f () with e -> Util.msg "%s\n" (Uicommon.exn2string e); exit 1) in
 
-(* Print docs for all preferences if requested (this is used when building
-   the manual) *)
-if Util.StringMap.mem prefsdocsPrefName argv then begin
-  Prefs.printFullDocs();
-  exit 0
-end;;
-
-(* Display documentation if requested *)
-begin try
-  begin match Util.StringMap.find docsPrefName argv with
-    [] ->
-      assert false
-  | "topics"::_ ->
-      Printf.printf "Documentation topics:\n";
-      Safelist.iter
-        (fun (sn,(n,doc)) ->
-          if sn<>"" then Printf.printf "   %12s %s\n" sn n)
-        Strings.docs;
-      Printf.printf
-        "\nType \"%s -doc <topic>\" for detailed information about <topic>\n"
-        Uutil.myName;
-      Printf.printf
-        "or \"%s -doc all\" for the whole manual\n\n"
-        Uutil.myName
-  | "all"::_ ->
-      Printf.printf "\n";
-      Safelist.iter
-        (fun (sn,(n,doc)) -> if n<>"Junk" then Printf.printf "%s\n" doc)
-        Strings.docs
-  | topic::_ ->
-      (try
-        let (_,d) = Safelist.assoc topic Strings.docs in
-        Printf.printf "\n%s\n" d
-      with
-        Not_found ->
-          Printf.printf "Documentation topic %s not recognized:"
-            topic;
-          Printf.printf "\nType \"%s -doc topics\" for a list\n"
-            Uutil.myName)
+  (* Print version if requested *)
+  if Util.StringMap.mem versionPrefName argv then begin
+    Printf.printf "%s version %s\n" Uutil.myName Uutil.myVersion;
+    exit 0
   end;
-  exit 0
-with Not_found -> () end;;
 
-(* Install an appropriate function for finding preference files.  (We put
-   this in Util just because the Prefs module lives below the Os module in the
-   dependency hierarchy, so Prefs can't call Os directly.) *)
-Util.supplyFileInUnisonDirFn 
-  (fun n -> Fspath.toString (Os.fileInUnisonDir(n)));
+  (* Print docs for all preferences if requested (this is used when building
+     the manual) *)
+  if Util.StringMap.mem prefsdocsPrefName argv then begin
+    Prefs.printFullDocs();
+    exit 0
+  end;
 
-(* Start a server if requested *)
-if Util.StringMap.mem serverPrefName argv then begin
-  catch_all (fun () ->
-    Os.createUnisonDir();
-    Remote.beAServer();
-    exit 0)
-end;
-
-(* Start a socket server if requested *)
-begin try
-  let i =
-    match Util.StringMap.find socketPrefName argv with
+  (* Display documentation if requested *)
+  begin try
+    begin match Util.StringMap.find docsPrefName argv with
       [] ->
         assert false
-    | i::_ ->
-        try int_of_string i with Failure _ ->
-          Util.msg "-socket must be followed by a number\n";
-          exit 1
-  in
-  catch_all (fun () ->
-    Os.createUnisonDir();
-    Remote.waitOnPort i);
-  exit 0
-with Not_found -> () end;
+    | "topics"::_ ->
+        Printf.printf "Documentation topics:\n";
+        Safelist.iter
+          (fun (sn,(n,doc)) ->
+            if sn<>"" then Printf.printf "   %12s %s\n" sn n)
+          Strings.docs;
+        Printf.printf
+          "\nType \"%s -doc <topic>\" for detailed information about <topic>\n"
+          Uutil.myName;
+        Printf.printf
+          "or \"%s -doc all\" for the whole manual\n\n"
+          Uutil.myName
+    | "all"::_ ->
+        Printf.printf "\n";
+        Safelist.iter
+          (fun (sn,(n,doc)) -> if n<>"Junk" then Printf.printf "%s\n" doc)
+          Strings.docs
+    | topic::_ ->
+        (try
+          let (_,d) = Safelist.assoc topic Strings.docs in
+          Printf.printf "\n%s\n" d
+        with
+          Not_found ->
+            Printf.printf "Documentation topic %s not recognized:"
+              topic;
+            Printf.printf "\nType \"%s -doc topics\" for a list\n"
+              Uutil.myName)
+    end;
+    exit 0
+  with Not_found -> () end;
 
-(* Otherwise, start a ui *)
-match try Util.StringMap.find uiPrefName argv
-      with Not_found -> ["graphic"]
-with
-    "text"::_    -> Ui.start Uicommon.Text
-  | "graphic"::_ -> Ui.start Uicommon.Graphic
-  | _            -> Prefs.printUsage Uicommon.usageMsg; exit 1
+  (* Install an appropriate function for finding preference files.  (We put
+     this in Util just because the Prefs module lives below the Os module in the
+     dependency hierarchy, so Prefs can't call Os directly.) *)
+  Util.supplyFileInUnisonDirFn 
+    (fun n -> Fspath.toString (Os.fileInUnisonDir(n)));
 
+  (* Start a server if requested *)
+  if Util.StringMap.mem serverPrefName argv then begin
+    catch_all (fun () ->
+      Os.createUnisonDir();
+      Remote.beAServer();
+      exit 0)
+  end;
+
+  (* Start a socket server if requested *)
+  begin try
+    let i =
+      match Util.StringMap.find socketPrefName argv with
+        [] ->
+          assert false
+      | i::_ ->
+          try int_of_string i with Failure _ ->
+            Util.msg "-socket must be followed by a number\n";
+            exit 1
+    in
+    catch_all (fun () ->
+      Os.createUnisonDir();
+      Remote.waitOnPort
+        (begin try
+           match Util.StringMap.find serverHostName argv with
+             []     -> None
+           | s :: _ -> Some s
+         with Not_found ->
+           None
+         end)
+        i);
+    exit 0
+  with Not_found -> () end;
+  argv
+end
+
+(* non-GUI startup for Mac GUI version *)
+let nonGuiStartup() = begin
+  let argv = init() in (* might not return *)
+  (* if it returns start a UI *)
+  (try
+    (match Util.StringMap.find uiPrefName argv with
+      "text"::_    -> Uitext.Body.start Uicommon.Text
+    | "graphic"::_ ->
+        (Printf.eprintf "Error: that ui is not supported\n"; flush stderr; exit 1)
+    | _            -> Prefs.printUsage Uicommon.usageMsg; exit 1)
+  with Not_found -> ())
+end
+
+module Body = functor(Ui : Uicommon.UI) -> struct
+  let argv = init() in (* might not return *)
+  (* if it returns start a UI *)
+  Ui.start 
+    (try
+      (match Util.StringMap.find uiPrefName argv with
+        "text"::_    -> Uicommon.Text
+      | "graphic"::_ -> Uicommon.Graphic
+      | _            -> Prefs.printUsage Uicommon.usageMsg; exit 1)
+    with Not_found -> Ui.defaultUi)
 end

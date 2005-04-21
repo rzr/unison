@@ -1,4 +1,4 @@
-###################################################################
+####################################################################
 #         Makefile rules for compiling ocaml programs              #
 ####################################################################
 
@@ -15,10 +15,10 @@ NAME=unison
 VERSIONPREFIX=2.
 
 # $Format: "MAJORVERSION=$(VERSIONPREFIX)$ProjectMajorVersion$"$
-MAJORVERSION=$(VERSIONPREFIX)9
+MAJORVERSION=$(VERSIONPREFIX)10
 
 # $Format: "VERSION=$(VERSIONPREFIX)$ProjectVersion$"$
-VERSION=$(VERSIONPREFIX)9.1
+VERSION=$(VERSIONPREFIX)10.2
 
 ####################################################################
 ### Try to automatically guess OS
@@ -39,15 +39,55 @@ ifeq (${OSTYPE},cygwin)	  # Cygwin Beta 20
 else
 
 # Unix system
-ifeq ($(shell hostname),saul.cis.upenn.edu)
+ifeq ($(shell uname),SunOS)
   OSARCH=solaris
 else
-  OSARCH=linux
+ifeq ($(shell uname),Darwin)
+  OSARCH=osx
+else
+ifeq ($(shell uname),OpenBSD)
+  OSARCH=OpenBSD
 endif
-  ETAGS=etags
+endif
+endif
+ETAGS=etags
 endif
 endif
 endif
+
+# The OCaml lib dir is used by all versions
+# It is extracted from 'ocamlc -v' and Windows '\' separators are turned
+# to Unix '/' separators, and extraneous control-M's are deleted.
+# Unfortunately there is a literal control-M buried in this, I'd rather
+# get rid of it...
+OCAMLLIBDIR=$(shell ocamlc -v | tail -1 | sed -e 's/.* //g' | sed -e 's/\\/\//g' | sed -e 's///g')
+
+# User interface style: 
+#   Legal values are
+#     UISTYLE=text
+#     UISTYLE=gtk
+#     UISTYLE=gtk2
+#     UISTYLE=mac
+#
+# This should be set to an appropriate value automatically, depending 
+# on whether the lablgtk library is available
+LABLGTKLIB=$(OCAMLLIBDIR)/lablgtk
+LABLGTK2LIB=$(OCAMLLIBDIR)/lablgtk2
+ifeq ($(OSARCH),osx)
+  UISTYLE=mac
+else
+  ifeq ($(wildcard $(LABLGTK2LIB)),$(LABLGTK2LIB))
+    UISTYLE=gtk2
+  else
+    ifeq ($(wildcard $(LABLGTKLIB)),$(LABLGTKLIB))
+      UISTYLE=gtk
+    else
+      UISTYLE=text
+    endif
+endif
+endif
+buildexecutable:: 
+	@echo UISTYLE = $(UISTYLE)
 
 ####################################################################
 ### Default parameters
@@ -80,6 +120,11 @@ else
 	@echo Building for Windows with Cygwin GNU C
   else
     EXEC_EXT=
+    ifneq ($(OSARCH),solaris)
+      ifneq ($(OSARCH),osx)
+        CLIBS+=-cclib -lutil
+      endif
+    endif
     buildexecutable:: 
 	@echo Building for Unix
   endif
@@ -93,30 +138,74 @@ buildexecutable::
 	@echo OSARCH = $(OSARCH)
 
 ####################################################################
+### fix for OCaml API change
+
+OCAMLVER := $(shell ocamlc -version)
+
+ubase/uprintf.ml:
+ifeq ($(OCAMLVER),3.06)
+	cp -f ubase/uprintf_old.ml ubase/uprintf.ml
+else
+ifeq ($(OCAMLVER),3.07)
+	cp -f ubase/uprintf_old.ml ubase/uprintf.ml
+else
+ifeq ($(OCAMLVER),3.07+1)
+	cp -f ubase/uprintf_old.ml ubase/uprintf.ml
+else
+ifeq ($(OCAMLVER),3.07+2)
+	cp -f ubase/uprintf_old.ml ubase/uprintf.ml
+else
+	cp -f ubase/uprintf_new.ml ubase/uprintf.ml
+endif
+endif
+endif
+endif
+
+clean::
+	rm -f ubase/uprintf.ml
+
+####################################################################
 ### Unison objects and libraries
 
-buildexecutable:: $(NAME)$(EXEC_EXT)
+ifeq ($(UISTYLE),mac)
+  buildexecutable:: macexecutable
+else
+  buildexecutable:: $(NAME)$(EXEC_EXT)
+endif
+
+macexecutable: $(NAME)-blob.o uimac/English.lproj
+	(cd uimac; xcodebuild OCAMLLIBDIR="$(OCAMLLIBDIR)")
+
+uimac/English.lproj: uimac/English.tgz
+	(cd uimac; tar xfvz English.tgz)
 
 # OCaml objects for the bytecode version
 # File extensions will be substituted for the native code version
+
 OCAMLOBJS += \
-          ubase/safelist.cmo ubase/uprintf.cmo \
+          ubase/myMap.cmo ubase/safelist.cmo ubase/uprintf.cmo \
           ubase/util.cmo ubase/rx.cmo ubase/uarg.cmo \
           ubase/prefs.cmo ubase/trace.cmo \
           \
           lwt/pqueue.cmo lwt/lwt.cmo lwt/lwt_util.cmo lwt/lwt_unix.cmo \
           \
           case.cmo pred.cmo uutil.cmo \
-          fileutil.cmo name.cmo path.cmo fspath.cmo \
-          props.cmo fileinfo.cmo os.cmo lock.cmo uri.cmo common.cmo \
-          tree.cmo checksum.cmo \
-          transfer.cmo xferhint.cmo remote.cmo globals.cmo update.cmo  \
+          fileutil.cmo name.cmo path.cmo fspath.cmo fingerprint.cmo \
+          osx.cmo \
+          props.cmo fileinfo.cmo os.cmo lock.cmo clroot.cmo common.cmo \
+          tree.cmo checksum.cmo terminal.cmo \
+          transfer.cmo xferhint.cmo remote.cmo copy.cmo \
+          globals.cmo update.cmo  \
 	  files.cmo sortri.cmo recon.cmo transport.cmo \
-          strings.cmo uicommon.cmo uitext.cmo main.cmo
+          strings.cmo uicommon.cmo uitext.cmo
+
+OCAMLOBJS+=main.cmo
 
 # OCaml libraries for the bytecode version
 # File extensions will be substituted for the native code version
 OCAMLLIBS+=unix.cma str.cma
+
+COBJS+=osxsupport.o pty.o
 
 ########################################################################
 ### User Interface setup
@@ -124,6 +213,11 @@ OCAMLLIBS+=unix.cma str.cma
 ## Text UI
 ifeq ($(UISTYLE), text)
   OCAMLOBJS+=linktext.cmo
+endif
+
+## Mac UI
+ifeq ($(UISTYLE),mac)
+  OCAMLOBJS+=uimacbridge.cmo
 endif
 
 ## Graphic UI
@@ -137,13 +231,6 @@ endif
 # - unix, absolute      d:/home/foobar/ocaml/lib/labltk
 # -  dos, relative      ..\\..\\ocaml\\lib\\labltk
 # -  dos, absolute      d:\\home\\foobar\\ocaml\\lib\\labltk
-
-# The OCaml lib dir is used by all versions
-# It is extracted from 'ocamlc -v' and Windows '\' separators are turned
-# to Unix '/' separators, and extraneous control-M's are deleted.
-# Unfortunately there is a literal control-M buried in this, I'd rather
-# get rid of it...
-OCAMLLIBDIR=$(shell ocamlc -v | tail -1 | sed -e 's/.* //g' | sed -e 's/\\/\//g' | sed -e 's///g')
 
 # Standard GUI libraries directories
 STDLIBDIR=/usr/lib
@@ -160,14 +247,14 @@ endif
 ifeq ($(OSARCH), linux)
   X11LIBDIR=/usr/X11R6/lib
 endif
+ifeq ($(OSARCH), OpenBSD)
+  X11LIBDIR=/usr/X11R6/lib
+endif
+ifeq ($(OSARCH), osx)
+  X11LIBDIR=/usr/X11R6/lib
+endif
 
 # Developer-only directories
-ifeq ($(shell hostname), saul.cis.upenn.edu)
-  GUILIBDIR=/plclub/ocaml-3.00/lib
-endif
-ifeq ($(shell hostname), ambert.cis.upenn.edu)
-  GUILIBDIR=/new/home/gommier/ocaml-3.00/lib
-endif
 ifeq ($(shell hostname), raptor.research.att.com)
   GUILIBDIR=/usr/common/gtk-1.2.6/lib
   X11LIBDIR=/usr/lib32
@@ -182,6 +269,7 @@ endif
 
 # Gtk GUI
 ifeq ($(UISTYLE), gtk)
+  GUILIBDIR=$(OCAMLLIBDIR)/lablgtk/cclibs
   CAMLFLAGS+=-I $(OCAMLLIBDIR)/lablgtk
   OCAMLOBJS+=pixmaps.cmo uigtk.cmo linkgtk.cmo
   OCAMLLIBS+=lablgtk.cma
@@ -233,6 +321,62 @@ ifeq ($(UISTYLE), gtk)
   endif
 endif
 
+# Gtk2 GUI
+# stse 2003-0521 FIXME for win32: 
+# how to specify versions in GUILIBDIR? glib-2.2.1 instead of glib-1.3?
+ifeq ($(UISTYLE), gtk2)
+  GUILIBDIR=$(OCAMLLIBDIR)/lablgtk2/cclibs
+  CAMLFLAGS+=-I $(OCAMLLIBDIR)/lablgtk2
+  OCAMLOBJS+=pixmaps.cmo uigtk2.cmo linkgtk2.cmo
+  OCAMLLIBS+=lablgtk.cma
+  OCAMLLIBS+=str.cma	
+  ifeq ($(OSARCH), win32)
+    WINSYSLIBS=user32.lib advapi32.lib wsock32.lib gdi32.lib \
+               imm32.lib shell32.lib ole32.lib uuid.lib
+    CLIBS+=-cclib -llablgtk2 \
+           $(GUILIBDIR)/glib-1.3.lib \
+           $(GUILIBDIR)/gmodule-1.3.lib \
+           $(GUILIBDIR)/gdk-1.3.lib \
+           $(GUILIBDIR)/gtk-1.3.lib \
+           $(WINSYSLIBS)
+    STATICLIBS+=-cclib -llablgtk2 \
+                $(GUILIBDIR)/static/glib-1.3.lib \
+                $(GUILIBDIR)/static/gmodule-1.3.lib \
+                $(GUILIBDIR)/static/gdk-1.3.lib \
+                $(GUILIBDIR)/static/gtk-1.3.lib \
+                $(WINSYSLIBS)
+  else
+    ifeq ($(OSARCH), win32gnuc)
+      WINSYSLIBS=
+#-cclib user32.lib -cclib advapi32.lib -cclib wsock32.lib \
+#               -cclib gdi32.lib -cclib imm32.lib -cclib shell32.lib \
+#               -cclib ole32.lib -cclib uuid.lib
+      CLIBS+=-cclib -llablgtk2 \
+           -cclib $(GUILIBDIR)/glib-1.3.lib \
+           -cclib $(GUILIBDIR)/gmodule-1.3.lib \
+           -cclib $(GUILIBDIR)/gdk-1.3.lib \
+           -cclib $(GUILIBDIR)/gtk-1.3.lib \
+           $(WINSYSLIBS)
+      STATICLIBS+=-cclib -llablgtk2 \
+                -cclib $(GUILIBDIR)/cclibs/glib-1.3.lib \
+                -cclib $(GUILIBDIR)/cclibs/gmodule-1.3.lib \
+                -cclib $(GUILIBDIR)/cclibs/gdk-1.3.lib \
+                -cclib $(GUILIBDIR)/cclibs/gtk-1.3.lib \
+                $(WINSYSLIBS)
+    else
+      ifeq ($(OSARCH), solaris)
+        STATICLIBS+=-cclib -llablgtk2 \
+                  $(GUILIBDIR)/libgtk.a \
+                  $(GUILIBDIR)/libgdk.a \
+                  $(GUILIBDIR)/libgmodule.a \
+                  $(GUILIBDIR)/libglib.a \
+                  $(X11LIBDIR)/libXext.a \
+                  $(X11LIBDIR)/libX11.a
+      endif
+    endif
+  endif
+endif
+
 ####################################################################
 ### Static build setup
 
@@ -246,8 +390,36 @@ ifeq ($(STATIC), true)
   ifeq ($(OSARCH), linux)
     STATICLIBS+=-cclib -static
   endif
+  ifeq ($(OSARCH), OpenBSD)
+    STATICLIBS+=-cclib -static
+  endif
+  ifeq ($(OSARCH), osx)
+    STATICLIBS+=-cclib -static
+  endif
   CLIBS=$(STATICLIBS)
 endif
+
+# Tony Shepherd told us that he had to use the following to get the GTK
+# version to build on Solaris 8/8 
+#
+#         ifeq ($(OSARCH), solaris)
+#             STATICLIBS+=-cclib -llablgtk \
+#                     /opt/gnome-1.4/lib/libgtk.a \
+#                     /opt/gnome-1.4/lib/libgdk.a \
+#                     /opt/gnome-1.4/lib/libgmodule.a \
+#                     /opt/gnome-1.4/lib/libglib.a \
+#                      /usr/openwin/lib/libX11.a \
+#                     /usr/openwin/lib/libXext.a
+#
+# He said:
+#   In solaris 8 (on the companion software CD) and solaris 9 (part of the
+#   distribution), the gtk and gdk libraries are available in SFWgtk and
+#   SUNWGtku respectively and glib and gmodule in SFWglib and SUNWGlib
+#   respectively, but only in .so format so are useless for creating a
+#   static bimary:(.
+#   
+#   However, the .a libraries are part of the evaluation copy of Gnome 1.4
+#   that comes with solaris 8, so I used those to build.
 
 ####################################################################
 ### Dependencies
@@ -255,8 +427,14 @@ endif
 # Include an automatically generated list of dependencies
 include .depend
 
-ifeq ($(shell echo type -t ocamldot | bash), file)
-  OCAMLDOT=true
+ifeq ($(OSARCH), OpenBSD)
+  ifeq ($(shell echo type ocamldot | ksh), file)
+    OCAMLDOT=true
+  endif
+else
+  ifeq ($(shell echo type -t ocamldot | bash), file)
+    OCAMLDOT=true
+  endif
 endif
 
 # Rebuild dependencies (must be invoked manually)
@@ -281,8 +459,11 @@ endif
 
 ifeq ($(DEBUGGING), false)
   ifneq ($(OSARCH), win32)
-    # Strip the binary (does not work with MS compiler)
-    CFLAGS+=-cclib -Wl,-s 
+    ifneq ($(OSARCH), osx)
+      # Strip the binary (does not work with MS compiler; might not work 
+      # under OSX)
+      CFLAGS+=-cclib -Wl,-s 
+    endif
   endif
 endif
 
@@ -302,7 +483,7 @@ ifeq ($(NATIVE), true)
     CLIBS+=-cclib -ldl
   endif
 
-  CAMLOBJS=$(subst .cmo,.cmx, $(OCAMLOBJS))
+  CAMLOBJS=$(subst .cmo,.cmx, $(subst .cma,.cmxa, $(OCAMLOBJS)))
   CAMLLIBS=$(subst .cma,.cmxa, $(OCAMLLIBS))
 
 else
@@ -311,7 +492,7 @@ else
   CAMLC=$(OCAMLC)
   CAMLFLAGS+=-custom
   ifeq ($(DEBUGGING), true)
-    COMPFLAGS+=-g
+    CAMLFLAGS+=-g
   endif
 
   CAMLOBJS=$(OCAMLOBJS)
@@ -338,9 +519,17 @@ win32rc/unison.res.lib: win32rc/unison.res
 	@echo "$(OCAMLOPT): $< ---> $@"
 	$(OCAMLOPT) $(CAMLFLAGS) -c $(CWD)/$<
 
+%.o: %.c
+	@echo "$(OCAMLOPT): $< ---> $@"
+	$(CAMLC) $(CAMLFLAGS) -c $(CWD)/$<
+
 $(NAME)$(EXEC_EXT): $(CAMLOBJS) $(COBJS)
 	@echo Linking $@
 	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $(CLIBS) $^
+
+$(NAME)-blob.o: $(CAMLOBJS) $(COBJS)
+	@echo Linking $@
+	$(CAMLC) -output-obj -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $(CLIBS) $^
 
 %$(EXEC_EXT): %.ml
 	$(OCAMLC) -verbose -o $@ $^
@@ -353,7 +542,6 @@ clean::
 	-$(RM) -rf *.o core gmon.out *~ .*~
 	-$(RM) -rf *.obj *.lib *.exp
 	-$(RM) -rf *.tmp *.bak?.tmp .*.bak?.tmp
-
 
 paths:
 	@echo PATH = $(PATH)

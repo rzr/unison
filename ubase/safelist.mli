@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/ubase/safelist.mli $ *)
-(* $I2: Last modified by bcpierce on Sun, 24 Mar 2002 11:24:03 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Mon, 09 Sep 2002 21:59:33 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* All functions here are tail recursive and will work for arbitrary
    sized lists (unlike some of the standard ones).  The intention is that
@@ -11,8 +11,8 @@ val map : ('a -> 'b) -> 'a list -> 'b list
 val rev_map : ('a -> 'b) -> 'a list -> 'b list
 val append : 'a list -> 'a list -> 'a list
 val rev_append : 'a list -> 'a list -> 'a list
-val concat : 'a list list -> 'a list       
-val combine : 'a list -> 'b list -> ('a * 'b) list 
+val concat : 'a list list -> 'a list
+val combine : 'a list -> 'b list -> ('a * 'b) list
 val iter : ('a -> unit) -> 'a list -> unit
 val iteri : (int -> 'a -> unit) -> 'a list -> unit   (* zero-based *)
 val rev : 'a list -> 'a list
@@ -29,11 +29,13 @@ val exists : ('a -> bool) -> 'a list -> bool
 val split : ('a * 'b) list -> 'a list * 'b list
 val find : ('a -> bool) -> 'a list -> 'a
 val filter : ('a -> bool) -> 'a list -> 'a list
+val partition : ('a -> bool) -> 'a list -> 'a list * 'a list
 val remove_assoc : 'a -> ('a * 'b) list -> ('a * 'b) list
 val fold_left : ('a -> 'b -> 'a) -> 'a -> 'b list -> 'a
 val map2 : ('a -> 'b -> 'c) -> 'a list -> 'b list -> 'c list
 val iter2 : ('a -> 'b -> unit) -> 'a list -> 'b list -> unit
 val stable_sort : ('a -> 'a -> int) -> 'a list -> 'a list
+val sort : ('a -> 'a -> int) -> 'a list -> 'a list
 
 (* Other useful list-processing functions *)
 val filterMap : ('a -> 'b option) -> 'a list -> 'b list

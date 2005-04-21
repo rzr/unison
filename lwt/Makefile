@@ -48,7 +48,7 @@ uninstall:
 	ocamlfind remove $(NAME)
 
 clean::
-	rm -f *.cmi *.cmo *.cmx *.cma *.cmxa *.a *.o *~
+	rm -f *.cmi *.cmo *.cmx *.cma *.cmxa *.a *.o *~ *.bak
 
 clean::
 	cd example && make clean

@@ -1,28 +1,40 @@
 (* $I1: Unison file synchronizer: src/path.mli $ *)
-(* $I2: Last modified by zheyang on Wed, 12 Dec 2001 02:26:21 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Tue, 08 Jun 2004 05:16:03 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* Abstract type of relative pathnames *)
-type t
+type 'a path
 
-val empty : t
+(* Pathname valid on both replica (case insensitive in case
+   insensitive mode) *)
+type t = [`Global] path
+
+(* Pathname specialized to a replica (case sensitive on a case
+   sensitive filesystem) *)
+type local = [`Local] path
+
+val empty : 'a path
 val length : t -> int
-val isEmpty : t -> bool
+val isEmpty : local -> bool
 
-val child : t -> Name.t -> t
-val parent : t -> t
+val child : 'a path -> Name.t -> 'a path
+val parent : local -> local
 val finalName : t -> Name.t option
 val deconstruct : t -> (Name.t * t) option
-val deconstructRev : t -> (Name.t * t) option
+val deconstructRev : local -> (Name.t * local) option
 
-val fromString : string -> t
+val fromString : string -> 'a path
 val toNames : t -> Name.t list
-val toString : t -> string
-val toDebugString : t -> string
+val toString : 'a path -> string
+val toDebugString : local -> string
+
+val addSuffixToFinalName : local -> string -> local
+val addPrefixToFinalName : local -> string -> local
 
 val compare : t -> t -> int
+val hash : local -> int
 
-val addSuffixToFinalName : t -> string -> t
-val addPrefixToFinalName : t -> string -> t
+val followLink : local -> bool
 
-val followLink : t -> bool
+val magic : t -> local
+val magic' : local -> t

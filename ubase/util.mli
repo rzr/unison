@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/ubase/util.mli $ *)
-(* $I2: Last modified by zheyang on Sat, 06 Apr 2002 18:26:24 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* Miscellaneous utility functions and datatypes *)
 
@@ -59,7 +59,7 @@ val padto : int -> string -> string
 
 (* Architecture *)
 val osType : [`Unix | `Win32]
-val isCygwin: bool
+val isCygwin: bool    (* osType will be `Win32 in this case *)
 
 (* Options *)
 val extractValueFromOption : 'a option -> 'a
@@ -73,6 +73,11 @@ val percentageOfTotal :
   int        (* percentage of total *)
 val percent2string : float -> string
 val fileInHomeDir : string -> string
+
+(* Just like the versions in the Unix module, but raising Transient
+   instead of Unix_error *)
+val localtime : float -> Unix.tm
+val time : unit -> float
 
 (* Global debugging printer (it's exposed as a ref so that modules loaded
    before Trace can use it; the ref will always be set to Some(Trace.debug)) *)
@@ -93,3 +98,6 @@ val fileInUnisonDir : string -> string
 (* Format and print messages on the standard error stream, being careful to
    flush the stream after each one *)
 val msg : ('a, out_channel, unit) format -> 'a
+
+(* Set the info line *)
+val set_infos : string -> unit

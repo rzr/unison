@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/uutil.mli $ *)
-(* $I2: Last modified by vouillon on Mon, 25 Mar 2002 12:08:56 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* This module collects a number of low-level, Unison-specific utility
    functions.  It is kept separate from the Util module so that that module
@@ -18,31 +18,19 @@ module type FILESIZE = sig
   val zero : t
   val dummy : t
   val add : t -> t -> t
-  val neg : t -> t
+  val sub : t -> t -> t
   val toFloat : t -> float
   val toString : t -> string
   val ofInt : int -> t
+  val ofInt64 : int64 -> t
+  val toInt : t -> int
+  val toInt64 : t -> int64
+  val fromStats : Unix.LargeFile.stats -> t
   val hash : t -> int
   val percentageOfTotalSize : t -> t -> float
 end
 
 module Filesize : FILESIZE
-
-(* FIX: We should eventually get rid of this... *)
-(* An abstract type of file sizes                                            *)
-type filesize
-val zerofilesize : filesize
-val dummyfilesize : filesize
-val addfilesizes : filesize -> filesize -> filesize
-val filesize2float : filesize -> float
-val filesize2string : filesize -> string
-val int2filesize : int -> filesize
-val hashfilesize : filesize -> int
-val percentageOfTotalSize :
-  filesize ->   (* current value *)
-  filesize ->   (* total value *)
-  float         (* percentage of total *)
-val extendfilesize : filesize -> Filesize.t
 
 (* The UI may (if it likes) supply a function to be used to show progress of *)
 (* file transfers.                                                           *)
@@ -62,5 +50,14 @@ val showProgress : File.t -> Filesize.t -> string -> unit
 val readWrite :
      Unix.file_descr            (* source *)
   -> Unix.file_descr            (* target *)
+  -> (int -> unit)              (* progress notification *)
+  -> unit
+
+(* Utility function to transfer a given number of bytes from one file
+   descriptor to another *)
+val readWriteBounded :
+     Unix.file_descr            (* source *)
+  -> Unix.file_descr            (* target *)
+  -> Filesize.t
   -> (int -> unit)              (* progress notification *)
   -> unit
