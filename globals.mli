@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/globals.mli $ *)
-(* $I2: Last modified by vouillon on Mon, 25 Mar 2002 12:08:56 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* Global variables and functions needed by top-level modules and user       *)
 (* interfaces                                                                *)
@@ -11,7 +11,9 @@ val rawRoots : unit -> string list
 val setRawRoots : string list -> unit
 
 (* Parse and canonize roots from their raw names                             *)
-val installRoots : unit -> unit Lwt.t
+val installRoots : (string->string) option -> unit Lwt.t
+
+val installRoots2 : unit -> unit
 
 (* The roots of the synchronization (with names canonized, but in the same   *)
 (* order as the user gave them)                                              *)
@@ -62,6 +64,14 @@ val allHostsMap : (string -> 'a) -> 'a list
 (* dependency.)                                                              *)
 val propagatePrefs : unit -> unit Lwt.t
 
-(* Predicates on paths                                                       *)
+(* User preference: when true, don't ask any questions *)
+val batch : bool Prefs.t
+
+(* Predicates on paths *)
 val ignore : Pred.t
-val shouldIgnore : Path.t -> bool
+val shouldIgnore : 'a Path.path -> bool
+val shouldMerge : 'a Path.path -> bool
+val shouldBackup : 'a Path.path -> bool  
+
+(* Merging commands *)  
+val mergeCmdForPath : Path.t -> string

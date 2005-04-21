@@ -46,13 +46,24 @@ val waitpid : Unix.wait_flag list -> int -> (int * Unix.process_status) Lwt.t
 
 val system : string -> Unix.process_status Lwt.t
 
-val open_process_in: string -> in_channel Lwt.t
-val open_process_out: string -> out_channel Lwt.t
-val open_process: string -> (in_channel * out_channel) Lwt.t
+type lwt_in_channel
+type lwt_out_channel
+
+val input_char : lwt_in_channel -> char Lwt.t
+val input_line : lwt_in_channel -> string Lwt.t
+val input : lwt_in_channel -> string -> int -> int -> int Lwt.t
+val really_input : lwt_in_channel -> string -> int -> int -> unit Lwt.t
+
+val open_process_in: string -> lwt_in_channel Lwt.t
+val open_process_out: string -> lwt_out_channel Lwt.t
+val open_process: string -> (lwt_in_channel * lwt_out_channel) Lwt.t
 val open_process_full:
-  string -> string array -> (in_channel * out_channel * in_channel) Lwt.t
-val close_process_in: in_channel -> Unix.process_status Lwt.t
-val close_process_out: out_channel -> Unix.process_status Lwt.t
-val close_process: in_channel * out_channel -> Unix.process_status Lwt.t
+  string -> string array ->
+  (lwt_in_channel * lwt_out_channel * lwt_in_channel) Lwt.t
+val close_process_in: lwt_in_channel -> Unix.process_status Lwt.t
+val close_process_out: lwt_out_channel -> Unix.process_status Lwt.t
+val close_process:
+  lwt_in_channel * lwt_out_channel -> Unix.process_status Lwt.t
 val close_process_full:
-  in_channel * out_channel * in_channel -> Unix.process_status Lwt.t
+  lwt_in_channel * lwt_out_channel * lwt_in_channel ->
+  Unix.process_status Lwt.t

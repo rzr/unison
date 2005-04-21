@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/common.ml $ *)
-(* $I2: Last modified by zheyang on Tue, 09 Apr 2002 17:08:59 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 type hostname = string
 
@@ -54,10 +54,14 @@ let sortRoots rootList = List.sort compareRoots rootList
 
 (* ---------------------------------------------------------------------- *)
 
-type prevState = Previous of Fileinfo.typ * Props.t * Os.fingerprint | New
+type prevState =
+    Previous of Fileinfo.typ * Props.t * Os.fullfingerprint * Osx.ressStamp
+  | New
 
 type contentschange =
-    ContentsSame | ContentsUpdated of Os.fingerprint * Fileinfo.stamp
+    ContentsSame
+  | ContentsUpdated of Os.fullfingerprint * Fileinfo.stamp * Osx.ressStamp
+
 type permchange     = PropsSame    | PropsUpdated
 
 type updateItem =
@@ -94,11 +98,13 @@ type replicaContent = Fileinfo.typ * status * Props.t * updateItem
 
 type direction =
     Conflict
+  | Merge
   | Replica1ToReplica2
   | Replica2ToReplica1
 
 let direction2string = function
     Conflict -> "conflict"
+  | Merge -> "merge"
   | Replica1ToReplica2 -> "replica1 to replica2"
   | Replica2ToReplica1 -> "replica2 to replica1"
 
@@ -117,11 +123,11 @@ type reconItem =
 let ucLength = function
     File(desc,_)  -> Props.length desc
   | Dir(desc,_,_) -> Props.length desc
-  | _             -> Uutil.zerofilesize
+  | _             -> Uutil.Filesize.zero
 
 let uiLength = function
     Updates(uc,_) -> ucLength uc
-  | _             -> Uutil.zerofilesize
+  | _             -> Uutil.Filesize.zero
 
 let riAction (_, s, _, _) (_, s', _, _) =
   match s, s' with
@@ -136,7 +142,7 @@ let rcLength ((_, _, p, _) as rc) rc' =
   if riAction rc rc' = `SetProps then
     Uutil.Filesize.zero
   else
-    Uutil.extendfilesize (Props.length p)
+    Props.length p
 
 let riLength ri =
   match ri.replicas with
@@ -145,13 +151,24 @@ let riLength ri =
         Replica1ToReplica2 -> rcLength rc1 rc2
       | Replica2ToReplica1 -> rcLength rc2 rc1
       | Conflict           -> Uutil.Filesize.zero
+      | Merge              -> Uutil.Filesize.zero (* underestimate :-*)
       end
   | _ ->
       Uutil.Filesize.zero
 
-let uiFingerprint = function
-    Updates(File(_, ContentsUpdated(fp, _)), _) -> Some fp
-  | _ -> None
+let fileInfos ui1 ui2 =
+  match ui1, ui2 with
+    (Updates (File (desc1, ContentsUpdated (fp1, _, ress1)),
+              Previous (`FILE, desc2, fp2, ress2)),
+     NoUpdates)
+  | (NoUpdates,
+     Updates (File (desc2, ContentsUpdated (fp2, _, ress2)),
+              Previous (`FILE, desc1, fp1, ress1)))
+  | (Updates (File (desc1, ContentsUpdated (fp1, _, ress1)), _),
+     Updates (File (desc2, ContentsUpdated (fp2, _, ress2)), _)) ->
+       (desc1, fp1, ress1, desc2, fp2, ress2)
+  | _ ->
+      assert false
 
 let problematic ri =
   match ri.replicas with

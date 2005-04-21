@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/uitext.ml $ *)
-(* $I2: Last modified by zheyang on Sat, 06 Apr 2002 18:26:24 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
 open Lwt
@@ -79,11 +79,15 @@ let alwaysDisplay message =
   print_string message;
   flush stdout
 
+let alwaysDisplayAndLog message =
+(*  alwaysDisplay message;*)
+  Trace.log (message ^ "\n")
+
 let display message =
   if not (Prefs.read silent) then alwaysDisplay message
 
 let displayWhenInteractive message =
-  if not (Prefs.read Uicommon.batch) then alwaysDisplay message
+  if not (Prefs.read Globals.batch) then alwaysDisplay message
 
 let getInput () =
   if  !cbreakMode = None then
@@ -213,18 +217,18 @@ let interact rilist =
                   "from "^host1^" to "^host2,
                   "from "^host2^" to "^host1
               in
-              if Prefs.read Uicommon.batch && not (Prefs.read Trace.terse) then
+              if Prefs.read Globals.batch && not (Prefs.read Trace.terse) then
                 (display "\n"; displayDetails ri);
               selectAction
-                (if Prefs.read Uicommon.batch then Some " " else None)
-                [((if !dir=Conflict && not (Prefs.read Uicommon.batch)
+                (if Prefs.read Globals.batch then Some " " else None)
+                [((if !dir=Conflict && not (Prefs.read Globals.batch)
                      then ["f"]  (* Offer no default behavior if we've got
                                     a conflict and we're in interactive mode *)
                      else ["";"f";" "]),
                   ("follow " ^ Uutil.myName ^ "'s recommendation (if any)"),
                   fun ()->
                     newLine ();
-                    if !dir = Conflict && not (Prefs.read Uicommon.batch)
+                    if !dir = Conflict && not (Prefs.read Globals.batch)
                     then begin
                       display "No default action [type '?' for help]\n";
                       repeat()
@@ -245,6 +249,12 @@ let interact rilist =
                   (fun () ->
                      ignore (Uicommon.ignoreName ri.path) rest
                        "files with this name"));
+                 (["m"],
+                  ("merge the versions"),
+                  (fun () ->
+                    dir := Merge;
+                    redisplayri();
+                    next()));
                  (["d"],
                   ("show differences"),
                   (fun () ->
@@ -255,24 +265,6 @@ let interact rilist =
                        (fun s -> Printf.printf "%s\n" s)
                        Uutil.File.dummy;
                      repeat()));
-                 (["m"],
-                  ("apply merge program"),
-                  (fun () ->
-                      newLine ();
-                      try
-                        Uicommon.applyMerge ri display
-                          (fun s ->
-                             alwaysDisplay s;
-                             let res = getInput () in
-                             newLine();
-                             (res="y") || (res="Y"))
-                          Uutil.File.dummy
-                          (Prefs.read Transport.backups);
-                        loop prev rest (* forget this ri, since it's done *)
-                      with Util.Transient(s) ->
-                             alwaysDisplay (s^"\n"); repeat ()
-                         | Uicommon.Synch_props newRi ->
-                             loop prev (newRi::rest)));
                  (["x"],
                   ("show details"),
                   (fun () -> display "\n"; displayDetails ri; repeat()));
@@ -321,16 +313,64 @@ let interact rilist =
   in
     loop [] rilist
 
+let verifyMerge title text =
+  Printf.printf "\n%s\n\n%s\n\n" title text;
+  if Prefs.read Globals.batch then
+    true
+  else begin
+    display "Commit results of merge? ";
+    selectAction
+      None   (* Maybe better: (Some "n") *)
+      [(["y";"g"],
+        "Yes: commit",
+        (fun() -> true));
+       (["n"],
+        "No: leave this file unchanged",
+        (fun () -> false));
+       ]
+      (fun () -> display "Commit results of merge? ")
+  end 
+
 let doTransport reconItemList =
+  let totalBytesToTransfer =
+    ref
+      (List.fold_left
+         (fun l ri -> Uutil.Filesize.add l (Common.riLength ri))
+         Uutil.Filesize.zero reconItemList) in
+  let totalBytesTransferred = ref Uutil.Filesize.zero in
+  let t0 = Unix.gettimeofday () in
+  let showProgress _ b _ =
+    totalBytesTransferred := Uutil.Filesize.add !totalBytesTransferred b;
+    let v =
+      (Uutil.Filesize.percentageOfTotalSize
+         !totalBytesTransferred !totalBytesToTransfer)
+    in
+    let t1 = Unix.gettimeofday () in
+    let remTime =
+      if v <= 0. then "--:--"
+      else if v >= 100. then "00:00"
+      else
+        let t = truncate ((t1 -. t0) *. (100. -. v) /. v +. 0.5) in
+        Format.sprintf "%02d:%02d" (t / 60) (t mod 60)
+    in
+    Util.set_infos
+      (Format.sprintf "%s  %s ETA" (Util.percent2string v) remTime)
+  in
+  if not (Prefs.read Trace.terse) && (Prefs.read Trace.debugmods = []) then
+    Uutil.setProgressPrinter showProgress;
+
   Transport.logStartTime();
-  let rFailureFlag = ref false in
-  let uiWrapper f =
+  let rFailures = ref 0 in
+  let rFailureMessages = ref [] in
+  let uiWrapper ri f =
     catch f
       (fun e ->
         match e with
           Util.Transient s ->
-            alwaysDisplay ("Failed: " ^ s ^ "\n");
-            rFailureFlag := true;
+            let m = "[" ^ (Path.toString ri.path)  ^ "]: " ^ s in
+            alwaysDisplay ("Failed " ^ m ^ "\n");
+            rFailures := !rFailures + 1;
+            rFailureMessages := (Path.toString ri.path) :: !rFailureMessages;
             return ()
         | _ ->
             fail e) in
@@ -340,8 +380,9 @@ let doTransport reconItemList =
         actions
     | ri :: rest when pRiThisRound ri ->
         loop rest
-          (uiWrapper
-            (fun () -> Transport.transportItem ri Uutil.File.dummy) :: actions)
+          (uiWrapper ri
+             (fun () -> Transport.transportItem ri (Uutil.File.ofLine 0) verifyMerge)
+           :: actions)
           pRiThisRound
     | _ :: rest ->
         loop rest actions pRiThisRound
@@ -354,7 +395,11 @@ let doTransport reconItemList =
     (let actions = loop reconItemList [] Common.isDeletion in
     Lwt_util.join actions);
   Transport.logEndTime();
-  (!rFailureFlag)
+
+  Uutil.setProgressPrinter (fun _ _ _ -> ());
+  Util.set_infos "";
+
+  (!rFailures, Safelist.rev !rFailureMessages)
 
 let setWarnPrinterForInitialization()=
   Util.warnPrinter :=
@@ -369,7 +414,7 @@ let setWarnPrinter() =
      Some(fun s ->
             alwaysDisplay "Warning: ";
             alwaysDisplay s;
-            if not (Prefs.read Uicommon.batch) then begin
+            if not (Prefs.read Globals.batch) then begin
               display "Press return to continue.";
               selectAction None
                 [(["";" ";"y"],
@@ -378,7 +423,7 @@ let setWarnPrinter() =
                  (["n";"q";"x"],
                     ("Exit"),
                     fun()->
-                      Update.unlockArchives ();
+                      Lwt_unix.run (Update.unlockArchives ());
                       exit 1)]
                 (fun()-> display  "Press return to continue.")
             end)
@@ -393,97 +438,143 @@ let formatStatus major minor =
     lastMajor := major;
     s
 
+exception Done of int
+
 let start _ =
   begin try
     (* Just to make sure something is there... *)
     setWarnPrinterForInitialization();
     Uicommon.uiInit
-      (fun s -> Util.msg "%s\n%s" Uicommon.shortUsageMsg s; exit 1)
+      (fun s -> Util.msg "%s\n%s\n" Uicommon.shortUsageMsg s; exit 1)
       (fun s -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)
       (fun () -> if not (Prefs.read silent)
                  then Util.msg "Contacting server...\n")
       (fun () -> Some "default")
       (fun () -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)
-      (fun () -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1);
+      (fun () -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)
+      None;
 
+    (* Some preference settings imply others... *)
     if Prefs.read silent then begin
-      Prefs.set Uicommon.batch true;
+      Prefs.set Globals.batch true;
       Prefs.set Trace.terse true;
       Prefs.set dumbtty true;
       Trace.sendLogMsgsToStderr := false;
     end;
+    if Prefs.read Uicommon.repeat <> "" then begin
+      Prefs.set Globals.batch true;
+    end;
+
     (* Tell OCaml that we want to catch Control-C ourselves, so that
        we get a chance to reset the terminal before exiting *)
     Sys.catch_break true;
     (* Put the terminal in cbreak mode if possible *)
-    if not (Prefs.read Uicommon.batch) then setupTerminal();
+    if not (Prefs.read Globals.batch) then setupTerminal();
     setWarnPrinter();
     Trace.statusFormatter := formatStatus;
-    Trace.status "Looking for changes";
-    let (reconItemList, thereAreEqualUpdates) =
-      Recon.reconcileAll (Update.findUpdates()) in
-    let exitStatus =
-      begin match reconItemList with
-        [] ->
-          (if thereAreEqualUpdates then
-            Trace.status "Nothing to do: replicas have been changed only in identical ways since last sync."
-          else
-            Trace.status "Nothing to do: replicas have not been changed since last sync.");
-          Uicommon.perfectExit
-      | _ ->
-          let rec interactandconfirm(): bool * bool
-              (* anySkipped?, anyFailure? *)
-              =
-            let (proceed,newReconItemList) = interact reconItemList in
-            let (updatesToDo, skipped) =
-              Safelist.fold_left
-                (fun (howmany, skipped) ri ->
-                  if problematic ri then (howmany, skipped + 1)
-                  else (howmany + 1, skipped))
-                (0, 0) newReconItemList in
-            let doit() =
-              newLine();
-              Trace.status "Propagating updates";
-              let timer = Trace.startTimer "Transmitting all files" in
-              let anyFailure = doTransport newReconItemList in
-              Trace.showTimer timer;
-              Trace.status "Saving synchronizer state";
-              Update.commitUpdates ();
-              Trace.status "Synchronization complete";
-              (skipped > 0, anyFailure)
-            in
-            if updatesToDo = 0 then
-              (display "No updates to propagate\n";
-               (skipped > 0, false))
-            else if proceed=ProceedImmediately then
-              doit()
-            else begin
-              displayWhenInteractive "\nProceed with propagating updates? ";
-              selectAction
-                (* BCP: I found it counterintuitive that every other prompt
-                   except this one would expect <CR> as a default.  But I
-                   got talked out of offering a default here, on the basis
-                   of safety. *)
-                (if Prefs.read Uicommon.batch then Some "y" else None)
-                [(["y"],
-                  "Yes: proceed with updates as selected above",
-                  doit);
-                 (["n"],
-                  "No: go through selections again",
-                  (fun () -> newLine(); interactandconfirm()));
-                 (["q"],
-                  ("exit " ^ Uutil.myName ^ " without propagating any changes"),
-                  fun () -> raise Sys.Break)
-               ]
-                (fun () -> display "Proceed with propagating updates? ")
-            end
-          in Uicommon.exitCode(interactandconfirm())
-      end in
-    (* Put the terminal back in "sane" mode, if necessary *)
-    restoreTerminal();
-    exit exitStatus
+
+    (* Do it *)
+    let lastSync = ref None in  
+    while true do
+      if Prefs.read Uicommon.repeat <> "" then begin
+        try
+          let n = int_of_string (Prefs.read Uicommon.repeat) in
+          (* Repeat every n seconds *)
+          match !lastSync with
+            None -> lastSync := Some(0,0)  (* don't wait first time *)
+          | Some _ ->
+              Trace.status (Printf.sprintf "Sleeping for %d seconds..." n);
+              Unix.sleep n
+        with Invalid_argument "int_of_string" ->
+          assert false (* file watching not yet implemented *)
+      end;
+      Trace.status "Looking for changes";
+      let (reconItemList, thereAreEqualUpdates) =
+        Recon.reconcileAll (Update.findUpdates()) in
+      let exitStatus =
+        begin match reconItemList with
+          [] ->
+            (if thereAreEqualUpdates then
+              Trace.status ("Nothing to do: replicas have been changed only "
+                            ^ "in identical ways since last sync.")
+            else
+              Trace.status "Nothing to do: replicas have not been changed since last sync.");
+            Uicommon.perfectExit
+        | _ ->
+            let rec interactandconfirm(): bool * bool (* anySkipped?, anyFailure? *) =
+              let (proceed,newReconItemList) = interact reconItemList in
+              let (updatesToDo, skipped) =
+                Safelist.fold_left
+                  (fun (howmany, skipped) ri ->
+                    if problematic ri then (howmany, skipped + 1)
+                    else (howmany + 1, skipped))
+                  (0, 0) newReconItemList in
+              let doit() =
+                newLine();
+                Trace.status "Propagating updates";
+                let timer = Trace.startTimer "Transmitting all files" in
+                let failures,msgs = doTransport newReconItemList in
+                Trace.showTimer timer;
+                Trace.status "Saving synchronizer state";
+                Update.commitUpdates ();
+                let trans = updatesToDo - failures in
+                let summary =
+                  Printf.sprintf
+                   "Synchronization %s  (%d item%s transferred, %d skipped, %d failure%s)"
+                   (if failures=0 then "complete" else "incomplete")
+                   trans (if trans=1 then "" else "s")
+                   skipped
+                   failures (if failures=1 then "" else "s") in
+                Trace.log (summary ^ "\n");
+                if skipped>0 then
+                  Safelist.iter
+                    (fun ri ->
+                    if problematic ri then
+                      alwaysDisplayAndLog
+                        ("  skipped: " ^ (Path.toString ri.path)))
+                    newReconItemList;
+                if failures>0 then
+                  Safelist.iter
+                    (fun m -> alwaysDisplayAndLog ("  failed: " ^ m))
+                    msgs;
+                (skipped > 0, failures > 0)
+              in
+              if updatesToDo = 0 then
+                (display "No updates to propagate\n";
+                 (skipped > 0, false))
+              else if proceed=ProceedImmediately then
+                doit()
+              else begin
+                displayWhenInteractive "\nProceed with propagating updates? ";
+                selectAction
+                  (* BCP: I find it counterintuitive that every other prompt
+                     except this one would expect <CR> as a default.  But I
+                     got talked out of offering a default here, because of
+                     safety considerations (too easy to press <CR> one time
+                     too many). *)
+                  (if Prefs.read Globals.batch then Some "y" else None)
+                  [(["y";"g"],
+                    "Yes: proceed with updates as selected above",
+                    doit);
+                   (["n"],
+                    "No: go through selections again",
+                    (fun () -> newLine(); interactandconfirm()));
+                   (["q"],
+                    ("exit " ^ Uutil.myName ^ " without propagating any changes"),
+                    fun () -> raise Sys.Break)
+                 ]
+                  (fun () -> display "Proceed with propagating updates? ")
+              end
+            in Uicommon.exitCode(interactandconfirm())
+        end in
+      if Prefs.read Uicommon.repeat = "" then raise (Done exitStatus)
+    done
   with
-    e ->
+    Done exitStatus ->
+      (* Done.  Put the terminal back in "sane" mode, if necessary, and quit. *)
+      restoreTerminal();
+      exit exitStatus
+  | e ->
       restoreTerminal();
       let msg = Uicommon.exn2string e in
       Trace.log (msg ^ "\n");
@@ -495,4 +586,6 @@ let start _ =
       exit Uicommon.fatalExit
   end
 
-end (* module Textual *)
+let defaultUi = Uicommon.Text
+
+end

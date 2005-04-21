@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/ubase/safelist.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 24 Mar 2002 11:24:03 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Tue, 16 Apr 2002 10:32:38 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 let filterBoth f l =
   let rec loop r1 r2 = function
@@ -154,3 +154,5 @@ let exists = List.exists
 let find = List.find
 let filter = List.filter
 let stable_sort = List.stable_sort
+let sort = List.sort
+let partition = List.partition

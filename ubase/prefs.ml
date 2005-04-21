@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/ubase/prefs.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 24 Mar 2002 11:24:03 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sat, 10 Aug 2002 09:39:41 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 let debug = Util.debug "prefs"
 
@@ -325,7 +325,7 @@ let addprefsto = createString "addprefsto" ""
   "By default, new preferences added by Unison (e.g., new \\verb|ignore| \
    clauses) will be appended to whatever preference file Unison was told \
    to load at the beginning of the run.  Setting the preference \
-   \\texttt{addprefsto \\ARG{filename}} makes Unison \ 
+   \\texttt{addprefsto \\ARG{filename}} makes Unison \
    add new preferences to the file named \\ARG{filename} instead."
 
 let addLine l = 

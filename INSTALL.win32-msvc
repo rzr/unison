@@ -1,6 +1,9 @@
 Installation notes to build Unison on Windows systems, with Visual C++
 (unison-help@cis.upenn.edu)
 
+[The following instructions were tested for Unison 2.9.1 on a Windows
+2000 machine running OCaml 3.04.]
+
 
 
 Contents
@@ -126,22 +129,7 @@ Section 2 - Compiling Unison
 * the minor 'etags' error is reported when 'emacs' is missing; you may
   want to install it.
 
-
-|--- To be removed ------------------------------------------------------
-| 2.2 Tk user interface (no longer supported)
-| 
-|   You need the Tcl/Tk libraries. Get the 'guilib.tar.gz' tarball from
-| the 'resources' directory of the Unison web site and unpack it in your
-| 'ocaml/lib' directory. This will create a 'guilib' directory
-| containing the libraries.
-| 
-|   Using 'bash', enter 'make clean', then 'make UISTYLE=tk'.
-|
-|  Run 'unison.exe' with the Tk .dll's in your search path (they can be
-|found in the 'guilib' directory).
-|------------------------------------------------------------------------
-
-2.3 Gtk user interface
+2.2 Gtk user interface
 
   You need the Gtk libraries (already installed if you got the Tcl/Tk
 libraries). Get the 'guilib.tar.gz' tarball from the 'resources'
@@ -178,25 +166,10 @@ NATIVE=true option.
 This means that the executable doesn't refer to Cygwin and Gtk DLLs,
 and can therefore be distributed as a standalone application.
 
+
 Section 3 - Using new public versions of Tk/Gtk/LablGtk
 
-
-3.1 Using a new version of Tcl/Tk (no longer supported)
-
-  Download the Tcl/Tk self-extracting installer for a new version from
-'http://dev.scriptics.com/software/tcltk/'.
-
-  Run it. We need the run-time files and the headers/libraries.
-
-  Copy the following files into the 'guilib' directory in your
-'ocaml/lib' directory (if it doesn't exist, create it):
-            tclxx.lib, tclxx.dll, tkxx.lib, tkxx.dll 
-where xx is the version number.
-
-  You may need to recompile LablTk to use the new version of Tcl/Tk.
-
-
-3.2 Patching a new version of Gtk
+3.1 Patching a new version of Gtk
 
   Download the 'wingtk.patch.tar.gz' tarball from the 'resources'
 directory of the Unison web site and unpack it. Follow the
@@ -212,7 +185,7 @@ with the .dll's (dynamic version).
   Using the new version of 'wingtk', recompile LablGtk (see section 2.3).
   
 
-3.3 Patching a new version of LablGtk
+3.2 Patching a new version of LablGtk
 
    Download lablgtk-1.2.3.tar.gz from the LablGtk homepage
 <http://wwwfun.kurims.kyoto-u.ac.jp/soft/olabl/lablgtk.html>.  Unpack
@@ -227,7 +200,7 @@ above the 'lablgtk' directory.
              Unix system.
 
 
-3.4 Making patches from the public sources
+3.3 Making patches from the public sources
 
   The way from public Gtk/LablGtk sources to the provided Gtk/LablGtk
 dynamic/static extension has been somehow perilous. We strongly

@@ -64,7 +64,7 @@ let _ =
     ignore(Sys.signal Sys.sigchld (Sys.Signal_handle (fun _ -> child_exited := true)))
 
 let bad_fd fd =
-  try ignore (Unix.fstat fd); false with
+  try ignore (Unix.LargeFile.fstat fd); false with
     Unix.Unix_error (_, _, _) ->
       true
 
@@ -73,7 +73,11 @@ let wrap_syscall queue fd cont syscall =
     try
       Some (syscall ())
     with
-      Exit | Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+      Exit
+    | Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.EINTR), _, _) ->
+        (* EINTR because we are catching SIG_CHLD hence the system call
+           might be interrupted to handle the signal; this lets us restart
+           the system call eventually. *)
         None
     | e ->
         queue := List.remove_assoc fd !queue;
@@ -138,7 +142,9 @@ let rec run thread =
                   (fun () ->
                      let (s, _) as v = Unix.accept fd in
                      if not windows_hack then Unix.set_nonblock s;
-                     v))
+                     v)
+           | `Wait res ->
+                wrap_syscall inputs fd res (fun () -> ()))
         readers;
       List.iter
         (fun fd ->
@@ -148,7 +154,9 @@ let rec run thread =
                   (fun () -> Unix.write fd buf pos len)
            | `CheckSocket res ->
                 wrap_syscall outputs fd res
-                  (fun () -> ignore (Unix.getpeername fd)))
+                  (fun () -> ignore (Unix.getpeername fd))
+           | `Wait res ->
+                wrap_syscall inputs fd res (fun () -> ()))
         writers;
       if !child_exited then begin
         child_exited := false;
@@ -164,6 +172,16 @@ let rec run thread =
       run thread
 
 (****)
+
+let wait_read ch =
+  let res = Lwt.wait () in
+  inputs := (ch, `Wait res) :: !inputs;
+  res
+
+let wait_write ch =
+  let res = Lwt.wait () in
+  outputs := (ch, `Wait res) :: !outputs;
+  res
 
 let read ch buf pos len =
   try
@@ -262,6 +280,80 @@ let system cmd =
             exit 127
           end
   | id -> Lwt.bind (waitpid [] id) (fun (pid, status) -> Lwt.return status)
+
+(****)
+
+type lwt_in_channel = in_channel
+type lwt_out_channel = out_channel
+
+let wait_inchan ic = wait_read (Unix.descr_of_in_channel ic)
+let wait_outchan oc = wait_write (Unix.descr_of_out_channel oc)
+
+let rec input_char ic =
+  try
+    Lwt.return (Pervasives.input_char ic)
+  with
+    Sys_blocked_io ->
+      Lwt.bind (wait_inchan ic) (fun () -> input_char ic)
+  | e ->
+      Lwt.fail e
+
+let rec input ic s ofs len =
+  try
+    Lwt.return (Pervasives.input ic s ofs len)
+  with
+    Sys_blocked_io ->
+      Lwt.bind (wait_inchan ic) (fun () -> input ic s ofs len)
+  | e ->
+      Lwt.fail e
+
+let rec unsafe_really_input ic s ofs len =
+  if len <= 0 then
+    Lwt.return ()
+  else begin
+    Lwt.bind (input ic s ofs len) (fun r ->
+    if r = 0
+    then Lwt.fail End_of_file
+    else unsafe_really_input ic s (ofs+r) (len-r))
+  end
+
+let really_input ic s ofs len =
+  if ofs < 0 || len < 0 || ofs > String.length s - len
+  then Lwt.fail (Invalid_argument "really_input")
+  else unsafe_really_input ic s ofs len
+
+let input_line ic =
+  let buf = ref (String.create 128) in
+  let pos = ref 0 in
+  let rec loop () =
+    if !pos = String.length !buf then begin
+      let newbuf = String.create (2 * !pos) in
+      String.blit !buf 0 newbuf 0 !pos;
+      buf := newbuf
+    end;
+    Lwt.bind (input_char ic) (fun c ->
+    if c = '\n' then
+      Lwt.return ()
+    else begin
+      !buf.[!pos] <- c;
+      incr pos;
+      loop ()
+    end)
+  in
+  Lwt.bind
+    (Lwt.catch loop
+       (fun e ->
+          match e with
+            End_of_file when !pos <> 0 ->
+              Lwt.return ()
+          | _ ->
+              Lwt.fail e))
+    (fun () ->
+       let res = String.create !pos in
+       String.blit !buf 0 res 0 !pos;
+       Lwt.return res)
+
+(****)
 
 type popen_process =
     Process of in_channel * out_channel

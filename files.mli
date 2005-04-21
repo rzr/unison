@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/files.mli $ *)
-(* $I2: Last modified by zheyang on Tue, 09 Apr 2002 17:08:59 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* As usual, these functions should only be called by the client (i.e., in   *)
 (* the same address space as the user interface).                            *)
@@ -20,7 +20,8 @@ val delete :
 (* support) using temporary files.                                           *)
 val copy :
      bool                       (* save old version? *)
-  -> [`Update of Uutil.filesize | `Copy] (* whether there was already a file *)
+  -> [`Update of (Uutil.Filesize.t * Uutil.Filesize.t) | `Copy]
+                                (* whether there was already a file *)
   -> Common.root                (* from what root *)
   -> Path.t                     (* from what path *)
   -> Common.updateItem          (* source updates *)
@@ -34,8 +35,9 @@ val copy :
 (* second replica.                                                           *)
 val setProp :
      Common.root                (* source root *)
+  -> Path.t                     (* source path *)
   -> Common.root                (* target root *)
-  -> Path.t                     (* what path *)
+  -> Path.t                     (* target path *)
   -> Props.t                    (* previous properties *)
   -> Props.t                    (* new properties *)
   -> Common.updateItem          (* source updates *)
@@ -45,11 +47,12 @@ val setProp :
 (* Generate a difference summary for two (possibly remote) versions of a     *)
 (* file and send it to a given function                                      *)
 val diff :
-     Common.root                (* on which roots *)
-  -> Common.root                (* ... *)
-  -> Path.t                     (* what path *)
-  -> Os.fingerprint option      (* fingerprint @ root1 *)
-  -> Os.fingerprint option      (* fingerprint @ root2 *)
+     Common.root                (* first root *)
+  -> Path.t                     (* path on first root *)
+  -> Common.updateItem          (* first root updates *)
+  -> Common.root                (* other root *)
+  -> Path.t                     (* path on other root *)
+  -> Common.updateItem          (* target updates *)
   -> (string->string->unit)     (* how to display the (title and) result *)
   -> Uutil.File.t               (* id for showing progress of transfer *)
   -> unit
@@ -59,20 +62,20 @@ val diff :
 (* terminated) synchronizations                                              *)
 val processCommitLogs : unit -> unit
 
-(* List the files in a directory matching a pattern                          *)
-
-(* FIX: we should use fspath, etc., instead of string                        *)
+(* List the files in a directory matching a pattern.  (It would be better
+   to use fspath, etc., here instead of string) *)
 val ls : string -> string -> string list
 
 val get_files_in_directory : string -> string list
 
-val mergeFct  : Common.root
-             -> Common.root
-             -> Path.t
-             -> (string -> unit)    (*display error*)
-             -> (string -> bool)    (*ask question to the user*)
-             -> Uutil.File.t
-             -> Common.updateItem
-             -> Common.updateItem
-             -> bool
-             -> unit
+val merge :
+     Common.root                (* first root *)
+  -> Common.root                (* second root *)
+  -> Path.t                     (* path to merge *)
+  -> Uutil.File.t               (* id for showing progress of transfer *)
+  -> Common.updateItem          (* differences from the archive *)
+  -> Common.updateItem          (* ... *)
+  -> (string->string->bool)     (* function to display the (title and) result and ask user for confirmation
+                                   (when -batch is true, the function should not ask any questions and should
+                                   always return true) *)
+  -> unit

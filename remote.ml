@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/remote.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 10 Apr 2002 10:04:21 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Mon, 06 Sep 2004 14:48:05 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (*
 XXX
@@ -116,6 +116,9 @@ let grab conn s len =
   assert (len > 0);
   assert (String.length s <= len);
   grab_rec conn s 0 len
+
+let peek_without_blocking conn =
+  String.sub conn.inputBuffer 0 conn.inputLength
 
 (****)
 
@@ -298,10 +301,11 @@ module Thread = struct
     Lwt.catch f
       (fun e ->
          match e with
-           Util.Transient _ ->
+           Util.Transient err | Util.Fatal err ->
              debugT
                (fun () ->
-                  Util.msg "Exception caught by Thread.unwindProtect\n");
+                  Util.msg
+                    "Exception caught by Thread.unwindProtect: %s\n" err);
              Lwt.catch (fun () -> cleanup e) (fun e' ->
                Util.encodeException "Thread.unwindProtect" `Fatal e')
                  >>= (fun () ->
@@ -361,7 +365,7 @@ let registerTag string =
     registeredSet := Util.StringSet.add string !registeredSet;
   string
 
-let defaultMarshalingFunctions () =
+let defaultMarshalingFunctions =
   (fun data rem ->
      let s = Marshal.to_string data [Marshal.No_sharing] in
      let l = String.length s in
@@ -389,20 +393,27 @@ let sshCmd =
 
 let rshCmd =
   Prefs.createString "rshcmd" "rsh"
-    ("path to the rsh executable")
+    ("*path to the rsh executable")
     ("This preference can be used to explicitly set the name of the "
      ^ "rsh executable (e.g., giving a full path name), if necessary.")
 
 let rshargs =
   Prefs.createString "rshargs" ""
+    "*other arguments (if any) for remote shell command"
+    ("The string value of this preference will be passed as additional "
+     ^ "arguments (besides the host name and the name of the Unison "
+     ^ "executable on the remote system) to the \\verb|rsh| "
+     ^ "command used to invoke the remote server. "
+     )
+
+let sshargs =
+  Prefs.createString "sshargs" ""
     "other arguments (if any) for remote shell command"
     ("The string value of this preference will be passed as additional "
      ^ "arguments (besides the host name and the name of the Unison "
      ^ "executable on the remote system) to the \\verb|ssh| "
-     ^ "or \\verb|rsh| command used to invoke the remote server. "
-     ^ "(This option is used for passing "
-     ^ "arguments to both {\\tt rsh} or {\\tt ssh}---that's why its name "
-     ^ "is {\\tt rshargs} rather than {\\tt sshargs}.)")
+     ^ "command used to invoke the remote server. "
+     )
 
 let serverCmd =
   Prefs.createString "servercmd" ""
@@ -415,7 +426,7 @@ let addversionno =
   Prefs.createBool "addversionno" false
     ("add version number to name of " ^ Uutil.myName ^ " executable on server")
     ("When this flag is set to {\\tt true}, Unison "
-      ^ "will use \\texttt{unison-\ARG{currentversionnumber}} instead of "
+      ^ "will use \\texttt{unison-\\ARG{currentversionnumber}} instead of "
      ^ "just \\verb|unison| as the remote server command.  This allows "
      ^ "multiple binaries for different versions of unison to coexist "
      ^ "conveniently on the same server: whichever version is run "
@@ -423,6 +434,7 @@ let addversionno =
 
 (* List containing the connected hosts and the file descriptors of
    the communication. *)
+(*
 (* Perhaps the list would be better indexed by root
      (host name [+ user name] [+ socket]) ... *)
 let connectedHosts = ref []
@@ -433,6 +445,34 @@ let hostConnection host =
   try Safelist.assoc host !connectedHosts
   with Not_found ->
     raise(Util.Fatal "hostConnection")
+*)
+
+(* connectedHosts is a list of command-line roots, their corresponding
+   canonical host names and canonical fspaths, and their connections.
+   Local command-line roots are not in the list.
+   Although there can only be one remote host per sync, it's possible
+   connectedHosts to hold more than one hosts if more than one sync is
+   performed.
+   It's also possible for there to be two connections open for the
+   same canonical root.
+*)
+let connectedHosts = ref []
+let hostConnection host = (* host must be canonical *)
+  let rec loop = function
+      [] -> raise(Util.Fatal "Remote.hostConnection")
+    | (cl,h,fspath,conn)::tl -> if h=host then conn else loop tl in
+  loop !connectedHosts
+
+let canonize clroot = (* connection for clroot must have been set up already *)
+  match clroot with
+    Clroot.ConnectLocal s -> (Common.Local, Fspath.canonize s)
+  | _ ->
+    let rec loop = function
+        [] -> raise(Util.Fatal "Remote.canonize")
+      | (cl,h,fspath,conn)::tl ->
+        if cl=clroot then (Common.Remote h,fspath) else loop tl in
+    loop !connectedHosts
+
 
 (**********************************************************************
                        CLIENT/SERVER PROTOCOLS
@@ -504,7 +544,7 @@ type header =
   | Request of string
 
 let ((marshalHeader, unmarshalHeader) : header marshalingFunctions) =
-  makeMarshalingFunctions (defaultMarshalingFunctions ()) "rsp"
+  makeMarshalingFunctions defaultMarshalingFunctions "rsp"
 
 let processRequest conn id cmdName buf =
   let cmd =
@@ -527,16 +567,17 @@ let processRequest conn id cmdName buf =
          Lwt.fail e)
 
 (* Message ids *)
-module IdMap = Map.Make (struct type t = int let compare = compare end)
+type msgId = int
+module MsgIdMap = Map.Make (struct type t = msgId let compare = compare end)
 let ids = ref 1
-let new_id () = incr ids; if !ids = 1000000000 then ids := 2; !ids
+let newMsgId () = incr ids; if !ids = 1000000000 then ids := 2; !ids
 
 (* Threads waiting for a response from the other side *)
-let receivers = ref IdMap.empty
+let receivers = ref MsgIdMap.empty
 
 let find_receiver id =
-  let thr = IdMap.find id !receivers in
-  receivers := IdMap.remove id !receivers;
+  let thr = MsgIdMap.find id !receivers in
+  receivers := MsgIdMap.remove id !receivers;
   thr
 
 (* Receiving thread: read a message and dispatch it to the right
@@ -593,7 +634,7 @@ let rec receive conn =
 
 let wait_for_reply id =
   let res = Lwt.wait () in
-  receivers := IdMap.add id res !receivers;
+  receivers := MsgIdMap.add id res !receivers;
   (* We yield to let the receiving thread restart.  This way, the
      thread may call [Lwt_unix.run] and this will not block the
      receiving thread. *)
@@ -624,7 +665,7 @@ let registerSpecialServerCmd
   serverCmds := Util.StringMap.add cmdName server !serverCmds;
   (* Create a client function and return it *)
   let client conn serverArgs =
-    let id = new_id () in (* Message ID *)
+    let id = newMsgId () in (* Message ID *)
     let request =
       (encodeInt id, 0, 4) ::
       marshalHeader (Request cmdName) (marshalArgs serverArgs [])
@@ -639,7 +680,7 @@ let registerSpecialServerCmd
 
 let registerServerCmd name f =
   registerSpecialServerCmd
-    name (defaultMarshalingFunctions ()) (defaultMarshalingFunctions ()) f
+    name defaultMarshalingFunctions defaultMarshalingFunctions f
 
 (* [nice i] yields [i] times to give other process a chance to run *)
 let rec nice i
@@ -678,303 +719,36 @@ let registerHostCmd cmdName cmd =
           >>= (fun () -> cmd args)
     | _  -> client host args
 
+let hostOfRoot root =
+  match root with
+    (Common.Local, _)       -> ""
+  | (Common.Remote host, _) -> host
+let connectionToRoot root = hostConnection (hostOfRoot root)
+
 (* RegisterRootCmd is like registerHostCmd but it indexes connections by
    root instead of host. *)
 let registerRootCmd (cmdName : string) (cmd : (Fspath.t * 'a) -> 'b) =
   let r = registerHostCmd cmdName cmd in
-  fun root args ->
-    match root with
-      (Common.Local,fspath)        -> r "" (fspath, args)
-    | (Common.Remote host, fspath) -> r host (fspath, args)
+  fun root args -> r (hostOfRoot root) ((snd root), args)
 
-(**********************************************************************)
-(*                      FILE TRANSFER PROTOCOLS                       *)
-(**********************************************************************)
+let registerRootCmdWithConnection
+  (cmdName : string) (cmd : connection -> 'a -> 'b) =
+  let client0 = registerServerCmd cmdName cmd in
+  (* Return a function that runs either the proxy or the local version,
+     depending on whether the call is to the local host or a remote one *)
+  fun localRoot remoteRoot args ->
+    match (hostOfRoot localRoot) with
+      "" -> nice 5
+             (* the local thread should be courteous, giving the    *)
+             (* rpc call some chance to catch up.  This should take *)
+             (* care of the malicious case of non-yielding threads, *)
+             (* such as the update detection function               *)
+               >>= (fun () ->
+            let conn = hostConnection (hostOfRoot remoteRoot) in
+            cmd conn args)
+    | _  -> let conn = hostConnection (hostOfRoot localRoot) in
+            client0 conn args
 
-(* The file transfer functions here depend on an external module
-   'transfer' that implements a generic transmission and the rsync
-   algorithm for optimizing the file transfer in the case where a
-   similar file already exists on the target. *)
-
-(* BCPFIX: This preference is probably not needed any more. *)
-let rsyncActivated =
-  Prefs.createBool "rsync" true
-    "*activate the rsync transfer mode" ""
-
-(* Open a file and run a piece of code that uses it, making sure to close
-   the file if the code aborts.  If the code does *not* abort, it is
-   expected to close the file itself. *)
-let withOpenFile fspath path kind body =
-    Util.convertUnixErrorsToTransient (*XXX*)
-      "open file"
-      (fun() ->
-         let name = Fspath.concatToString fspath path in
-         let fd =
-           match kind with
-             `Read ->
-               Unix.openfile name [Unix.O_RDONLY] 0o600
-           | `Write ->
-               Unix.openfile
-                 name [Unix.O_RDWR;Unix.O_CREAT;Unix.O_EXCL] 0o600
-         in
-         Thread.unwindProtect
-           (fun() -> body fd)
-           (fun _ -> Unix.close fd; Lwt.return ()))
-
-let decompressor = ref IdMap.empty
-let terminator = ref IdMap.empty
-
-let fileSize (fspath,path) =
-  Util.convertUnixErrorsToTransient
-    "fileSize"
-    (fun() ->
-       Lwt.return
-         (Props.length (Fileinfo.get false fspath path).Fileinfo.desc))
-
-let fileSizeOnHost =
-  registerHostCmd
-    "fileSize"
-    fileSize
-
-let destinationFd fspath path outfd =
-  match !outfd with
-    None    ->
-      Util.convertUnixErrorsToTransient
-        "open dest. file"
-        (fun () ->
-          let name = Fspath.concatToString fspath path in
-          let fd =
-            Unix.openfile
-              name [Unix.O_RDWR;Unix.O_CREAT;Unix.O_EXCL]  0o600
-          in
-          outfd := Some fd;
-          fd)
-  | Some fd ->
-      fd
-
-let startReceivingFile
-    (update, fspath,path,realPath,newDesc,srcFileSize, id, file_id, fpOpt) =
-  let fileName = Fspath.concatToString fspath path in
-  debug (fun() -> Util.msg "startReceivingFile: %s\n" fileName);
-  (* We delay the opening of the file so that there are not too many
-     temporary files remaining after a crash *)
-  let outfd = ref None in
-  (* Install a simple generic decompressor and terminator *)
-  let showProgress count =
-    Uutil.showProgress id (Uutil.Filesize.ofInt count) "r" in
-  decompressor :=
-    IdMap.add file_id
-      (fun ti ->
-         let fd =  destinationFd fspath path outfd in
-         Transfer.receive fd showProgress ti)
-      !decompressor;
-  let setPropsAndUpdateXferhint () =
-    (match fpOpt with
-      Some fp -> Xferhint.insertEntry (fspath, path) fp
-    | None ->
-        (try
-          let fp = Os.fingerprint fspath path in
-          Xferhint.insertEntry (fspath, path) fp
-        with Util.Transient s ->
-          debug (fun () ->
-            Util.msg "startReceivingFile: error fingerprinting [%s]\n" s);
-          ()));
-    match (update:[`Update of Uutil.filesize | `Copy]) with
-      `Update _ ->
-        Fileinfo.set fspath path (`Copy realPath) newDesc
-    | `Copy ->
-        Fileinfo.set fspath path (`Set Props.fileDefault) newDesc
-  in
-  terminator   :=
-    IdMap.add file_id
-      (fun () ->
-         match !outfd with
-           Some fd ->
-             Unix.close fd;
-             setPropsAndUpdateXferhint ()
-         | None    -> ())
-      !terminator;
-  if Prefs.read rsyncActivated then begin
-    match update with
-      `Update destFileSize ->
-        let realFileName = Fspath.concatToString fspath realPath in
-        debug (fun() -> Util.msg "real file name = %s\n" realFileName);
-        debug (fun () ->
-          Util.msg "dest file size = %s bytes\n"
-            (Uutil.filesize2string destFileSize));
-        if
-          truncate (Uutil.filesize2float destFileSize) >=
-          Transfer.Rsync.rsyncThreshold ()
-            &&
-          truncate (Uutil.filesize2float srcFileSize) >=
-          Transfer.Rsync.rsyncThreshold ()
-        then
-          withOpenFile fspath realPath `Read
-            (fun infd ->
-               (* Now that we've successfully opened the original version
-                  of the file, install a more interesting decompressor
-                  and terminator *)
-               decompressor :=
-                 IdMap.add file_id
-                   (fun ti ->
-                      let fd = destinationFd fspath path outfd in
-                      Transfer.Rsync.rsyncDecompress infd fd showProgress ti)
-                   !decompressor;
-               terminator   :=
-                 IdMap.add file_id
-                   (fun () ->
-                      Unix.close infd;
-                      match !outfd with
-                        Some fd ->
-                          Unix.close fd;
-                          setPropsAndUpdateXferhint ()
-                      | None    ->
-                          ())
-                   !terminator;
-               Lwt.return (Some (Transfer.Rsync.rsyncPreprocess infd)))
-        else
-          Lwt.return None
-    | `Copy ->
-        Lwt.return None
-  end else
-    Lwt.return None
-
-let startReceivingFileOnHost =
-  registerHostCmd "startReceivingFile" startReceivingFile
-
-let terminateFileTransfer conn file_id =
-  Util.convertUnixErrorsToTransient
-    "terminateFileTransfer"
-    (fun () ->
-       match
-         try Some (IdMap.find file_id !terminator) with Not_found -> None
-       with
-         Some term ->
-           decompressor := IdMap.remove file_id !decompressor; (* For GC *)
-           terminator := IdMap.remove file_id !terminator;
-           term ();
-           Lwt.return ()
-       | None ->
-           Lwt.return ())
-
-let terminateFileTransferRemotely =
-  registerServerCmd "terminateFileTransfer" terminateFileTransfer
-
-let processTransferInstruction conn (file_id, ti) =
-  Util.convertUnixErrorsToTransient
-    "processTransferInstruction"
-    (fun () ->
-       let finished = IdMap.find file_id !decompressor ti in
-       if finished then
-         terminateFileTransfer conn file_id
-       else
-         Lwt.return ())
-
-let marshalTransferInstruction =
-  (fun (file_id, (data, pos, len)) rem ->
-     ((encodeInt file_id, 0, 4) :: (data, pos, len) :: rem, len + 4)),
-  (fun buf pos ->
-     let len = String.length buf - pos - 4 in
-     (decodeInt (String.sub buf pos 4), (buf, pos + 4, len)))
-
-let processTransferInstructionRemotely =
-  registerSpecialServerCmd
-    "processTransferInstruction"
-    marshalTransferInstruction
-    (defaultMarshalingFunctions ())
-    processTransferInstruction
-
-let compress conn (biOpt, fspathFrom, pathFrom, sizeFrom, id, file_id) =
-  let sizeFrom = truncate (Uutil.filesize2float sizeFrom) in
-  Thread.unwindProtect
-    (fun () ->
-       Util.convertUnixErrorsToTransient (*XXX*)
-         "rsyncSender"
-         (fun () ->
-            let fileName = Fspath.concatToString fspathFrom pathFrom in
-            withOpenFile fspathFrom pathFrom `Read (fun infd ->
-            let showProgress count =
-              Uutil.showProgress id (Uutil.Filesize.ofInt count) "r" in
-            let compr =
-              match biOpt with
-              | None     ->
-                  Transfer.send infd sizeFrom showProgress
-              | Some(bi) ->
-                  Transfer.Rsync.rsyncCompress bi infd sizeFrom showProgress
-            in
-            compr
-              (fun ti -> processTransferInstructionRemotely conn (file_id, ti))
-              >>= (fun () ->
-            Unix.close infd;
-            Lwt.return ()))))
-    (fun _ -> terminateFileTransferRemotely conn file_id)
-
-let compressRemotely =
-  registerServerCmd "compress" compress
-
-let bufferSize sz =
-  min 64 ((truncate (Uutil.filesize2float sz) + 1023) / 1024) (* Token queue *)
-    +
-  8 (* Read buffer *)
-
-(* We limit the size of the output buffers to about 512 KB
-   (we cannot go above the limit below plus 64) *)
-let getFileReg = Lwt_util.make_region 440
-
-let getFile
-    host update fspathFrom pathFrom fspathTo pathTo realPathTo newDesc id fpOpt =
-  debug (fun() -> Util.msg "getFile(%s,%s) -> (%s,%s,%s,%s) /%s/\n"
-      (Fspath.toString fspathFrom) (Path.toString pathFrom)
-      (Fspath.toString fspathTo) (Path.toString pathTo)
-      (Path.toString realPathTo)
-      (Props.toString newDesc)
-      ((Util.option2string Os.fingerprint2string) fpOpt));
-    let file_id = new_id () in
-    begin if Props.length newDesc = Uutil.dummyfilesize then
-      fileSizeOnHost host (fspathFrom,pathFrom)
-    else
-      Lwt.return (Props.length newDesc)
-    end >>= (fun srcFileSize ->
-    debug (fun () ->
-      Util.msg "src file size = %s bytes\n"
-        (Uutil.filesize2string srcFileSize));
-    startReceivingFile
-      (update, fspathTo, pathTo, realPathTo, newDesc, srcFileSize, id, file_id, fpOpt)
-      >>= (fun bi ->
-  Lwt_util.run_in_region getFileReg (bufferSize srcFileSize) (fun () ->
-    Uutil.showProgress id Uutil.Filesize.zero "f";
-    let conn = hostConnection host in
-    compressRemotely conn
-      (bi, fspathFrom, pathFrom, srcFileSize, id, file_id))))
-
-let putFileReg = Lwt_util.make_region 440
-
-let putFile
-    host update fspathFrom pathFrom fspathTo pathTo realPathTo newDesc id fpOpt =
-  debug (fun() -> Util.msg "putFile(%s,%s) -> (%s,%s,%s,%s) /%s/\n"
-      (Fspath.toString fspathFrom) (Path.toString pathFrom)
-      (Fspath.toString fspathTo) (Path.toString pathTo)
-      (Path.toString realPathTo)
-      (Props.toString newDesc)
-      ((Util.option2string Os.fingerprint2string) fpOpt));
-  let file_id = new_id () in
-  begin if Props.length newDesc = Uutil.dummyfilesize then
-    fileSize (fspathFrom,pathFrom)
-  else
-    Lwt.return (Props.length newDesc)
-  end >>= (fun srcFileSize ->
-    debug (fun () ->
-      Util.msg "src file size = %s bytes\n"
-        (Uutil.filesize2string srcFileSize));
-    startReceivingFileOnHost host
-      (update, fspathTo, pathTo, realPathTo, newDesc, srcFileSize, id, file_id,
-       fpOpt)
-      >>= (fun biOpt ->
-        Lwt_util.run_in_region putFileReg (bufferSize srcFileSize) (fun () ->
-          Uutil.showProgress id Uutil.Filesize.zero "f";
-          let conn = hostConnection host in
-          compress conn
-            (biOpt, fspathFrom, pathFrom, srcFileSize, id, file_id))))
 
 (****************************************************************************
                      BUILDING CONNECTIONS TO THE SERVER
@@ -985,19 +759,26 @@ let connectionHeader = "Unison " ^ Uutil.myVersion ^ "\n"
 let rec checkHeader conn prefix buffer pos len =
   if pos = len then
     Lwt.return ()
-  else
-    grab conn buffer 1 >>= (fun () ->
+  else begin
+    (grab conn buffer 1 >>= (fun () ->
     if buffer.[0] <> connectionHeader.[pos] then
+      let rest = peek_without_blocking conn in
       Lwt.fail
         (Util.Fatal
            ("Received unexpected header from the server:\n \
              expected \""
-           ^ String.escaped (String.sub connectionHeader 0 (pos + 1))
-           ^ "\" but received \"" ^ String.escaped (prefix ^ buffer) ^ "\".\n"
-           ^ "This is probably because you have different versions of Unison\n"
-           ^ "installed on the client and server machines.\n"))
+           ^ String.escaped (* (String.sub connectionHeader 0 (pos + 1)) *)
+               connectionHeader
+           ^ "\" but received \"" ^ String.escaped (prefix ^ buffer ^ rest) ^ "\", \n"
+           ^ "which differs at \"" ^ String.escaped (prefix ^ buffer) ^ "\".\n"
+           ^ "This can happen because you have different versions of Unison\n"
+           ^ "installed on the client and server machines, or because\n"
+           ^ "your connection is failing and somebody is printing an error\n"
+           ^ "message, or because your remote login shell is printing\n"
+           ^ "something itself before starting Unison."))
     else
-      checkHeader conn (prefix ^ buffer) buffer (pos + 1) len)
+      checkHeader conn (prefix ^ buffer) buffer (pos + 1) len))
+  end
 
 (****)
 
@@ -1036,11 +817,14 @@ let initConnection in_ch out_ch =
   negociateFlowControl conn >>= (fun () ->
   Lwt.return conn))
 
+let inetAddr host =
+  let targetHostEntry = Unix.gethostbyname host in
+  targetHostEntry.Unix.h_addr_list.(0)
+
 let buildSocketConnection host port =
   let targetInetAddr =
     try
-      let targetHostEntry = Unix.gethostbyname host in
-      targetHostEntry.Unix.h_addr_list.(0)
+      inetAddr host
     with Not_found ->
       raise (Util.Fatal
                (Printf.sprintf
@@ -1057,7 +841,7 @@ let buildSocketConnection host port =
   end;
   Lwt_unix.run (initConnection socket socket)
 
-let buildShellConnection shell host userOpt portOpt =
+let buildShellConnection shell host userOpt portOpt termInteract =
   let (in_ch, out_ch) =
     let remoteCmd =
       (if Prefs.read serverCmd="" then Uutil.myName
@@ -1079,11 +863,18 @@ let buildShellConnection shell host userOpt portOpt =
         Prefs.read rshCmd
       else
         shell) in
+    let shellCmdArgs = 
+      (if shell = "ssh" then
+        Prefs.read sshargs
+      else if shell = "rsh" then
+        Prefs.read rshargs
+      else
+        "") in
     let preargs =
         ([shellCmd]@userArgs@portArgs@
          [host]@
          (if shell="ssh" then ["-e none"] else [])@
-         [Prefs.read rshargs;remoteCmd]) in
+         [shellCmdArgs;remoteCmd]) in
     (* Split compound arguments at space chars, to make
        create_process happy *)
     let args =
@@ -1108,7 +899,30 @@ let buildShellConnection shell host userOpt portOpt =
     Unix.putenv "CYGWIN" "binmode";
     debug (fun ()-> Util.msg "Shell connection: %s (%s)\n"
              shellCmd (String.concat ", " args));
-    ignore (Unix.create_process shellCmd argsarray i1 o2 Unix.stderr);
+    (match termInteract with
+       None -> 
+         ignore (Unix.create_process shellCmd argsarray i1 o2 Unix.stderr);
+         ()
+     | Some callBack ->
+         let (term,_) =
+           Terminal.create_session shellCmd argsarray i1 o2 Unix.stderr in
+         match term with None -> ()
+         | Some fdTerm ->
+             let rec loop () =
+               match Terminal.termInput fdTerm i2 with
+                 None -> ()
+               | Some msg ->
+                   let len = String.length msg in
+                   if len = 0 then () (* return if terminal has been closed *)
+                   (* if the input is a CR-LF, ignore and keep waiting *)
+                   else if len = 2 && msg.[0] = '\r' && msg.[1] = '\n' then 
+                     loop()
+                   else 
+                   let response = callBack msg in
+                   (* FIX: should loop on write, watch for EINTR, etc. *)
+                   ignore(Unix.write fdTerm (response ^ "\n") 0 (String.length response + 1));
+                   loop() in
+             loop());
     Unix.close i1; Unix.close o2;
     (i2, o1)
   in
@@ -1118,28 +932,154 @@ let canonizeOnServer =
   registerServerCmd "canonizeOnServer"
     (fun _ s -> Lwt.return (Os.myCanonicalHostName, Fspath.canonize s))
 
-let canonizeRoot clroot =
+let canonizeRoot clroot termInteract =
   let finish ioServer s =
     canonizeOnServer ioServer s >>= (fun (host, fspath) ->
-    connectedHosts := (host,ioServer)::(!connectedHosts);
+    connectedHosts := (clroot,host,fspath,ioServer)::(!connectedHosts);
     Lwt.return (Common.Remote host,fspath)) in
+  let rec hostfspath = function
+         [] -> None
+       | (clroot',host,fspath,_)::tl ->
+         if clroot=clroot'
+         then Some(Lwt.return(Common.Remote host,fspath))
+         else hostfspath tl in
   Util.convertUnixErrorsToFatal "canonizeRoot" (fun () ->
     match clroot with
-      Uri.ConnectLocal s ->
+      Clroot.ConnectLocal s ->
         Lwt.return (Common.Local, Fspath.canonize s)
-    | Uri.ConnectBySocket(host,port,s) ->
-        let ioServer =
-          try Safelist.assoc host !connectedHosts
-          with Not_found -> buildSocketConnection host port in
-        finish ioServer s
-    | Uri.ConnectByShell(shell,host,userOpt,portOpt,s) ->
-        let ioServer =
-(* FIX: We are not doing the right thing here if the name "host" is
-        not a canonical name *)
-          try Safelist.assoc host !connectedHosts
-          with Not_found ->
-            buildShellConnection shell host userOpt portOpt in
-        finish ioServer s)
+    | Clroot.ConnectBySocket(host,port,s) ->
+        (match hostfspath !connectedHosts with
+           Some x -> x
+         | None ->
+             let ioServer = buildSocketConnection host port in
+             finish ioServer s)
+    | Clroot.ConnectByShell(shell,host,userOpt,portOpt,s) ->
+        (match hostfspath !connectedHosts with
+           Some x -> x
+         | None ->
+             let ioServer =
+               buildShellConnection shell host userOpt portOpt termInteract in
+             finish ioServer s))
+
+(* A new interface, useful for terminal interaction, it should
+   eventually replace canonizeRoot and buildShellConnection *)
+(* A preconnection is None if there's nothing more to do, and Some if
+   terminal interaction might be required (for ssh password) *)
+type preconnection =
+     (Unix.file_descr
+     * Unix.file_descr
+     * Unix.file_descr
+     * Unix.file_descr
+     * string option
+     * Unix.file_descr option
+     * Clroot.clroot
+     * int)
+let openConnectionStart clroot =
+  match clroot with
+    Clroot.ConnectLocal s ->
+      None
+  | Clroot.ConnectBySocket(host,port,s) ->
+      (* This check isn't foolproof as the host in the clroot might not be canonical *)
+      if (Safelist.exists (fun (clroot',_,_,_) -> clroot=clroot') !connectedHosts)
+      then None
+      else begin
+        let ioServer = buildSocketConnection host port in
+        let (host,fspath) = Lwt_unix.run(canonizeOnServer ioServer s) in
+        connectedHosts := (clroot,host,fspath,ioServer)::(!connectedHosts);
+        None
+      end
+  | Clroot.ConnectByShell(shell,host,userOpt,portOpt,s) ->
+      if (Safelist.exists (fun (clroot',_,_,_) -> clroot=clroot') !connectedHosts)
+      then None
+      else begin
+        let remoteCmd =
+          (if Prefs.read serverCmd="" then Uutil.myName
+           else Prefs.read serverCmd)
+          ^ (if Prefs.read addversionno then "-" ^ Uutil.myVersion else "")
+          ^ " -server" in
+        let userArgs =
+          match userOpt with
+            None -> []
+          | Some user -> ["-l"; user] in
+        let portArgs =
+          match portOpt with
+            None -> []
+          | Some port -> ["-p"; string_of_int port] in
+        let shellCmd =
+          (if shell = "ssh" then
+            Prefs.read sshCmd
+          else if shell = "rsh" then
+            Prefs.read rshCmd
+          else
+            shell) in
+        let shellCmdArgs = 
+          (if shell = "ssh" then
+            Prefs.read sshargs
+          else if shell = "rsh" then
+            Prefs.read rshargs
+          else
+            "") in
+        let preargs =
+            ([shellCmd]@userArgs@portArgs@
+             [host]@
+             (if shell="ssh" then ["-e none"] else [])@
+             [shellCmdArgs;remoteCmd]) in
+        (* Split compound arguments at space chars, to make
+           create_process happy *)
+        let args =
+          Safelist.concat
+            (Safelist.map (fun s -> Util.splitIntoWords s ' ') preargs) in
+        let argsarray = Array.of_list args in
+        let (i1,o1) = Unix.pipe() in
+        let (i2,o2) = Unix.pipe() in
+        (* We need to make sure that there is only one reader and one
+           writer by pipe, so that, when one side of the connection
+           dies, the other side receives an EOF or a SIGPIPE. *)
+        Unix.set_close_on_exec i2;
+        Unix.set_close_on_exec o1;
+        (* We add CYGWIN=binmode to the environment before calling
+           ssh because the cygwin implementation on Windows sometimes
+           puts the pipe in text mode (which does end of line
+           translation).  Specifically, if unison is invoked from
+           a DOS command prompt or other non-cygwin context, the pipe
+           goes into text mode; this does not happen if unison is
+           invoked from cygwin's bash.  By setting CYGWIN=binmode
+           we force the pipe to remain in binary mode. *)
+        Unix.putenv "CYGWIN" "binmode";
+        debug (fun ()-> Util.msg "Shell connection: %s (%s)\n"
+                 shellCmd (String.concat ", " args));
+        let (term,pid) =
+          Terminal.create_session shellCmd argsarray i1 o2 Unix.stderr in
+        (* after terminal interact, remember to close i1 and o2 *)
+        Some(i1,i2,o1,o2,s,term,clroot,pid)
+      end
+
+let openConnectionPrompt = function
+    (i1,i2,o1,o2,s,Some fdTerm,clroot,pid) ->
+      let x = Terminal.termInput fdTerm i2 in
+      x
+  | _ -> None
+
+let openConnectionReply = function
+    (i1,i2,o1,o2,s,Some fdTerm,clroot,pid) ->
+    (fun response ->
+      (* FIX: should loop on write, watch for EINTR, etc. *)
+      ignore(Unix.write fdTerm (response ^ "\n") 0 (String.length response + 1)))
+  | _ -> (fun _ -> ())
+
+let openConnectionEnd (i1,i2,o1,o2,s,_,clroot,pid) =
+      Unix.close i1; Unix.close o2;
+      let ioServer = Lwt_unix.run (initConnection i2 o1) in
+      let (host,fspath) = Lwt_unix.run(canonizeOnServer ioServer s) in
+      connectedHosts := (clroot,host,fspath,ioServer)::(!connectedHosts)
+
+let openConnectionCancel (i1,i2,o1,o2,s,fdopt,clroot,pid) =
+      try Unix.kill pid Sys.sigkill with _ -> ();
+      try Unix.close i1 with _ -> ();
+      try Unix.close i2 with _ -> ();
+      try Unix.close o1 with _ -> ();
+      try Unix.close o2 with _ -> ();
+      match fdopt with None -> () | Some fd -> (try Unix.close fd with _ -> ())
 
 (****************************************************************************)
 (*                     SERVER-MODE COMMAND PROCESSING LOOP                  *)
@@ -1197,7 +1137,7 @@ let _ = Prefs.alias "killserver" "killServer"
 (* Used by the socket mechanism: Create a socket on portNum and wait
    for a request. Each request is processed by commandLoop. When a
    session finishes, the server waits for another request. *)
-let waitOnPort portnum =
+let waitOnPort hostOpt portnum =
   Util.convertUnixErrorsToFatal
     "waiting on port"
     (fun () ->
@@ -1206,13 +1146,25 @@ let waitOnPort portnum =
       (* Allow reuse of local addresses for bind *)
       Unix.setsockopt listening Unix.SO_REUSEADDR true;
       (* Bind the socket to portnum on the local host *)
-      Unix.bind listening (Unix.ADDR_INET(Unix.inet_addr_any,portnum));
+      let addr =
+        match hostOpt with
+          Some host ->
+            begin try inetAddr host with Not_found ->
+              raise (Util.Fatal
+                       (Printf.sprintf
+                          "Can't find the IP address of the host (%s)" host))
+            end
+        | None ->
+            Unix.inet_addr_any
+      in
+      Unix.bind listening
+        (Unix.ADDR_INET (addr, portnum));
       (* Start listening, allow up to 1 pending request *)
       Unix.listen listening 1;
       Util.msg "server started\n";
       while
         (* Accept a connection *)
-        let (connected,_) = Unix.accept listening in
+        let (connected,_) = Os.accept listening in
         Unix.setsockopt connected Unix.SO_KEEPALIVE true;
         commandLoop connected connected;
         (* The client has closed its end of the connection *)

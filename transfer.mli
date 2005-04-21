@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/transfer.mli $ *)
-(* $I2: Last modified by vouillon on Fri, 14 Sep 2001 12:35:32 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (*
    Rsync : general algorithm description
@@ -50,7 +50,7 @@ type transmitter = transfer_instruction -> unit Lwt.t
 (* Send the whole source file encoded in transfer instructions *)
 val send :
     Unix.file_descr        (* source file descriptor *)
- -> int                    (* source file length *)
+ -> Uutil.Filesize.t       (* source file length *)
  -> (int -> unit)          (* progress report *)
  -> transmitter            (* transfer instruction transmitter *)
  -> unit Lwt.t
@@ -72,8 +72,8 @@ module Rsync :
     (*** DESTINATION HOST ***)
 
     (* The rsync compression can only be activated when the file size is
-       greater than this threshold *)
-    val rsyncThreshold : unit -> int
+       greater than the threshold *)
+    val aboveRsyncThreshold : Uutil.Filesize.t -> bool
 
     (* Built from the old file by the destination computer *)
     type rsync_block_info
@@ -98,7 +98,7 @@ module Rsync :
     val rsyncCompress :
 	   rsync_block_info   (* block info received from the destination *) 
         -> Unix.file_descr    (* new file descriptor *)
-        -> int                (* source file length *)
+        -> Uutil.Filesize.t   (* source file length *)
         -> (int -> unit)      (* progress report *)
 	-> transmitter        (* transfer instruction transmitter *)
         -> unit Lwt.t

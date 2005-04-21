@@ -1,10 +1,12 @@
 (* $I1: Unison file synchronizer: src/update.mli $ *)
-(* $I2: Last modified by vouillon on Thu, 21 Mar 2002 09:01:07 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+
+module NameMap : Map.S with type key = Name.t
 
 type archive =
-    ArchiveDir of Props.t * (Name.t * archive) list
-  | ArchiveFile of Props.t * Os.fingerprint * Fileinfo.stamp
+    ArchiveDir of Props.t * archive NameMap.t
+  | ArchiveFile of Props.t * Os.fullfingerprint * Fileinfo.stamp * Osx.ressStamp
   | ArchiveSymlink of string
   | NoArchive
 
@@ -31,18 +33,18 @@ val markEqual :
 type transaction
 val transaction : (transaction -> unit Lwt.t) -> unit Lwt.t
 
-(* Update a part of an archive                                               *)
+(* Update a part of an archive *)
 val updateArchive :
-  Common.root -> Path.t -> Common.updateItem -> bool -> transaction ->
-  archive Lwt.t
+  Common.root -> Path.t -> Common.updateItem -> transaction ->
+  (Path.local * archive) Lwt.t
 (* Replace a part of an archive by another archive *)
 val replaceArchive :
-  Common.root -> Path.t -> Fspath.t -> Path.t -> archive -> transaction ->
-  unit Lwt.t
+  Common.root -> Path.t -> (Fspath.t * Path.local) option ->
+  archive -> transaction -> Path.local Lwt.t
 (* Update only some permissions *)
 val updateProps :
   Common.root -> Path.t -> Props.t option -> Common.updateItem ->
-  transaction -> unit Lwt.t
+  transaction -> Path.local Lwt.t
 
 (* Check that no updates has taken place in a given place of the filesystem *)
 val checkNoUpdates :
@@ -59,14 +61,28 @@ val commitUpdates : unit -> unit
 val foundArchives : bool ref
 
 (* Unlock the archives, if they are locked. *)
-val unlockArchives : unit -> unit
+val unlockArchives : unit -> unit Lwt.t
 
-(* Find the fspath for the mirror file corresponding to a given path in the
+(* Translate a global path into a local path using the archive *)
+val translatePath : Common.root -> Path.t -> Path.local Lwt.t
+val translatePathLocal : Fspath.t -> Path.t -> Path.local
+
+(* Find the fspath for the backup file corresponding to a given path in the
    local replica *)
-val findMirror : Path.t -> Fspath.t option
+val findBackup : Path.local -> Fspath.t option
 
-(* Mirror a file that is about to be overwritten *)
-val makeMirrorFile : Common.root -> Path.t -> Path.t -> unit Lwt.t
+(*
+(* Where is the backup directory *)
+(* FIX: This should not be exported *)
+val backupDirectory : unit -> Fspath.t
+*)
+
+(* Back up a file that is about to be overwritten *)
+val makeBackupFile :
+  Common.root ->
+  Fspath.t -> Path.local -> (* Which file we should mirror *)
+  Path.local ->             (* Its location with respect to the replica root *)
+  unit Lwt.t
 
 (* Are we checking fast, or carefully? *)
 val fastcheck : string Prefs.t

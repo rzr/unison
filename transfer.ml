@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/transfer.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 21 Nov 2001 08:29:11 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* rsync compression algorithm
 
@@ -83,8 +83,10 @@ type token =
 
 (* Size of a block *)
 let blockSize = 700
+let blockSize64 = Int64.of_int blockSize
 
-let maxQueueSize = 65536
+let maxQueueSize = 65500
+let maxQueueSizeFS = Uutil.Filesize.ofInt maxQueueSize
 type tokenQueue =
   { mutable data : string;       (* the queued tokens *)
     mutable previous : [`Str of int | `Block of int | `None];
@@ -169,10 +171,11 @@ let rec growString q id transmit len' s pos len =
   String.blit s pos q.data q.pos l;
   assert (q.data.[q.pos - len' - 3] = 'S');
   assert (decodeInt2 q.data (q.pos - len' - 2) = len');
-  encodeInt2 q.data (q.pos - len' - 2) (len' + l);
+  let len'' = len' + l in
+  encodeInt2 q.data (q.pos - len' - 2) len'';
   q.pos <- q.pos + l;
   q.prog <- q.prog + l;
-  q.previous <- `Str (len' + l);
+  q.previous <- `Str len'';
   if l < len then
     pushString q id transmit s (pos + l) (len - l)
   else
@@ -198,7 +201,7 @@ let growBlock q id transmit pos =
   q.previous <- if count = 254 then `None else `Block (pos + 1);
   return ()
 
-(* Queue a new token, eventually merging it with a previous compatible
+(* Queue a new token, possibly merging it with a previous compatible
    token and flushing the queue if its size becomes greater than the
    limit *)
 let queueToken q id transmit token =
@@ -215,7 +218,13 @@ let queueToken q id transmit token =
       pushBlock q id transmit pos
 
 let makeQueue length =
-  { data = String.create (min (length + 10) maxQueueSize);
+  { data =
+      (* We need to make sure here that the size of the queue is not
+         larger than 65538
+         (1 byte: header, 2 bytes: string size, 65535 bytes: string) *)
+      String.create
+        (if length > maxQueueSizeFS then maxQueueSize else
+         Uutil.Filesize.toInt length + 10);
     pos = 0; previous = `None; prog = 0 }
 
 (*************************************************************************)
@@ -229,13 +238,17 @@ let send infd length showProgress transmit =
   debug (fun() -> Util.msg "sending file\n");
   let timer = Trace.startTimer "Sending file using generic transmission" in
   let bufSz = 8192 in
+  let bufSzFS = Uutil.Filesize.ofInt 8192 in
   let buf = String.create bufSz in
   let q = makeQueue length in
   let rec sendSlice length =
-    let count = reallyRead infd buf 0 (min length bufSz) in
+    let count =
+      reallyRead infd buf 0
+        (if length > bufSzFS then bufSz else Uutil.Filesize.toInt length) in
     queueToken q showProgress transmit (STRING (buf, 0, count)) >>= (fun () ->
-    if count = bufSz && length > count then
-      sendSlice (length - count)
+    let length = Uutil.Filesize.sub length (Uutil.Filesize.ofInt count) in
+    if count = bufSz && length > Uutil.Filesize.zero then
+      sendSlice length
     else
       return ())
   in
@@ -278,7 +291,8 @@ struct
 
   (* It is impossible to use rsync when the file size is smaller than
      the size of a block *)
-  let rsyncThreshold () = blockSize
+  let blockSizeFs = Uutil.Filesize.ofInt blockSize
+  let aboveRsyncThreshold sz = sz >= blockSizeFs
 
   (* The type of the info that will be sent to the source host *)
   type rsync_block_info =
@@ -294,28 +308,28 @@ struct
      'blockSize') of the input stream (pointed by 'infd').
      The procedure uses a buffer of size 'bufferSize' to load the input,
      and eventually handles the buffer update. *)
-  (* You MUST start it with offset = length = bufferSize to fill up the
-     buffer.
-     You MUST have bufferSize >= blockSize. *)
-  let blockIter infd buffer bufferSize blockSize f arg offset length =
-    let rec iter arg offset length =
-      let newOffset = offset + blockSize in
-      if newOffset <= length then
-        iter (f arg offset) newOffset length
-      else if length = bufferSize then
-        let chunkSize = length - offset in
-        if chunkSize > 0 then begin
-          assert(bufferSize >= blockSize);
-          String.blit buffer offset buffer 0 chunkSize
-        end;
-        let length' =
-          chunkSize + reallyRead infd buffer chunkSize (bufferSize - chunkSize)
-        in
-        iter arg 0 length'
-      else
-        arg
+  let blockIter infd blockSize f arg maxCount =
+    let bufferSize = 8192 + blockSize in
+    let buffer = String.create bufferSize in
+    let rec iter count arg offset length =
+      if count = maxCount then arg else begin
+        let newOffset = offset + blockSize in
+        if newOffset <= length then
+          iter (count + 1) (f buffer offset arg) newOffset length
+        else if offset > 0 then begin
+          let chunkSize = length - offset in
+          String.blit buffer offset buffer 0 chunkSize;
+          iter count arg 0 chunkSize
+        end else begin
+          let l = Unix.read infd buffer length (bufferSize - length) in
+          if l = 0 then
+            arg
+          else
+            iter count arg 0 (length + l)
+        end
+      end
     in
-    iter arg offset length
+    iter 0 arg 0 0
 
   (* Given a block size, get blocks from the old file and compute a
      checksum and a fingerprint for each one. *)
@@ -323,16 +337,17 @@ struct
     debug (fun() -> Util.msg "preprocessing\n");
     debugLog (fun() -> Util.msg "block size = %d bytes\n" blockSize);
     let timer = Trace.startTimer "Preprocessing old file" in
-    let preproBuf = String.create preproBufSize in
-    let addBlock rev_bi offset =
-      let cs = Checksum.substring preproBuf offset blockSize in
-      let fp =   Digest.substring preproBuf offset blockSize in
+    let addBlock buf offset rev_bi =
+      let cs = Checksum.substring buf offset blockSize in
+      let fp =   Digest.substring buf offset blockSize in
       (cs, fp) :: rev_bi
     in
-    let rev_bi = blockIter
-        infd preproBuf preproBufSize blockSize
-        addBlock [] preproBufSize preproBufSize
-    in
+    (* Make sure we are at the beginning of the file
+       (important for AppleDouble files *)
+    ignore (Unix.lseek infd 0 Unix.SEEK_SET);
+    (* Limit the number of block so that there is no overflow in
+       encodeInt3 *)
+    let rev_bi = blockIter infd blockSize addBlock [] (256*256*256) in
     let bi = Safelist.rev rev_bi in
     debugLog (fun() -> Util.msg "%d blocks\n" (Safelist.length bi));
     Trace.showTimer timer;
@@ -359,7 +374,8 @@ struct
         reallyWrite outfd decomprBuf 0 length
     in
     let copyBlocks n k =
-      let _ = Unix.lseek infd (n * blockSize) Unix.SEEK_SET in
+      ignore
+        (Unix.LargeFile.lseek infd (Int64.mul n blockSize64) Unix.SEEK_SET);
       let length = k * blockSize in
       copy length;
       progress := !progress + length
@@ -383,7 +399,7 @@ struct
             debugToken (fun() -> Util.msg
                 "decompressing %d block(s) (sequence %d->%d)\n"
                 k n (n + k - 1));
-          copyBlocks n k;
+          copyBlocks (Int64.of_int n) k;
           decode (pos + 5)
       | 'E' ->
           true
@@ -487,6 +503,7 @@ struct
   (* Compression buffer size *)
   (* MUST be >= 2 * blockSize *)
   let comprBufSize = 8192
+  let comprBufSizeFS = Uutil.Filesize.ofInt 8192
 
   (* Compress the file using the algorithm described in the header *)
   let rsyncCompress
@@ -550,6 +567,8 @@ struct
     let cksumOutgoing = ref ' ' in
     let cksumTable = ref (Checksum.init blockSize) in
 
+    let absolutePos = ref Uutil.Filesize.zero in
+
     (* Check the new window position and update the compression buffer
        if its end has been reached *)
     let rec slideWindow newOffset toBeSent length miss : unit Lwt.t =
@@ -563,8 +582,16 @@ struct
           assert(comprBufSize >= blockSize);
           String.blit comprBuf newOffset comprBuf 0 chunkSize
         end;
-        let length = chunkSize +
-            (reallyRead infd comprBuf chunkSize (comprBufSize - chunkSize)) in
+        let rem = Uutil.Filesize.sub srcLength !absolutePos in
+        let avail = comprBufSize - chunkSize in
+        let l =
+          reallyRead infd comprBuf chunkSize
+            (if rem > comprBufSizeFS then avail else
+             min (Uutil.Filesize.toInt rem) avail)
+        in
+        absolutePos :=
+          Uutil.Filesize.add !absolutePos (Uutil.Filesize.ofInt l);
+        let length = chunkSize + l in
         debugToken (fun() -> Util.msg "updating the compression buffer\n");
         debugToken (fun() -> Util.msg "new length = %d bytes\n" length);
         slideWindow 0 0 length miss)
@@ -610,14 +637,17 @@ struct
        match fingerprints *)
     and findBlock offset checksum entry fingerprint =
       match entry, fingerprint with
-      | [], _ -> -1
+      | [], _ ->
+          -1
       | (k, cs, fp) :: tl, None
         when cs = checksum ->
           let fingerprint = Digest.substring comprBuf offset blockSize in
           findBlock offset checksum entry (Some fingerprint)
-      |        (k, cs, fp) :: tl, Some fingerprint
-        when (cs = checksum) && (fp = fingerprint) -> k
-      |        _ :: tl, _ -> findBlock offset checksum tl fingerprint
+      | (k, cs, fp) :: tl, Some fingerprint
+        when (cs = checksum) && (fp = fingerprint) ->
+          k
+      | _ :: tl, _ ->
+          findBlock offset checksum tl fingerprint
 
     (* Miss : slide the window one character ahead *)
     and miss offset toBeSent length =

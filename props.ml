@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/props.ml $ *)
-(* $I2: Last modified by vouillon on Mon, 25 Mar 2002 12:08:56 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Mon, 06 Sep 2004 14:48:05 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 let debug = Util.debug "props"
 
@@ -14,8 +14,8 @@ module type S = sig
   val diff : t -> t -> t
   val toString : t -> string
   val syncedPartsToString : t -> string
-  val set : Fspath.t -> Path.t -> [`Set | `Update] -> t -> unit
-  val get : Unix.stats -> t
+  val set : Fspath.t -> Path.local -> [`Set | `Update] -> t -> unit
+  val get : Unix.LargeFile.stats -> Osx.info -> t
   val init : bool -> unit
 end
 
@@ -175,17 +175,17 @@ let set fspath path kind (fp, mask) =
               (Printf.sprintf "%o/%o" fp mask));
         Unix.chmod abspath fp)
 
-let get stats = (stats.Unix.st_perm, Prefs.read permMask)
+let get stats _ = (stats.Unix.LargeFile.st_perm, Prefs.read permMask)
 
-let init someWindows =
-  let mask = if someWindows then wind_mask else unix_mask in
+let init someHostIsRunningWindows =
+  let mask = if someHostIsRunningWindows then wind_mask else unix_mask in
   let oldMask = Prefs.read permMask in
   let newMask = oldMask land mask in
   debug
     (fun() ->
       Util.msg "Setting permission mask to %s (%s and %s)\n"
         (Printf.sprintf "%o" newMask)
-        (Printf.sprintf "%o" oldMask)        
+        (Printf.sprintf "%o" oldMask)
         (Printf.sprintf "%o" mask));
   Prefs.set permMask newMask
 
@@ -214,7 +214,7 @@ module Id (M : sig
   val toString : int -> string
   val syncedPartsToString : int -> string
   val set : string -> int -> unit
-  val get : Unix.stats -> int
+  val get : Unix.LargeFile.stats -> int
 end) : S = struct
 
 type t =
@@ -268,7 +268,7 @@ let extern id =
         if id = 0 then
           raise (Util.Transient
                    (Printf.sprintf "Trying to map the non-root %s %s to %s 0"
-                      M.kind nm M.kind)) 
+                      M.kind nm M.kind))
         Hashtbl.add tbl nm id;
         id
 
@@ -285,7 +285,7 @@ let set fspath path kind id =
 
 let tbl = Hashtbl.create 17
 
-let get stats =
+let get stats _ =
   if not (Prefs.read M.sync) then IdIgnored else
   let id = M.get stats in
   if id = 0 || Prefs.read numericIds then IdNumeric id else
@@ -296,8 +296,8 @@ let get stats =
     Hashtbl.add tbl id id';
     id'
 
-let init someWindows =
-  if someWindows then
+let init someHostIsRunningWindows =
+  if someHostIsRunningWindows then
     Prefs.set M.sync false;
 
 end
@@ -308,7 +308,7 @@ let sync =
   Prefs.createBool "owner"
     false "synchronize owner"
     ("When this flag is set to \\verb|true|, the owner attributes "
-     ^ "of the files are synchronized.  " 
+     ^ "of the files are synchronized.  "
      ^ "Whether the owner names or the owner identifiers are synchronized"
      ^ "depends on the preference \texttt{numerids}.")
 
@@ -319,7 +319,7 @@ let toString id = (Unix.getpwuid id).Unix.pw_name
 let syncedPartsToString = toString
 
 let set path id = Unix.chown path id (-1)
-let get stats = stats.Unix.st_uid
+let get stats = stats.Unix.LargeFile.st_uid
 
 end)
 
@@ -329,10 +329,10 @@ let sync =
   Prefs.createBool "group"
     false "synchronize group"
     ("When this flag is set to \\verb|true|, the group attributes "
-     ^ "of the files are synchronized.  " 
+     ^ "of the files are synchronized.  "
      ^ "Whether the group names or the group identifiers are synchronized"
      ^ "depends on the preference \\texttt{numerids}.")
-    
+
 let kind = "group"
 
 let to_num nm = (Unix.getgrnam nm).Unix.gr_gid
@@ -340,7 +340,7 @@ let toString id = (Unix.getgrgid id).Unix.gr_name
 let syncedPartsToString = toString
 
 let set path id = Unix.chown path (-1) id
-let get stats = stats.Unix.st_gid
+let get stats = stats.Unix.LargeFile.st_gid
 
 end)
 
@@ -370,10 +370,16 @@ let minus_two = Int64.of_int (-2)
 let approximate t = Int64.logand (Int64.of_float t) minus_two
 let extract t = match t with Synced v -> v | NotSynced v -> v
 
+let oneHour = Int64.of_int 3600
+let minusOneHour = Int64.neg oneHour
+let moduloOneHour t =
+  let v = Int64.rem t oneHour in
+  if v >= Int64.zero then v else Int64.add v oneHour
+
 let hash t h =
   Uutil.hash2
     (match t with
-       Synced f    -> Hashtbl.hash (approximate f)
+       Synced f    -> Hashtbl.hash (moduloOneHour (approximate f))
      | NotSynced _ -> 0)
     h
 
@@ -381,9 +387,13 @@ let similar t t' =
   not (Prefs.read sync)
     ||
   match t, t' with
-    Synced v, Synced v'      -> approximate v = approximate v'
-  | NotSynced _, NotSynced _ -> true
-  | _                        -> false
+    Synced v, Synced v'      ->
+      let delta = Int64.sub (approximate v) (approximate v') in
+      delta = Int64.zero || delta = oneHour || delta = minusOneHour
+  | NotSynced _, NotSynced _ ->
+      true
+  | _                        ->
+      false
 
 let override t t' =
   match t, t' with
@@ -409,6 +419,13 @@ let syncedPartsToString t = match t with
   Synced _    -> toString t
 | NotSynced _ -> ""
 
+let iCanWrite p =
+  try
+    Unix.access p [Unix.R_OK];
+    true
+  with
+    Unix.Unix_error _ -> false
+
 (* FIX: Probably there should be a check here that prevents us from ever     *)
 (* setting a file's modtime into the future.                                 *)
 let set fspath path kind t =
@@ -418,18 +435,83 @@ let set fspath path kind t =
         "setting modification time"
         (fun () ->
            let abspath = Fspath.concatToString fspath path in
-           Unix.utimes abspath v v)
+           if Util.osType = `Win32 && not (iCanWrite abspath) then
+             begin
+              (* Nb. This workaround was proposed by Dmitry Bely, to
+                 work around the fact that Unix.utimes fails on readonly
+                 files under windows.  I'm [bcp] a little bit uncomfortable
+                 with it for two reasons: (1) if we crash in the middle,
+                 the permissions might be left in a bad state, and (2) I
+                 don't understand the Win32 permissions model enough to
+                 know whether it will always work -- e.g., what if the
+                 UID of the unison process is not the same as that of the
+                 file itself (under Unix, this case would fail, but we
+                 certainly don't want to make it WORLD-writable, even
+                 briefly!). *)
+               let oldPerms =
+                 (Unix.LargeFile.lstat abspath).Unix.LargeFile.st_perm in
+               Util.finalize
+                 (fun()->
+                    Unix.chmod abspath 0o600;
+                    Unix.utimes abspath v v)
+                 (fun()-> Unix.chmod abspath oldPerms)
+             end
+           else Unix.utimes abspath v v)
   | _ ->
       ()
 
-let get stats =
-  let v = stats.Unix.st_mtime in
-  if stats.Unix.st_kind = Unix.S_REG && Prefs.read sync then
+let get stats _ =
+  let v = stats.Unix.LargeFile.st_mtime in
+  if stats.Unix.LargeFile.st_kind = Unix.S_REG && Prefs.read sync then
     Synced v
   else
     NotSynced v
 
 let same p p' = extract p = extract p'
+
+let init _ = ()
+
+end
+
+(* ------------------------------------------------------------------------- *)
+(*                          Type and creator                                 *)
+(* ------------------------------------------------------------------------- *)
+
+module TypeCreator : S = struct
+
+type t = string option
+
+let dummy = None
+
+let hash t h = Uutil.hash2 (Hashtbl.hash t) h
+
+let similar t t' =
+  not (Prefs.read Osx.rsrc) || t = t'
+
+let override t t' = t'
+
+let strip t = t
+
+let diff t t' = if similar t t' then None else t'
+
+let toString t =
+  match t with
+    None | Some "" -> ""
+  | Some s         -> " " ^ String.escaped (String.sub s 0 4) ^
+                      " " ^ String.escaped (String.sub s 4 4)
+
+let syncedPartsToString = toString
+
+let set fspath path kind t =
+  match t with
+    None   -> ()
+  | Some t -> Osx.setFileInfos fspath path t
+
+let get stats info =
+  if Prefs.read Osx.rsrc && stats.Unix.LargeFile.st_kind = Unix.S_REG then
+    Some info.Osx.typeCreator
+  else
+    None
 
 let init _ = ()
 
@@ -444,16 +526,22 @@ type t =
     uid : Uid.t;
     gid : Gid.t;
     time : Time.t;
-    length : Uutil.filesize }
+    typeCreator : TypeCreator.t;
+    length : Uutil.Filesize.t }
 
 let template perm =
   { perm = perm; uid = Uid.dummy; gid = Gid.dummy;
-    time = Time.dummy; length = Uutil.dummyfilesize }
+    time = Time.dummy; typeCreator = TypeCreator.dummy;
+    length = Uutil.Filesize.dummy }
 
 let dummy = template Perm.dummy
 
 let hash p h =
-  Perm.hash p.perm (Uid.hash p.uid (Gid.hash p.gid (Time.hash p.time h)))
+  Perm.hash p.perm
+    (Uid.hash p.uid
+       (Gid.hash p.gid
+          (Time.hash p.time
+             (TypeCreator.hash p.typeCreator h))))
 
 let similar p p' =
   Perm.similar p.perm p'.perm
@@ -463,12 +551,15 @@ let similar p p' =
   Gid.similar p.gid p'.gid
     &&
   Time.similar p.time p'.time
+    &&
+  TypeCreator.similar p.typeCreator p'.typeCreator
 
 let override p p' =
   { perm = Perm.override p.perm p'.perm;
     uid = Uid.override p.uid p'.uid;
     gid = Gid.override p.gid p'.gid;
     time = Time.override p.time p'.time;
+    typeCreator = TypeCreator.override p.typeCreator p'.typeCreator;
     length = p'.length }
 
 let strip p =
@@ -476,57 +567,64 @@ let strip p =
     uid = Uid.strip p.uid;
     gid = Gid.strip p.gid;
     time = Time.strip p.time;
+    typeCreator = TypeCreator.strip p.typeCreator;
     length = p.length }
 
 let toString p =
   Printf.sprintf
-    "modified at %s  size %-9.f %s%s%s"
+    "modified at %s  size %-9.f %s%s%s%s"
     (Time.toString p.time)
-    (Uutil.filesize2float p.length)
+    (Uutil.Filesize.toFloat p.length)
     (Perm.toString p.perm)
     (Uid.toString p.uid)
     (Gid.toString p.gid)
+    (TypeCreator.toString p.typeCreator)
 
 let syncedPartsToString p =
   let tm = Time.syncedPartsToString p.time in
   Printf.sprintf
-    "%s%s  size %-9.f %s%s%s"
+    "%s%s  size %-9.f %s%s%s%s"
     (if tm = "" then "" else "modified at ")
     tm
-    (Uutil.filesize2float p.length)
+    (Uutil.Filesize.toFloat p.length)
     (Perm.syncedPartsToString p.perm)
     (Uid.syncedPartsToString p.uid)
     (Gid.syncedPartsToString p.gid)
+    (TypeCreator.syncedPartsToString p.typeCreator)
 
 let diff p p' =
   { perm = Perm.diff p.perm p'.perm;
     uid = Uid.diff p.uid p'.uid;
     gid = Gid.diff p.gid p'.gid;
     time = Time.diff p.time p'.time;
+    typeCreator = TypeCreator.diff p.typeCreator p'.typeCreator;
     length = p'.length }
 
-let get stats =
-  { perm = Perm.get stats;
-    uid = Uid.get stats;
-    gid = Gid.get stats;
-    time = Time.get stats;
+let get stats infos =
+  { perm = Perm.get stats infos;
+    uid = Uid.get stats infos;
+    gid = Gid.get stats infos;
+    time = Time.get stats infos;
+    typeCreator = TypeCreator.get stats infos;
     length =
-      if stats.Unix.st_kind = Unix.S_REG then
-        Uutil.int2filesize stats.Unix.st_size
+      if stats.Unix.LargeFile.st_kind = Unix.S_REG then
+        Uutil.Filesize.fromStats stats
       else
-        Uutil.zerofilesize }
+        Uutil.Filesize.zero }
 
 let set fspath path kind p =
   Uid.set fspath path kind p.uid;
   Gid.set fspath path kind p.gid;
+  Perm.set fspath path kind p.perm;
   Time.set fspath path kind p.time;
-  Perm.set fspath path kind p.perm
+  TypeCreator.set fspath path kind p.typeCreator
 
-let init someWindows =
-  Perm.init someWindows;
-  Uid.init someWindows;
-  Gid.init someWindows;
-  Time.init someWindows
+let init someHostIsRunningWindows =
+  Perm.init someHostIsRunningWindows;
+  Uid.init someHostIsRunningWindows;
+  Gid.init someHostIsRunningWindows;
+  Time.init someHostIsRunningWindows;
+  TypeCreator.init someHostIsRunningWindows
 
 let fileDefault = template Perm.fileDefault
 let fileSafe = template Perm.fileSafe

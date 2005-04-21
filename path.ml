@@ -1,89 +1,88 @@
 (* $I1: Unison file synchronizer: src/path.ml $ *)
-(* $I2: Last modified by zheyang on Sat, 09 Mar 2002 02:42:40 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* Defines an abstract type of relative pathnames *)
 
-(* TODO: For efficiency, in the future we may want to cache the string
-   representation of paths *)
-type t =
-    LTR of Name.t list (* Left-to-right: first name on list is leftmost *)
-  | RTL of Name.t list (* Right-to-left: first name on list is rightmost *)
-
-let empty = RTL []
-
-let length = function
-    RTL p -> Safelist.length p
-  | LTR p -> Safelist.length p
-
-let isEmpty = function
-  RTL [] -> true
-| LTR [] -> true
-| _ -> false
-
-(* Force a path into right-to-left representation *)
-let rtl = function
-  (RTL _) as path -> path
-| (LTR p) -> RTL(Safelist.rev p)
-
-(* Force a path into left-to-right representation *)
-let ltr = function
-  (LTR _) as path -> path
-| (RTL p) -> LTR(Safelist.rev p)
-
-(* Add a name to the end of a path *)
-let rcons n path =
-  match rtl path with
-    RTL ns -> RTL(n::ns)
-  | LTR _ -> assert false
-
-(* Give a left-to-right list of names in the path *)
-let toNames = function
-  LTR p -> p
-| RTL p -> Safelist.rev p
-
-let child path name =
-  match rtl path with
-    RTL ns -> RTL(name::ns)
-  | LTR _ -> assert false
-
-let addSuffixToFinalName path suffix =
-  match rtl path with
-    RTL(n::p) -> RTL((Name.fromString (Name.toString n ^ suffix))::p)
-  | _ -> assert false
-
-let addPrefixToFinalName path suffix =
-  match rtl path with
-    RTL(n::p) -> RTL((Name.fromString (suffix ^ Name.toString n))::p)
-  | _ -> assert false
-
-let finalName path =
-  match rtl path with
-    RTL [] -> None
-  | RTL(n::p) -> Some n
-  | LTR _ -> assert false
-
-let parent path =
-  match rtl path with
-    RTL(_::p) -> RTL(p)
-  | RTL [] -> assert false
-  | LTR _ -> assert false
-
-(* pathDeconstruct : path -> (name * path) option *)
-let deconstruct path =
-  match ltr path with
-    LTR [] -> None
-  | LTR(hd::tl) -> Some(hd,LTR tl)
-  | RTL _ -> assert false
-
-let deconstructRev path =
-  match rtl path with
-    RTL [] -> None
-  | RTL(hd::tl) -> Some(hd,RTL tl)
-  | LTR _ -> assert false
+type 'a path = string
+type t = string
+type local = string
 
 let pathSeparatorChar = '/'
 let pathSeparatorString = "/"
+
+let concat p p' =
+  let l = String.length p in
+  if l = 0 then p' else
+  let l' = String.length p' in
+  if l' = 0 then p else
+  let p'' = String.create (l + l' + 1) in
+  String.blit p 0 p'' 0 l;
+  p''.[l] <- pathSeparatorChar;
+  String.blit p' 0 p'' (l + 1) l';
+  p''
+
+let empty = ""
+
+let isEmpty p = String.length p = 0
+
+let length p =
+  let l = ref 0 in
+  for i = 0 to String.length p - 1 do
+    if p.[i] = pathSeparatorChar then incr l
+  done;
+  !l
+
+(* Add a name to the end of a path *)
+let rcons n path = concat (Name.toString n) path
+
+let toStringList p = Str.split (Str.regexp pathSeparatorString) p
+
+(* Give a left-to-right list of names in the path *)
+let toNames p = List.map Name.fromString (toStringList p)
+
+let child path name = concat path (Name.toString name)
+
+let parent path =
+  try
+    let i = String.rindex path pathSeparatorChar in
+    String.sub path 0 i
+  with Not_found ->
+    empty
+
+let finalName path =
+  try
+    let i = String.rindex path pathSeparatorChar + 1 in
+    Some (Name.fromString (String.sub path i (String.length path - i)))
+  with Not_found ->
+    if isEmpty path then
+      None
+    else
+      Some (Name.fromString path)
+
+(* pathDeconstruct : path -> (name * path) option *)
+let deconstruct path =
+  try
+    let i = String.index path pathSeparatorChar in
+    Some (Name.fromString (String.sub path 0 i),
+          String.sub path (i + 1) (String.length path - i - 1))
+  with Not_found ->
+    if isEmpty path then
+      None
+    else
+      Some (Name.fromString path, empty)
+
+let deconstructRev path =
+  try
+    let i = String.rindex path pathSeparatorChar in
+    Some (Name.fromString
+            (String.sub path (i + 1) (String.length path - i - 1)),
+          String.sub path 0 i)
+  with Not_found ->
+    if path = "" then
+      None
+    else
+      Some (Name.fromString path, empty)
 
 let winAbspathRx = Rx.rx "([a-zA-Z]:)?(/|\\\\).*"
 let unixAbspathRx = Rx.rx "/.*"
@@ -136,42 +135,44 @@ let fromString str =
   let str = if Util.osType = `Win32 then Fileutil.bs2fs str else str in
   if is_absolute str then raise(Invalid_argument "Path.fromString");
   let str = Fileutil.removeTrailingSlashes str in
-  if str="" then empty else
-  let rec loop str =
+  if str = "" then empty else
+  let rec loop p str =
     try
       let pos = String.index str pathSeparatorChar in
       let name1 = String.sub str 0 pos in
       let str_res =
         String.sub str (pos + 1) (String.length str - pos - 1) in
-      (Name.fromString name1)::(loop str_res)
+      loop (child p (Name.fromString name1)) str_res
     with
-      Not_found -> [Name.fromString str]
-    | Invalid_argument _ -> 
+      Not_found -> child p (Name.fromString str)
+    | Invalid_argument _ ->
         raise(Invalid_argument "Path.fromString") in
-  LTR(loop str)
+  loop empty str
 
-let toStringList p =
-  List.map Name.toString (toNames p)
-
-let toString path =
-  String.concat pathSeparatorString (toStringList path)
-
-let toDebugString path =
-  String.concat " / " (toStringList path)
+let toString path = path
 
 let compare p1 p2 =
-  let n1 = toNames p1 in
-  let n2 = toNames p2 in
-  let rec lcomp n1 n2 =
-    match n1,n2 with
-      [],[]-> 0
-    | [],_ -> -1
-    | _,[] -> 1
-    | hd1::tl1,hd2::tl2 ->
-        let c = Name.compare hd1 hd2 in
-        if c<>0 then c
-        else lcomp tl1 tl2 in
-  lcomp n1 n2
+  if Case.insensitive () then Util.nocase_cmp p1 p2 else compare p1 p2
+
+let toDebugString path = String.concat " / " (toStringList path)
+
+let addSuffixToFinalName path suffix = path ^ suffix
+
+let addPrefixToFinalName path prefix =
+  try
+    let i = String.rindex path pathSeparatorChar + 1 in
+    let l = String.length path in
+    let l' = String.length prefix in
+    let p = String.create (l + l') in
+    String.blit path 0 p 0 i;
+    String.blit prefix 0 p i l';
+    String.blit path i p (i + l') (l - i);
+    p
+  with Not_found ->
+    assert (not (isEmpty path));
+    prefix ^ path
+
+let hash p = Hashtbl.hash p
 
 (* Pref controlling whether symlinks are followed. *)
 let follow = Pred.create "follow"
@@ -184,6 +185,8 @@ let follow = Pred.create "follow"
       described in \\sectionref{pathspec}{Path Specification}.")
 
 let followLink path =
-  Util.osType = `Unix
-    &&
-  Pred.test follow (toString path)
+     (Util.osType = `Unix || Util.isCygwin)
+  && Pred.test follow (toString path)
+
+let magic p = p
+let magic' p = p

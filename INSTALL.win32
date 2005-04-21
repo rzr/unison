@@ -1,5 +1,4 @@
 Installation notes to build Unison on Windows systems
-(unison-help@cis.upenn.edu)
 
 We provide two options for building Unison on MS Windows.
 Both options require the Cygwin layer to be able to use a few GNU

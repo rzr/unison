@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/recon.ml $ *)
-(* $I2: Last modified by vouillon on Mon, 25 Mar 2002 12:08:56 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
 
@@ -16,17 +16,21 @@ let setDirection ri dir force =
         d := Replica1ToReplica2
       else if dir=`Replica2ToReplica1 then
         d := Replica2ToReplica1
+      else if dir=`Merge then
+        if Globals.shouldMerge ri.path then d := Merge else () 
       else  (* dir = `Older or dir = `Newer *)
-        let (_,_,p1,_) = rc1 in
-        let (_,_,p2,_) = rc2 in
-        let comp = (Props.time p1) -. (Props.time p2) in
-        let comp = if dir=`Newer then -. comp else comp in
-        if comp = 0.0 then
-          ()
-        else if comp<0.0 then
-          d := Replica1ToReplica2
-        else
-          d := Replica2ToReplica1
+        let (_,s1,p1,_) = rc1 in
+        let (_,s2,p2,_) = rc2 in
+        if s1<>`Deleted && s2<>`Deleted then begin
+          let comp = (Props.time p1) -. (Props.time p2) in
+          let comp = if dir=`Newer then -. comp else comp in
+          if comp = 0.0 then
+            ()
+          else if comp<0.0 then
+            d := Replica1ToReplica2
+          else
+            d := Replica2ToReplica1
+        end
   | _ ->
       ()
 
@@ -63,7 +67,7 @@ let root2direction root =
 let forceRoot: string Prefs.t =
   Prefs.createString "force" ""
     "force changes from this replica to the other"
-    ("Including the preference \\texttt{-force \ARG{root}} causes Unison to "
+    ("Including the preference \\texttt{-force \\ARG{root}} causes Unison to "
      ^ "resolve all differences (even non-conflicting changes) in favor of "
      ^ "\\ARG{root}.  "
      ^ "This effectively changes Unison from a synchronizer into a mirroring "
@@ -146,10 +150,13 @@ let propagateErrors (rplc: Common.replicas): Common.replicas =
   | Different ((_, _, _, ui1), (_, _, _, ui2), _, _) ->
       try
         checkForError ui1;
-        checkForError ui2;
-        rplc
+        try
+          checkForError ui2;
+          rplc
+        with UpdateError err ->
+          Problem ("[root 2]: " ^ err)
       with UpdateError err ->
-        Problem err
+        Problem ("[root 1]: " ^ err)
 
 type singleUpdate = Rep1Updated | Rep2Updated
 
@@ -183,13 +190,13 @@ let update2replicaContent (conflict: bool) ui ucNew oldType:
 
 let oldType (prev: Common.prevState): Fileinfo.typ =
   match prev with
-    Previous (typ, _, _) -> typ
-  | New                  -> `ABSENT
+    Previous (typ, _, _, _) -> typ
+  | New                     -> `ABSENT
 
 let oldDesc (prev: Common.prevState): Props.t =
   match prev with
-    Previous (_, desc, _) -> desc
-  | New                   -> Props.dummy
+    Previous (_, desc, _, _) -> desc
+  | New                      -> Props.dummy
 
 (* [describeUpdate ui] returns the replica contents for both the case of     *)
 (* updating and the case of non-updatingd                                    *)
@@ -221,7 +228,7 @@ let rec reconcileNoConflict ui whatIsUpdated
   | NoUpdates -> result
   | Error err ->
       Tree.add result (Problem err)
-  | Updates (Dir (desc, children, permchg), Previous(`DIRECTORY, _, _)) ->
+  | Updates (Dir (desc, children, permchg), Previous(`DIRECTORY, _, _, _)) ->
       let r =
         if permchg = PropsSame then result else Tree.add result (different ())
       in
@@ -261,9 +268,10 @@ let combineChildren children1 children2 =
   loop [] children1 children2
 
 (* File are marked equal in groups of 5000 to lower memory consumption       *)
-let add_equal counter equal v =
+let add_equal (counter, archiveUpdated) equal v =
   let eq = Tree.add equal v in
   incr counter;
+  archiveUpdated := true;
   if !counter = 5000 then begin
     counter := 0;
     let (t, eq) = Tree.slice eq in  (* take a snapshot of the tree   *)
@@ -290,6 +298,14 @@ let rec reconcile path ui1 ui2 counter equals unequals =
                      update2replicaContent true ui2 uc2 oldType,
                      ref Conflict,
                      Conflict)))) in
+  let toBeMerged uc1 uc2 oldType equals unequals =
+    (equals,
+     Tree.add unequals
+       (propagateErrors
+          (Different(update2replicaContent true ui1 uc1 oldType,
+                     update2replicaContent true ui2 uc2 oldType,
+                     ref Merge,
+                     Merge)))) in
   match (ui1, ui2) with
     (Error s, _) ->
       (equals, Tree.add unequals (Problem s))
@@ -336,7 +352,7 @@ let rec reconcile path ui1 ui2 counter equals unequals =
   | (Updates (File (desc1,contentsChanged1) as uc1, prev),
      Updates (File (desc2,contentsChanged2) as uc2, _)) ->
        begin match contentsChanged1, contentsChanged2 with
-         ContentsUpdated (dig1, _), ContentsUpdated (dig2, _)
+         ContentsUpdated (dig1, _, ress1), ContentsUpdated (dig2, _, ress2)
          when dig1 = dig2 ->
            if Props.similar desc1 desc2 then
              (add_equal counter equals (uc1, uc2), unequals)
@@ -350,6 +366,9 @@ let rec reconcile path ui1 ui2 counter equals unequals =
              different uc1' uc2' (oldType prev) equals unequals
        | ContentsSame, ContentsSame when Props.similar desc1 desc2 ->
            (add_equal counter equals (uc1, uc2), unequals)
+       | ContentsUpdated _, ContentsUpdated _
+             when Globals.shouldMerge path ->
+           toBeMerged uc1 uc2 (oldType prev) equals unequals
        | _ ->
            different uc1 uc2 (oldType prev) equals unequals
        end
@@ -383,13 +402,14 @@ let rec leavePath p t =
 let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
     : Common.reconItem list * bool =
   let counter = ref 0 in
+  let archiveUpdated = ref false in
   let (equals, unequals) =
     Safelist.fold_left
       (fun (equals, unequals) (path,updatesList) ->
         match updatesList with
           [ui1; ui2] ->
             let (equals, unequals) =
-              reconcile path ui1 ui2 counter
+              reconcile path ui1 ui2 (counter, archiveUpdated)
                 (enterPath path equals) (enterPath path unequals)
             in
             (leavePath path equals, leavePath path unequals)
@@ -398,12 +418,13 @@ let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
       (Tree.start, Tree.start) pathUpdatesList in
   let unequals = Tree.finish unequals in
   debug (fun() -> Util.msg "reconcile: %d results\n" (Tree.size unequals));
-  let equals   = Tree.finish equals in
+  let equals = Tree.finish equals in
   Update.markEqual equals;
   (* Commit archive updates done up to now *)
-  Update.commitUpdates ();
+  if !archiveUpdated then Update.commitUpdates ();
   let result = Tree.flatten unequals Path.empty Path.child [] in
-  let unsorted = List.map (fun (p, rplc) -> {path = p; replicas = rplc}) result in
+  let unsorted =
+    List.map (fun (p, rplc) -> {path = p; replicas = rplc}) result in
   let sorted = Sortri.sortReconItems unsorted in
   overrideReconcilerChoices sorted;
   (sorted, not (Tree.is_empty equals))

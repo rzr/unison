@@ -1,6 +1,6 @@
 (* $I1: Unison file synchronizer: src/recon.mli $ *)
-(* $I2: Last modified by zheyang on Wed, 12 Dec 2001 02:26:21 -0500 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by bcpierce on Thu, 24 Jun 2004 12:13:22 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 val reconcileAll : 
      Common.updateItem list Common.oneperpath
@@ -20,7 +20,7 @@ val overrideReconcilerChoices : Common.reconItem list -> unit
 (* argument is `Force), then set it as specified by the second argument.     *)
 val setDirection :
   Common.reconItem ->
-  [`Older | `Newer | `Replica1ToReplica2 | `Replica2ToReplica1] ->
+  [`Older | `Newer | `Merge | `Replica1ToReplica2 | `Replica2ToReplica1] ->
   [`Force | `Prefer] ->
   unit
 

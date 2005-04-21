@@ -43,8 +43,14 @@ let rec connect t t' =
     add_waiter t' (fun () -> connect t t')
   else begin
     t.state <- t'.state;
-    List.iter (fun f -> f ()) t.waiters;
-    t.waiters <- []
+    begin match t.waiters with
+      [f] ->
+        t.waiters <- [];
+        f ()
+    | _ ->
+        List.iter (fun f -> f ()) t.waiters;
+        t.waiters <- []
+    end
   end
 
 (* similar to [connect t t']; does nothing instead of raising exception when

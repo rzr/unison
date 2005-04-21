@@ -1,21 +1,176 @@
 
-Changes in Version 2.9.1
+Changes in Version 2.10.2
 
-   Changes since 2.8.19:
-     * Fixed a bug due to a wrong assumption
-     * Changing profile works again under Windows
-     * Fixed a bug due to a wrong assumption
-     * fixed the Makefile
+   Changes since 2.9.20:
+     * INCOMPATIBLE CHANGE: Archive format has changed.
+     * Major functionality changes:
+          + Major tidying and enhancement of 'merge' functionality. The
+            main user-visible change is that the external merge program
+            may either write the merged output to a single new file, as
+            before, or it may modify one or both of its input files, or
+            it may write two new files. In the latter cases, its
+            modifications will be copied back into place on both the
+            local and the remote host, and (if the two files are now
+            equal) the archive will be updated appropriately. More
+            information can be found in the user manual. Thanks to Malo
+            Denielou and Alan Schmitt for these improvements.
+            Warning: the new merging functionality is not completely
+            compatible with old versions! Check the manual for details.
+          + Files larger than 2Gb are now supported.
+          + Added preliminary (and still somewhat experimental) support
+            for the Apple OS X operating system.
+               o Resource forks should be transferred correctly. (See the
+                 manual for details of how this works when synchronizing
+                 HFS with non-HFS volumes.) Synchronization of file type
+                 and creator information is also supported.
+               o On OSX systems, the name of the directory for storing
+                 Unison's archives, preference files, etc., is now
+                 determined as follows:
+                    # if ~/.unison exists, use it
+                    # otherwise, use ~/Library/Application
+                      Support/Unison, creating it if necessary.
+               o A preliminary native-Cocoa user interface is under
+                 construction. This still needs some work, and some users
+                 experience unpredictable crashes, so it is only for
+                 hackers for now. Run make with UISTYLE=mac to build this
+                 interface.
+     * Minor functionality changes:
+          + Added an ignorelocks preference, which forces Unison to
+            override left-over archive locks. (Setting this preference is
+            dangerous! Use it only if you are positive you know what you
+            are doing.)
+          + Running with the -timers flag set to true will now show the
+            total time taken to check for updates on each directory.
+            (This can be helpful for tidying directories to improve
+            update detection times.)
+          + Added a new preference assumeContentsAreImmutable. If a
+            directory matches one of the patterns set in this preference,
+            then update detection is skipped for files in this directory.
+            (The purpose is to speed update detection for cases like Mail
+            folders, which contain lots and lots of immutable files.)
+            Also a preference assumeContentsAreImmutableNot, which
+            overrides the first, similarly to ignorenot.
+          + The ignorecase flag has been changed from a boolean to a
+            three-valued preference. The default setting, called default,
+            checks the operating systems running on the client and server
+            and ignores filename case if either of them is OSX or
+            Windows. Setting ignorecase to true or false overrides this
+            behavior. If you have been setting ignorecase on the command
+            line using -ignorecase=true or -ignorecase=false, you will
+            need to change to -ignorecase true or -ignorecase false.
+          + a new preference, 'repeat', for the text user interface
+            (only). If 'repeat' is set to a number, then, after it
+            finishes synchronizing, Unison will wait for that many
+            seconds and then start over, continuing this way until it is
+            killed from outside. Setting repeat to true will
+            automatically set the batch preference to true.
+          + Excel files are now handled specially, so that the fastcheck
+            optimization is skipped even if the fastcheck flag is set.
+            (Excel does some naughty things with modtimes, making this
+            optimization unreliable and leading to failures during change
+            propagation.)
+          + The ignorecase flag has been changed from a boolean to a
+            three-valued preference. The default setting, called
+            'default', checks the operating systems running on the client
+            and server and ignores filename case if either of them is OSX
+            or Windows. Setting ignorecase to 'true' or 'false' overrides
+            this behavior.
+          + Added a new preference, 'repeat', for the text user interface
+            (only, at the moment). If 'repeat' is set to a number, then,
+            after it finishes synchronizing, Unison will wait for that
+            many seconds and then start over, continuing this way until
+            it is killed from outside. Setting repeat to true will
+            automatically set the batch preference to true.
+          + The 'rshargs' preference has been split into 'rshargs' and
+            'sshargs' (mainly to make the documentation clearer). In
+            fact, 'rshargs' is no longer mentioned in the documentation
+            at all, since pretty much everybody uses ssh now anyway.
+     * Documentation
+          + The web pages have been completely redesigned and
+            reorganized. (Thanks to Alan Schmitt for help with this.)
+     * User interface improvements
+          + Added a GTK2 user interface, capable (among other things) of
+            displaying filenames in any locale encoding. Kudos to Stephen
+            Tse for contributing this code!
+          + The text UI now prints a list of failed and skipped transfers
+            at the end of synchronization.
+          + Restarting update detection from the graphical UI will reload
+            the current profile (which in particular will reset the -path
+            preference, in case it has been narrowed by using the
+            ``Recheck unsynchronized items'' command).
+          + Several small improvements to the text user interface,
+            including a progress display.
+     * Bug fixes (too numerous to count, actually, but here are some):
+          + The maxthreads preference works now.
+          + Fixed bug where warning message about uname returning an
+            unrecognized result was preventing connection to server. (The
+            warning is no longer printed, and all systems where 'uname'
+            returns anything other than 'Darwin' are assumed not to be
+            running OS X.)
+          + Fixed a problem on OS X that caused some valid file names
+            (e.g., those including colons) to be considered invalid.
+          + Patched Path.followLink to follow links under cygwin in
+            addition to Unix (suggested by Matt Swift).
+          + Small change to the storeRootsName function, suggested by
+            bliviero at ichips.intel.com, to fix a problem in unison with
+            the `rootalias' option, which allows you to tell unison that
+            two roots contain the same files. Rootalias was being applied
+            after the hosts were sorted, so it wouldn't work properly in
+            all cases.
+          + Incorporated a fix by Dmitry Bely for setting utimes of
+            read-only files on Win32 systems.
+     * Installation / portability:
+          + Unison now compiles with OCaml version 3.07 and later out of
+            the box.
+          + Makefile.OCaml fixed to compile out of the box under OpenBSD.
+          + a few additional ports (e.g. OpenBSD, Zaurus/IPAQ) are now
+            mentioned in the documentation
+          + Unison can now be installed easily on OSX systems using the
+            Fink package manager
+       
+   Changes since 2.9.1:
+     * Added a preference maxthreads that can be used to limit the number
+       of simultaneous file transfers.
+     * Added a backupdir preference, which controls where backup files
+       are stored.
+     * Basic support added for OSX. In particular, Unison now recognizes
+       when one of the hosts being synchronized is running OSX and
+       switches to a case-insensitive treatment of filenames (i.e., 'foo'
+       and 'FOO' are considered to be the same file). (OSX is not yet
+       fully working, however: in particular, files with resource forks
+       will not be synchronized correctly.)
+     * The same hash used to form the archive name is now also added to
+       the names of the temp files created during file transfer. The
+       reason for this is that, during update detection, we are going to
+       silently delete any old temp files that we find along the way, and
+       we want to prevent ourselves from deleting temp files belonging to
+       other instances of Unison that may be running in parallel, e.g.
+       synchronizing with a different host. Thanks to Ruslan Ermilov for
+       this suggestion.
+     * Several small user interface improvements
+     * Documentation
+          + FAQ and bug reporting instructions have been split out as
+            separate HTML pages, accessible directly from the unison web
+            page.
+          + Additions to FAQ, in particular suggestions about performance
+            tuning.
+     * Makefile
+          + Makefile.OCaml now sets UISTYLE=text or UISTYLE=gtk
+            automatically, depending on whether it finds lablgtk
+            installed
+          + Unison should now compile ``out of the box'' under OSX
        
    Changes since 2.8.1:
-     * Statistic window (transfer rate, amount of data transferred). [NB:
-       not available Cygwin version.]
-     * symlinks works under the cygwin version (which is dynamically
+     * Changing profile works again under Windows
+     * File movement optimization: Unison now tries to use local copy
+       instead of transfer for moved or copied files. It is controled by
+       a boolean option ``xferbycopying''.
+     * Network statistics window (transfer rate, amount of data
+       transferred). [NB: not available in Windows-Cygwin version.]
+     * symlinks work under the cygwin version (which is dynamically
        linked).
-     * File movement hack: Unison now tries to use local copy instead of
-       transfer for moved or copied files. It is controled by a boolean
-       option ``xferbycopying''.
-     * Fixed deadlock when synchronizing between Windows and Unix
+     * Fixed potential deadlock when synchronizing between Windows and
+       Unix
      * Small improvements:
           + If neither the
             tt USERPROFILE nor the
@@ -33,7 +188,7 @@ Changes in Version 2.9.1
             stuff can be made available for other projects.)
           + several Makefile and docs changes (for release);
           + further comments in ``update.ml'';
-          + connection information are not stored in global variables
+          + connection information is not stored in global variables
             anymore.
        
    Changes since 2.7.78:
@@ -499,10 +654,8 @@ Changes in Version 2.9.1
             means we can throw away our local patched version.
             If you're compiling the GTK version of unison from sources,
             you'll need to update your copy of lablgtk to the developers
-            release, available from
-            http://wwwfun.kurims.kyoto-u.ac.jp/soft/olabl/lablgtk.html
-            (Warning: installing lablgtk under Windows is currently a bit
-            challenging.)
+            release. (Warning: installing lablgtk under Windows is
+            currently a bit challenging.)
           + The TODO.txt file (in the source distribution) has been
             cleaned up and reorganized. The list of pending tasks should
             be much easier to make sense of, for people that may want to

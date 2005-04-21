@@ -1,13 +1,13 @@
 (* $I1: Unison file synchronizer: src/lock.ml $ *)
-(* $I2: Last modified by vouillon on Fri, 06 Jul 2001 12:34:55 -0400 $ *)
-(* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
+(* $I2: Last modified by vouillon on Wed, 19 May 2004 16:05:24 -0400 $ *)
+(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 let rename oldFile newFile =
   begin try Unix.link oldFile newFile with Unix.Unix_error _ -> () end;
-  let res =
-    try (Unix.stat oldFile).Unix.st_nlink = 2 with Unix.Unix_error _ -> false
+  let res = try (Unix.LargeFile.stat oldFile).Unix.LargeFile.st_nlink = 2
+            with Unix.Unix_error _ -> false
   in
-  Unix.unlink oldFile;
+  Unix.unlink oldFile; 
   res
 
 let flags = [Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL]
@@ -25,10 +25,13 @@ let rec unique name i mode =
     unique name (i + 1) mode
 
 let acquire name =
-  match Util.osType with
-    `Unix -> (* O_EXCL is broken under NFS... *)
-      rename (unique name (Unix.getpid ()) 0o600) name
-  | _ ->
-      create name 0o600
+  Util.convertUnixErrorsToTransient
+    "Lock.acquire"
+    (fun()-> 
+       match Util.osType with
+         `Unix -> (* O_EXCL is broken under NFS... *)
+           rename (unique name (Unix.getpid ()) 0o600) name
+       | _ ->
+           create name 0o600)
 
 let release name = try Unix.unlink name with Unix.Unix_error _ -> ()
