@@ -1,8 +1,33 @@
+unison (2.10.2-1) unstable; urgency=medium
+
+  * Transition to ocaml 3.08.3 ( Closes: #304124 )
+  * Split the package unison in unison2.9.1 and unison for being able to
+    have 2 versions of the protocol.
+  * Use update-alternative to be able to install both unison2.9.1 and
+    unison2.10.2
+  * Revisit the build system : use sed and mv to create package unison2.9.1
+    and unisonXXX ( rename debhelper files in rule, subsitute @VERSION@ by the
+    right version in the content of some files ).
+  * Conflicts with package unison (<< 2.9.1-2 ), because this package install
+    a binary "unison" which will conflict with update-alternative
+  * Use a "Provide: unison" to manage the two new package ( which provides
+    both unison, but with a slightly different protocol ).
+  * Remove the patch 01_ocaml_3_08 since it is applied upstream
+  * Use a GTK2 interface, since GTK1 interface doesn't even build ( Closes: #252617 )
+  * No more HTML/PS documentation, only text documentation, because it is the
+    only one i can produce without doing severe licence violation ( the former
+    HTML version comes from a strange unison-manual.tex, which cannot be
+    found, so i don't have the source and i cannot distribute files without
+    source ) ( Closes: #171063, #184465 )
+  * New upstream release ( Closes: #271415 )
+
+ -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Tue, 19 Apr 2005 00:08:05 +0200
+
 unison (2.9.1-2) unstable; urgency=medium
 
   * Version to fix maintainer fields
 
- -- Sylvain LE GALL <sylvain.le-gall@polytechnique.org>  Mon,  7 Jun 2004 22:58:50 +0200
+ -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon,  7 Jun 2004 22:58:50 +0200
 
 unison (2.9.1-1) unstable; urgency=medium
 

@@ -2,7 +2,7 @@
 .\" First parameter, NAME, should be all caps
 .\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
 .\" other parameters are allowed: see man(7), man(1)
-.TH UNISON 1 "September 23, 2001"
+.TH UNISON@VERSION@ 1 "September 23, 2001"
 .\" Please adjust this date whenever revising the manpage.
 .\"
 .\" Some roff macros, for reference:
@@ -16,27 +16,27 @@
 .\" .sp <n>    insert n+1 empty lines
 .\" for manpage-specific macros, see man(7)
 .SH NAME
-unison \- a file-synchronization tool for Unix and Windows
+unison@VERSION@ \- a file-synchronization tool for Unix and Windows
 .SH SYNOPSIS
-.B unison
+.B unison@VERSION@
 .RI [ options ]
 .br
-.B unison
+.B unison@VERSION@
 root1 root2
 .RI [ options ]
 .br
-.B unison
+.B unison@VERSION@
 profilename
 .RI [ options ]
 .br
-.B unison-gtk
+.B unison@VERSION@-gtk
 .RI [ options ]
 .SH DESCRIPTION
 This manual page briefly documents Unison, and was written for the
 Debian GNU/Linux distribution because the original program does not
 have a manual page. For a full description, please refer to the
-inbuilt documentation or the manuals in /usr/share/doc/unison/. The
-unison-gtk binary has similar command-line options, but allows the user
+inbuilt documentation or the manuals in /usr/share/doc/unison@VERSION@/. The
+unison@VERSION@-gtk binary has similar command-line options, but allows the user
 to select and create profiles and configure options from within the
 program.
 .PP
@@ -61,13 +61,13 @@ and its private structures.
 .SH OPTIONS
 All Unison options are long, starting with one dash (`-') only.
 A summary of options is included here. For a complete description,
-see the inbuilt documentation or the manuals in /usr/share/doc/unison/.
+see the inbuilt documentation or the manuals in /usr/share/doc/unison@VERSION@/.
 .TP
 .B \-addprefsto
 specify a file to add new preferences to in interactive mode
 .TP
 .B \-addversionno
-add version number to name of unison executable on server
+add version number to name of unison@VERSION@ executable on server
 .TP
 .B \-auto
 automatically accept default actions
@@ -213,7 +213,7 @@ string preferences can be given several times; the arguments are
 accumulated into a list internally.
 .SH SEE ALSO
 The program is documented fully in the in-built documentation and the
-manual, available as HTML, PostScript and text in /usr/share/doc/unison/.
+manual, available as HTML, PostScript and text in /usr/share/doc/unison@VERSION@/.
 .SH AUTHOR
 This manual page was written by Robert McQueen <robot101@debian.org>,
 for the Debian GNU/Linux system (but may be used by others).

@@ -1,0 +1,7 @@
+#!/bin/sh -e
+
+if [ "$1" = "remove" ]; then
+	update-alternatives --remove unison-gtk /usr/bin/unison@VERSION@-gtk
+fi
+
+#DEBHELPER#
