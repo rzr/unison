@@ -4,14 +4,14 @@ unison (2.10.2-1) unstable; urgency=medium
   * Split the package unison in unison2.9.1 and unison for being able to
     have 2 versions of the protocol.
   * Use update-alternative to be able to install both unison2.9.1 and
-    unison2.10.2
+    unison
   * Revisit the build system : use sed and mv to create package unison2.9.1
-    and unisonXXX ( rename debhelper files in rule, subsitute @VERSION@ by the
+    and unison ( rename debhelper files in rule, subsitute @VERSION@ by the
     right version in the content of some files ).
   * Conflicts with package unison (<< 2.9.1-2 ), because this package install
     a binary "unison" which will conflict with update-alternative
-  * Use a "Provide: unison" to manage the two new package ( which provides
-    both unison, but with a slightly different protocol ).
+  * Use a "Provide: unison" to manage the oldest package ( which provides
+    also unison, but with a slightly different protocol ).
   * Remove the patch 01_ocaml_3_08 since it is applied upstream
   * Use a GTK2 interface, since GTK1 interface doesn't even build ( Closes: #252617 )
   * No more HTML/PS documentation, only text documentation, because it is the
@@ -20,6 +20,8 @@ unison (2.10.2-1) unstable; urgency=medium
     found, so i don't have the source and i cannot distribute files without
     source ) ( Closes: #171063, #184465 )
   * New upstream release ( Closes: #271415 )
+  * Add NEWS.Debian to explain the split of the package
+  * Correct and add a section to README.Debian.
 
  -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Tue, 19 Apr 2005 00:08:05 +0200
 

@@ -5,11 +5,10 @@ Maintainer: Sylvain Le Gall <sylvain.le-gall@polytechnique.org>
 Build-Depends: debhelper (>= 4.0.0), ocaml-nox-3.08.3, liblablgtk2-ocaml-dev, dpatch, chrpath
 Standards-Version: 3.6.1.0
 
-Package: unison2.10.2
+Package: unison
 Architecture: any
 Depends: ${shlibs:Depends}, ${interpreter:Depends}
 Recommends: ssh
-Provides: unison
 Conflicts: unison (<< 2.9.1-3)
 Description: A file-synchronization tool for Unix and Windows
  Unison is a file-synchronization tool for Unix and Windows, written
@@ -31,10 +30,9 @@ Description: A file-synchronization tool for Unix and Windows
  specification, and is resilient to failure due to its careful 
  handling of the replicas and its private structures.
 
-Package: unison2.10.2-gtk
+Package: unison-gtk
 Architecture: any
-Depends: unison2.10.2 (= ${Source-Version}), ${shlibs:Depends}, ${interpreter:Depends}
-Provides: unison-gtk
+Depends: unison (= ${Source-Version}), ${shlibs:Depends}, ${interpreter:Depends}
 Conflicts: unison-gtk (<< 2.9.1-3)
 Description: A file-synchronization tool for Unix and Windows - GTK interface
  This package adds the optional GTK interface to the file synchronization

@@ -5,6 +5,9 @@ include /usr/share/dpatch/dpatch.make
 
 PACKAGE=unison
 VERSION=2.10.2
+# Package version should be set to the version you want to be appended to 
+# the package name
+PACKAGE_VERSION=
 # PRIORITY should be set to 10 for stable compatibility package 
 # and to 20 for unstable/testing package
 PRIORITY=20
@@ -13,16 +16,16 @@ PRIORITY=20
 NATIVE := $(shell test -x /usr/bin/ocamlopt -o -x /usr/bin/ocamlopt.opt && echo true || echo false)
 
 # which file to rename for following the version
-RENAME := debian/unison.1 
-RENAME += debian/unison.dirs 
-RENAME += debian/unison.doc-base 
-RENAME += debian/unison.docs 
-RENAME += debian/unison.postinst
-RENAME += debian/unison.prerm
-RENAME += debian/unison-gtk.dirs 
-RENAME += debian/unison-gtk.menu
-RENAME += debian/unison-gtk.postinst
-RENAME += debian/unison-gtk.prerm
+RENAME := debian/unison.1.in 
+RENAME += debian/unison.dirs.in 
+RENAME += debian/unison.doc-base.in
+RENAME += debian/unison.docs.in
+RENAME += debian/unison.postinst.in
+RENAME += debian/unison.prerm.in
+RENAME += debian/unison-gtk.dirs.in
+RENAME += debian/unison-gtk.menu.in
+RENAME += debian/unison-gtk.postinst.in
+RENAME += debian/unison-gtk.prerm.in
 
 build: build-stamp
 build-stamp: patch-stamp
@@ -31,7 +34,8 @@ build-stamp: patch-stamp
 	# rename all the debhelper files needed and substitue the @VERSION@
 	# string
 	for i in $(RENAME); do \
-	  sed -e "s/@VERSION@/$(VERSION)/g" $$i | sed -e "s/@PRIORITY@/$(PRIORITY)/g" > $${i/unison/unison$(VERSION)}; \
+	  sed -e "s/@VERSION@/$(VERSION)/g" $$i | sed -e "s/@PRIORITY@/$(PRIORITY)/g" > \
+	  $${$${i/unison/unison$(PACKAGE_VERSION)}%%.in}; \
 	done
 
 	$(MAKE) UISTYLE=gtk2 NATIVE=$(NATIVE) NAME=unison$(VERSION)-gtk
@@ -52,7 +56,7 @@ clean: unpatch
 	-$(RM) build-stamp configure-stamp
 	# remove the renamed files
 	-for i in $(RENAME); do \
-	  $(RM) $${i/unison/unison$(VERSION)}; \
+	  $(RM) $${$${i/unison/unison$(PACKAGE_VERSION)}%%.in}; \
 	done
 	-$(RM) unison$(VERSION)-manual.txt unison$(VERSION)-gtk unison$(VERSION)
 	-$(MAKE) clean
@@ -64,13 +68,13 @@ install: build
 	dh_clean -k
 	dh_installdirs
 	install -o root -g root -m 755 unison$(VERSION) \
-	  $(CURDIR)/debian/unison$(VERSION)/usr/bin
+	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)/usr/bin
 	install -o root -g root -m 755 unison$(VERSION)-gtk \
-	  $(CURDIR)/debian/unison$(VERSION)-gtk/usr/bin
+	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/bin
 	ln -s unison$(VERSION) \
-	  $(CURDIR)/debian/unison$(VERSION)-gtk/usr/share/doc/unison$(VERSION)-gtk
+	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/share/doc/unison$(VERSION)-gtk
 	ln -s unison$(VERSION).1.gz \
-	  $(CURDIR)/debian/unison$(VERSION)-gtk/usr/share/man/man1/unison$(VERSION)-gtk.1.gz
+	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/share/man/man1/unison$(VERSION)-gtk.1.gz
 
 binary-indep: build install
 

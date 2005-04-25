@@ -1,9 +1,9 @@
-Documentation for Unison is in the manual, which is available
-in HTML, PostScript and text formats in /usr/share/doc/unison.
-The same documentation can also be accessed over the command
-line, and you can list the available topics by executing
-'unison -doc topics'. Of particular interest for new users
-is the tutorial at 'unison -doc tutorial'.
+Documentation for Unison is in the manual, which is available in 
+text formats in /usr/share/doc/unison. The same documentation 
+can also be accessed over the command line, and you can list the 
+available topics by executing 'unison -doc topics'. Of 
+particular interest for new users is the tutorial at 
+'unison -doc tutorial'.
 
 The most common usage of this package is to use ssh to connect
 to the remote host via to synchronise files. The 'Install'
@@ -17,3 +17,31 @@ The GTK+ interface for Unison is now available separately in
 the unison-gtk package.
 
  -- Robert McQueen <robot101@debian.org>  Wed, 29 Aug 2001 21:18:29 +0100
+
+This package has been split when Unison 2.10.2 was released. 
+There exist now two version of the package : 
+- unison, unison-gtk ( version 2.10.2 )
+- unison2.9.1, unison2.9.1-gtk ( version 2.9.1 )
+
+The reason for this split is to preserve protocol 
+compatibility with actual stable release of debian (ie Woody). 
+By this way, you can install unison and synchronise 
+testing/unstable systems or install unison2.9.1 and 
+synchronise testing/unstable with stable systems.
+
+You can install both unison and unison2.9.1, an alternative 
+system is used ( see "man update-alternatives" ). 
+
+When the stable release will contain unison 2.10.2, 
+unison2.9.1 will be removed. When a new stable release of 
+unison will come ( for example unison 2.11.0 ) a package 
+unison2.10.2 will be created to be able to synchronise with the 
+future stable release of debian. The package unison will then 
+hold the latest release of Unison ( ie 2.11.0 ).
+
+By this way, you should always be able to synchronise 
+stable/testing/unstable  system using unison ( the good version 
+of unison ).
+
+ -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon, 25 Apr 2005 23:06:44 +0200  
+
