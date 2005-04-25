@@ -1,3 +1,3 @@
-?package(unison@VERSION@-gtk):needs="x11" section="Apps/Net" \
+?package(unison@PACKAGE_VERSION@-gtk):needs="x11" section="Apps/Net" \
  title="Unison @VERSION@ (GTK)" command="/usr/bin/unison@VERSION@-gtk" \
  longtitle="Unison @VERSION@ file synchronizer (GTK interface)"

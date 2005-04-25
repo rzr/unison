@@ -34,9 +34,17 @@ build-stamp: patch-stamp
 	# rename all the debhelper files needed and substitue the @VERSION@
 	# string
 	for i in $(RENAME); do \
-	  sed -e "s/@VERSION@/$(VERSION)/g" $$i | sed -e "s/@PRIORITY@/$(PRIORITY)/g" > \
-	  $${$${i/unison/unison$(PACKAGE_VERSION)}%%.in}; \
+	  DST=$$i; \
+	  DST=$${DST/unison/unison$(PACKAGE_VERSION)}; \
+	  DST=$${DST%%.in}; \
+	  sed -e "s/@VERSION@/$(VERSION)/g" $$i | \
+	  sed -e "s/@PRIORITY@/$(PRIORITY)/g" | \
+	  sed -e "s/@PACKAGE_VERSION@/$(PACKAGE_VERSION)/g" > \
+	  $$DST; \
 	done
+	
+	# We always need to rename the manual 
+	mv debian/unison$(PACKAGE_VERSION).1 debian/unison$(VERSION).1
 
 	$(MAKE) UISTYLE=gtk2 NATIVE=$(NATIVE) NAME=unison$(VERSION)-gtk
 	
@@ -56,8 +64,12 @@ clean: unpatch
 	-$(RM) build-stamp configure-stamp
 	# remove the renamed files
 	-for i in $(RENAME); do \
-	  $(RM) $${$${i/unison/unison$(PACKAGE_VERSION)}%%.in}; \
+	  DST=$$i; \
+	  DST=$${DST/unison/unison$(PACKAGE_VERSION)}; \
+	  DST=$${DST%%.in}; \
+	  $(RM) $$DST; \
 	done
+	-$(RM) debian/unison$(VERSION).1
 	-$(RM) unison$(VERSION)-manual.txt unison$(VERSION)-gtk unison$(VERSION)
 	-$(MAKE) clean
 	dh_clean
@@ -71,8 +83,8 @@ install: build
 	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)/usr/bin
 	install -o root -g root -m 755 unison$(VERSION)-gtk \
 	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/bin
-	ln -s unison$(VERSION) \
-	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/share/doc/unison$(VERSION)-gtk
+	ln -s unison$(PACKAGE_VERSION) \
+	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/share/doc/unison$(PACKAGE_VERSION)-gtk
 	ln -s unison$(VERSION).1.gz \
 	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/share/man/man1/unison$(VERSION)-gtk.1.gz
 
@@ -81,7 +93,9 @@ binary-indep: build install
 binary-arch: build install
 	dh_testdir
 	dh_testroot
-	dh_installdocs
+	dh_installdocs 
+	# Delete the doc-base.in install because of using dh_installdocs
+	$(RM) $(CURDIR)/debian/unison$(PACKAGE_VERSION)/usr/share/doc-base/unison@VERSION@-manual
 	dh_installmenu
 	dh_installman debian/unison$(VERSION).1
 	dh_installchangelogs NEWS
