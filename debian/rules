@@ -93,9 +93,10 @@ binary-indep: build install
 binary-arch: build install
 	dh_testdir
 	dh_testroot
+	# Move temporarly the doc-base.in because dh_installdocs will take it into consideration
+	mv debian/unison.doc-base.in debian/unison.doc-base-in
 	dh_installdocs 
-	# Delete the doc-base.in install because of using dh_installdocs
-	$(RM) $(CURDIR)/debian/unison$(PACKAGE_VERSION)/usr/share/doc-base/unison@VERSION@-manual
+	mv debian/unison.doc-base-in debian/unison.doc-base.in
 	dh_installmenu
 	dh_installman debian/unison$(VERSION).1
 	dh_installchangelogs NEWS
