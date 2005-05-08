@@ -27,7 +27,7 @@ the unison-gtk package.
 #----------------------------#
 
 This package has been split when Unison 2.10.2 was released. 
-There exist now two version of the package : 
+There now exist now versions of the package : 
 - unison, unison-gtk ( version 2.10.2 )
 - unison2.9.1, unison2.9.1-gtk ( version 2.9.1 )
 
