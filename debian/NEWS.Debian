@@ -1,3 +1,18 @@
+unison (2.10.2-2) unstable; urgency=low
+
+ Upgrading from version 2.9.1 to 2.10.2 involves a lot of changes. In particular, most of
+ the configuration of the former stable release (2.9.1) are no more valid. Archive
+ format has changed: if you have any unsynchronized changes when you upgrade to this new
+ archive format, you have to merge them all by hand. You can also use the new package 
+ unison2.9.1 (which is the former stable release) to synchronise your old archive before
+ migrating.
+
+ Version 2.10.2 and 2.9.1 are not compatible. You will need to have the same version of 
+ unison on both end of the synchronisation link (ie if you need to synchronise two 
+ computers, you will need to have unison 2.10.2 on both).
+
+ -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon, 25 Apr 2005 23:06:44 +0200  
+ 
 unison (2.10.2-1) unstable; urgency=medium
 
   With this new stable release, a package split has been made. Now the package

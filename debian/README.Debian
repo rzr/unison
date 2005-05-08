@@ -1,3 +1,7 @@
+#----------------------------#
+# Documentation              #
+#----------------------------#
+
 Documentation for Unison is in the manual, which is available in 
 text formats in /usr/share/doc/unison. The same documentation 
 can also be accessed over the command line, and you can list the 
@@ -17,6 +21,10 @@ The GTK+ interface for Unison is now available separately in
 the unison-gtk package.
 
  -- Robert McQueen <robot101@debian.org>  Wed, 29 Aug 2001 21:18:29 +0100
+
+#----------------------------#
+# Unison and UnisonXXX       #
+#----------------------------#
 
 This package has been split when Unison 2.10.2 was released. 
 There exist now two version of the package : 
@@ -45,3 +53,21 @@ of unison ).
 
  -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon, 25 Apr 2005 23:06:44 +0200  
 
+#----------------------------#
+# ssh-askpass                #
+#----------------------------#
+
+Ssh-askpass is a recommended package when using unison-gtk. The reason 
+for this is that if you use SSH access and that the key for this specific
+SSH login is password protected and that you don't have added it to your
+ssh-agent, you should be asked for a password in console mode. If unison
+was launched from menu, you won't be aware of this and the command will
+fail without explanation. The problem will be the same for simple password
+access. So it is strongly recommended to install ssh-askpass if you want 
+to use SSH access.
+
+However, it is not a dependency, because there is no obvious call to 
+ssh-askpass in the unison source. Moreover, using SSH is not mandatory for
+unison, ssh is only a "recommends" for unison and not a "depends".
+
+ -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon,  9 May 2005 00:47:47 +0200

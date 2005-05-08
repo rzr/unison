@@ -34,6 +34,7 @@ Package: unison-gtk
 Architecture: any
 Depends: unison (= ${Source-Version}), ${shlibs:Depends}, ${interpreter:Depends}
 Conflicts: unison-gtk (<< 2.9.1-3)
+Recommends: ssh-askpass
 Description: A file-synchronization tool for Unix and Windows - GTK interface
  This package adds the optional GTK interface to the file synchronization
  tool 'unison'.
