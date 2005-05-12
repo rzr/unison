@@ -50,7 +50,7 @@ build-stamp: patch-stamp
 	
 	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) NAME=unison$(VERSION)
 
-	$(CURDIR)/unison$(VERSION) -doc all > $(CURDIR)/unison-manual.txt
+	env HOME=$(CURDIR) $(CURDIR)/unison$(VERSION) -doc all > $(CURDIR)/unison-manual.txt
 
 	if [ "x$(NATIVE)" = "xtrue" ]; then                 \
 		/usr/bin/chrpath -d unison$(VERSION)-gtk;  \
