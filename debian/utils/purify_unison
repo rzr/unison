@@ -24,8 +24,6 @@ rm -f $PACKAGE-$VERSION/win32rc/unison.res.lib
 
 chmod 644 $PACKAGE-$VERSION/INSTALL
 chmod 644 $PACKAGE-$VERSION/Makefile.OCaml
-chmod 644 $PACKAGE-$VERSION/ubase/uprintf_new.ml
-chmod 644 $PACKAGE-$VERSION/ubase/uprintf_old.ml
 
 tar czf $ORIG $PACKAGE-$VERSION/
 rm -rf $PACKAGE-$VERSION

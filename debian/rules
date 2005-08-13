@@ -4,13 +4,26 @@
 include /usr/share/dpatch/dpatch.make
 
 PACKAGE=unison
-VERSION=2.10.2
+
+# Variable that will be replaced in files
+
+VERSION=$(shell dpkg-parsechangelog | awk "/Version: .*/ { gsub(\"Version: \",\"\"); gsub(\"-.*\",\"\"); print; }")
 # Package version should be set to the version you want to be appended to 
 # the package name
 PACKAGE_VERSION=
+
 # PRIORITY should be set to 10 for stable compatibility package 
 # and to 20 for unstable/testing package
 PRIORITY=20
+
+UNISON=unison-$(VERSION)
+UNISON_MAJ=UNISON-$(VERSION)
+UNISON_PACKAGE=unison$(PACKAGE_VERSION)
+
+UNISON_GTK=unison-$(VERSION)-gtk
+UNISON_GTK_PACKAGE=$(UNISON_PACKAGE)-gtk
+
+# End of variable to be replaced
 
 # set $(NATIVE) to true if this arch has an optimising compiler
 NATIVE := $(shell test -x /usr/bin/ocamlopt -o -x /usr/bin/ocamlopt.opt && echo true || echo false)
@@ -35,25 +48,32 @@ build-stamp: patch-stamp
 	# string
 	for i in $(RENAME); do \
 	  DST=$$i; \
-	  DST=$${DST/unison/unison$(PACKAGE_VERSION)}; \
+	  DST=$${DST/unison/$(UNISON_PACKAGE)}; \
 	  DST=$${DST%%.in}; \
-	  sed -e "s/@VERSION@/$(VERSION)/g" $$i | \
-	  sed -e "s/@PRIORITY@/$(PRIORITY)/g" | \
-	  sed -e "s/@PACKAGE_VERSION@/$(PACKAGE_VERSION)/g" > \
+	  sed -e "\
+	    s/@VERSION@/$(VERSION)/g;                       \
+	    s/@PACKAGE_VERSION@/$(PACKAGE_VERSION)/g;       \
+	    s/@PRIORITY@/$(PRIORITY)/g;                     \
+	    s/@UNISON@/$(UNISON)/g;                         \
+	    s/@UNISON_MAJ@/$(UNISON_MAJ)/g;                 \
+	    s/@UNISON_PACKAGE@/$(UNISON_PACKAGE)/g;         \
+	    s/@UNISON_GTK@/$(UNISON_GTK)/g;                 \
+	    s/@UNISON_GTK_PACKAGE@/$(UNISON_GTK_PACKAGE)/g; \
+	    " $$i > \
 	  $$DST; \
 	done
 	
 	# We always need to rename the manual 
-	mv debian/unison$(PACKAGE_VERSION).1 debian/unison$(VERSION).1
+	mv debian/$(UNISON_PACKAGE).1 debian/$(UNISON).1
 
-	$(MAKE) UISTYLE=gtk2 NATIVE=$(NATIVE) NAME=unison$(VERSION)-gtk
+	$(MAKE) UISTYLE=gtk2 NATIVE=$(NATIVE) NAME=$(UNISON_GTK)
 	
-	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) NAME=unison$(VERSION)
+	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) NAME=$(UNISON)
 
-	env HOME=$(CURDIR) $(CURDIR)/unison$(VERSION) -doc all > $(CURDIR)/unison-manual.txt
+	env HOME=$(CURDIR) $(CURDIR)/$(UNISON) -doc all > $(CURDIR)/unison-manual.txt
 
-	if [ "x$(NATIVE)" = "xtrue" ]; then                 \
-		/usr/bin/chrpath -d unison$(VERSION)-gtk;  \
+	if [ "x$(NATIVE)" = "xtrue" ]; then         \
+		/usr/bin/chrpath -d $(UNISON_GTK);  \
 	fi
 
 	touch build-stamp
@@ -65,12 +85,11 @@ clean: unpatch
 	# remove the renamed files
 	-for i in $(RENAME); do \
 	  DST=$$i; \
-	  DST=$${DST/unison/unison$(PACKAGE_VERSION)}; \
+	  DST=$${DST/unison/$(UNISON_PACKAGE)}; \
 	  DST=$${DST%%.in}; \
 	  $(RM) $$DST; \
 	done
-	-$(RM) debian/unison$(VERSION).1
-	-$(RM) unison$(VERSION)-manual.txt unison$(VERSION)-gtk unison$(VERSION)
+	-$(RM) debian/$(UNISON).1 unison-manual.txt $(UNISON_GTK) $(UNISON)
 	-$(MAKE) clean
 	dh_clean
 
@@ -79,14 +98,14 @@ install: build
 	dh_testroot
 	dh_clean -k
 	dh_installdirs
-	install -o root -g root -m 755 unison$(VERSION) \
-	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)/usr/bin
-	install -o root -g root -m 755 unison$(VERSION)-gtk \
-	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/bin
-	ln -s unison$(PACKAGE_VERSION) \
-	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/share/doc/unison$(PACKAGE_VERSION)-gtk
-	ln -s unison$(VERSION).1.gz \
-	  $(CURDIR)/debian/unison$(PACKAGE_VERSION)-gtk/usr/share/man/man1/unison$(VERSION)-gtk.1.gz
+	install -o root -g root -m 755 $(UNISON) \
+	  $(CURDIR)/debian/$(UNISON_PACKAGE)/usr/bin
+	install -o root -g root -m 755 $(UNISON_GTK) \
+	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/bin
+	ln -s $(UNISON_PACKAGE) \
+	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/share/doc/$(UNISON_GTK_PACKAGE)
+	ln -s $(UNISON).1.gz \
+	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/share/man/man1/$(UNISON_GTK).1.gz
 
 binary-indep: build install
 
@@ -98,7 +117,7 @@ binary-arch: build install
 	dh_installdocs 
 	mv debian/unison.doc-base-in debian/unison.doc-base.in
 	dh_installmenu
-	dh_installman debian/unison$(VERSION).1
+	dh_installman debian/$(UNISON).1
 	dh_installchangelogs NEWS
 	dh_compress
 	dh_fixperms
