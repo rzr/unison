@@ -48,7 +48,7 @@ let installRoots termInteract =
       (String.concat ", " roots) ));
   Safelist.fold_right
     (fun r cont ->
-       Remote.canonizeRoot (Clroot.parseRoot r) termInteract
+       Remote.canonizeRoot r (Clroot.parseRoot r) termInteract
        >>= (fun r' ->
        cont >>= (fun l ->
        return (r' :: l))))
@@ -76,28 +76,45 @@ let reorderCanonicalListToUsersOrder l =
   if rootsList() = rootsInCanonicalOrder() then l
   else Safelist.rev l
 
+let rec nice_rec i
+  : unit Lwt.t =
+  if i <= 0 then
+    Lwt.return ()
+  else
+    Lwt_unix.yield() >>= (fun () -> nice_rec (i - 1))
+
+(* [nice r] yields 5 times on local roots [r] to give processes
+   corresponding to remote roots a chance to run *)
+let nice r =
+  if List.exists (fun r -> fst r <> Local) (rootsList ()) && fst r = Local then
+    nice_rec 5
+  else
+    Lwt.return ()
+
 let allRootsIter f =
-  Lwt_util.iter f (rootsInCanonicalOrder ())
+  Lwt_util.iter
+    (fun r -> nice r >>= (fun () -> f r)) (rootsInCanonicalOrder ())
 
 let allRootsIter2 f l =
   let l = Safelist.combine (rootsList ()) l in
-  Lwt_util.iter (fun (r, v) -> f r v)
-    (List.sort (fun (r, _) (r', _) -> Common.compareRoots r r') l)
+  Lwt_util.iter (fun (r, v) -> nice r >>= (fun () -> f r v))
+    (Safelist.sort (fun (r, _) (r', _) -> Common.compareRoots r r') l)
 
 let allRootsMap f =
-  Lwt_util.map (fun r -> f r >>= (fun v -> return (r, v)))
+  Lwt_util.map
+    (fun r -> nice r >>= (fun () -> f r >>= (fun v -> return (r, v))))
     (rootsInCanonicalOrder ()) >>= (fun l ->
-      return (List.map snd (reorderCanonicalListToUsersOrder l)))
-    
+      return (Safelist.map snd (reorderCanonicalListToUsersOrder l)))
+
 let allRootsMapWithWaitingAction f wa =
-  Lwt_util.map_with_waiting_action 
-    (fun r -> (f r) >>= (fun v -> return (r, v)))
-    (fun r -> wa r) 
+  Lwt_util.map_with_waiting_action
+    (fun r -> nice r >>= (fun () -> f r >>= (fun v -> return (r, v))))
+    (fun r -> wa r)
     (rootsInCanonicalOrder ()) >>= (fun l ->
-      return (List.map snd (reorderCanonicalListToUsersOrder l)))
-    
+      return (Safelist.map snd (reorderCanonicalListToUsersOrder l)))
+
 let replicaHostnames () =
-  Safelist.map 
+  Safelist.map
     (function (Local, _) -> ""
             | (Remote h,_) -> h)
     (rootsList())
@@ -267,7 +284,7 @@ let backup =
    ^ "\\verb|maxbackups| preference."
    ^ "\n\n The syntax of \\ARG{pathspec} is described in \\sectionref{pathspec}{Path Specification}.")
 
-let _ = Prefs.alias "backup" "mirror"
+let _ = Pred.alias backup "mirror"
 
 let backupnot =
    Pred.create "backupnot"

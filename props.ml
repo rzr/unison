@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/props.ml $ *)
-(* $I2: Last modified by bcpierce on Mon, 06 Sep 2004 14:48:05 -0400 $ *)
+(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 let debug = Util.debug "props"
@@ -30,6 +30,7 @@ module Perm : sig
   val fileSafe : t
   val dirDefault : t
   val extract : t -> int
+  val check : Fspath.t -> Path.local -> Unix.LargeFile.stats -> t -> unit
 end = struct
 
 (* We introduce a type, Perm.t, that holds a file's permissions along with   *)
@@ -177,6 +178,17 @@ let set fspath path kind (fp, mask) =
 
 let get stats _ = (stats.Unix.LargeFile.st_perm, Prefs.read permMask)
 
+let check fspath path stats (fp, mask) =
+  if fp land mask <> stats.Unix.LargeFile.st_perm land mask then
+    raise
+      (Util.Transient
+         (Format.sprintf
+            "Failed to set permissions of file %s to %s: \
+             the permissions was set to %s instead"
+            (Fspath.concatToString fspath path)
+            (syncedPartsToString (fp, mask))
+            (syncedPartsToString (stats.Unix.LargeFile.st_perm, mask))))
+
 let init someHostIsRunningWindows =
   let mask = if someHostIsRunningWindows then wind_mask else unix_mask in
   let oldMask = Prefs.read permMask in
@@ -205,7 +217,7 @@ let numericIds =
      user/group names even if this preference is not set."
 
 (* For backward compatibility *)
-let _ = Prefs.alias "numericids" "numericIds"
+let _ = Prefs.alias numericIds "numericIds"
 
 module Id (M : sig
   val sync : bool Prefs.t
@@ -354,6 +366,7 @@ module Time : sig
   val extract : t -> float
   val sync : bool Prefs.t
   val replace : t -> float -> t
+  val check : Fspath.t -> Path.local -> Unix.LargeFile.stats -> t -> unit
 end = struct
 
 let sync =
@@ -366,9 +379,10 @@ type t = Synced of float | NotSynced of float
 
 let dummy = NotSynced 0.
 
+let extract t = match t with Synced v -> v | NotSynced v -> v
+
 let minus_two = Int64.of_int (-2)
 let approximate t = Int64.logand (Int64.of_float t) minus_two
-let extract t = match t with Synced v -> v | NotSynced v -> v
 
 let oneHour = Int64.of_int 3600
 let minusOneHour = Int64.neg oneHour
@@ -390,6 +404,25 @@ let similar t t' =
     Synced v, Synced v'      ->
       let delta = Int64.sub (approximate v) (approximate v') in
       delta = Int64.zero || delta = oneHour || delta = minusOneHour
+  | NotSynced _, NotSynced _ ->
+      true
+  | _                        ->
+      false
+
+(* Accept one hour differences and one second differences *)
+let possible_deltas =
+  [ -3601L; 3601L; -3600L; 3600L; -3599L; 3599L; -1L; 1L; 0L ]
+
+(*FIX: this is the right similar function (date are approximated
+   on FAT filesystems upward under Windows, downward under Linux)
+  The hash function needs to be updated as well *)
+let similar_correct t t' =
+  not (Prefs.read sync)
+    ||
+  match t, t' with
+    Synced v, Synced v'      ->
+      List.mem (Int64.sub (Int64.of_float v)  (Int64.of_float v'))
+        possible_deltas
   | NotSynced _, NotSynced _ ->
       true
   | _                        ->
@@ -421,7 +454,7 @@ let syncedPartsToString t = match t with
 
 let iCanWrite p =
   try
-    Unix.access p [Unix.R_OK];
+    Unix.access p [Unix.W_OK];
     true
   with
     Unix.Unix_error _ -> false
@@ -467,6 +500,23 @@ let get stats _ =
   else
     NotSynced v
 
+let check fspath path stats t =
+  match t with
+    NotSynced _ ->
+      ()
+  | Synced v ->
+      let t' = Synced (stats.Unix.LargeFile.st_mtime) in
+      if not (similar_correct t t') then
+        raise
+          (Util.Transient
+             (Format.sprintf
+                "Failed to set modification time of file %s to %s: \
+             the time was set to %s instead"
+            (Fspath.concatToString fspath path)
+            (syncedPartsToString t)
+            (syncedPartsToString t')))
+
+
 let same p p' = extract p = extract p'
 
 let init _ = ()
@@ -494,11 +544,16 @@ let strip t = t
 
 let diff t t' = if similar t t' then None else t'
 
+let zeroes = "\000\000\000\000\000\000\000\000"
+
 let toString t =
   match t with
-    None | Some "" -> ""
-  | Some s         -> " " ^ String.escaped (String.sub s 0 4) ^
-                      " " ^ String.escaped (String.sub s 4 4)
+    Some s when s.[0] = 'F' && String.sub (s ^ zeroes) 1 8 <> zeroes ->
+      let s = s ^ zeroes in
+      " " ^ String.escaped (String.sub s 1 4) ^
+      " " ^ String.escaped (String.sub s 5 4)
+  | _ ->
+      ""
 
 let syncedPartsToString = toString
 
@@ -508,8 +563,12 @@ let set fspath path kind t =
   | Some t -> Osx.setFileInfos fspath path t
 
 let get stats info =
-  if Prefs.read Osx.rsrc && stats.Unix.LargeFile.st_kind = Unix.S_REG then
-    Some info.Osx.typeCreator
+  if
+    Prefs.read Osx.rsrc &&
+    (stats.Unix.LargeFile.st_kind = Unix.S_REG ||
+     stats.Unix.LargeFile.st_kind = Unix.S_DIR)
+  then
+    Some info.Osx.finfo
   else
     None
 
@@ -572,7 +631,7 @@ let strip p =
 
 let toString p =
   Printf.sprintf
-    "modified at %s  size %-9.f %s%s%s%s"
+    "modified on %s  size %-9.f %s%s%s%s"
     (Time.toString p.time)
     (Uutil.Filesize.toFloat p.length)
     (Perm.toString p.perm)
@@ -615,9 +674,14 @@ let get stats infos =
 let set fspath path kind p =
   Uid.set fspath path kind p.uid;
   Gid.set fspath path kind p.gid;
-  Perm.set fspath path kind p.perm;
+  TypeCreator.set fspath path kind p.typeCreator;
   Time.set fspath path kind p.time;
-  TypeCreator.set fspath path kind p.typeCreator
+  Perm.set fspath path kind p.perm
+
+(* Paranoid checks *)
+let check fspath path stats p =
+  Time.check fspath path stats p.time;
+  Perm.check fspath path stats p.perm
 
 let init someHostIsRunningWindows =
   Perm.init someHostIsRunningWindows;

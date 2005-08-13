@@ -8,32 +8,33 @@
 
 #import <Cocoa/Cocoa.h>
 
+#define CAML_NAME_SPACE
 #include <caml/callback.h>
 
 void reportExn(value e) {
     value *f = caml_named_value("unisonExnInfo");
-    char *m = String_val(callback(*f,Extract_exception(e)));
+    char *m = String_val(caml_callback(*f,Extract_exception(e)));
     NSString *s = [NSString stringWithFormat:@"Uncaught exception: %s", m];
     NSLog(@"%@",s);
     NSRunAlertPanel(@"Fatal error",s,@"Exit",nil,nil);
 }
 
 value Callback_checkexn(value c,value v) {
-    value e = callback_exn(c,v);
+    value e = caml_callback_exn(c,v);
     if (!Is_exception_result(e)) return e;
     reportExn(e);
     exit(1);
 }
 
 value Callback2_checkexn(value c,value v1,value v2) {
-    value e = callback2_exn(c,v1,v2);
+    value e = caml_callback2_exn(c,v1,v2);
     if (!Is_exception_result(e)) return e;
     reportExn(e);
     exit(1);
 }
 
 value Callback3_checkexn(value c,value v1,value v2,value v3) {
-    value e = callback3_exn(c,v1,v2,v3);
+    value e = caml_callback3_exn(c,v1,v2,v3);
     if (!Is_exception_result(e)) return e;
     reportExn(e);
     exit(1);
@@ -61,6 +62,7 @@ int main(int argc, const char *argv[])
     /* Check for invocations that don't start up the gui */
     for (i=1; i<argc; i++) {
         if (!strcmp(argv[i],"-doc") ||
+            !strcmp(argv[i],"-help") ||
             !strcmp(argv[i],"-version") ||
             !strcmp(argv[i],"-server") ||
             !strcmp(argv[i],"-socket") ||
@@ -69,14 +71,16 @@ int main(int argc, const char *argv[])
                from ocaml to objc code */
             NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
             value *f = caml_named_value("unisonNonGuiStartup");
-            value e = callback_exn(*f,Val_unit);
+            value e = caml_callback_exn(*f,Val_unit);
             if (Is_exception_result(e)) {
                 value *f = caml_named_value("unisonExnInfo");
-                char *m = String_val(callback(*f,Extract_exception(e)));
+                char *m = String_val(caml_callback(*f,Extract_exception(e)));
                 NSLog(@"Uncaught exception: %s", m);
+                exit(1);
             }
             [pool release];
-            exit(0);
+            /* If we get here without exiting first, the non GUI startup detected a
+               -ui graphic or command-line profile, and we should in fact start the GUI. */
         }
     }
     

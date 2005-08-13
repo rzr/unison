@@ -3,10 +3,12 @@
 open Common;;
 open Lwt;;
 
+let debug = Trace.debug "startup"
+
 let unisonNonGuiStartup() = begin
   (* If there's no GUI, don't print progress in the GUI *)
   Uutil.setProgressPrinter (fun _ _ _ -> ());
-  Main.nonGuiStartup()
+  Main.nonGuiStartup()    (* If this returns the GUI should be started *)
 end;;
 Callback.register "unisonNonGuiStartup" unisonNonGuiStartup;;
 
@@ -45,9 +47,20 @@ let showProgress i bytes dbg =
 (* FIX: No status window in Mac version, see GTK version for how to do it *)
   reloadTable i;;
 
+let unisonGetVersion() = Uutil.myVersion
+;;
+Callback.register "unisonGetVersion" unisonGetVersion;;
+
 (* snippets from Uicommon, duplicated for now *)
 (* First initialization sequence *)
+(* Returns a string option: command line profile, if any *)
 let unisonInit0() =
+  ignore (Gc.set {(Gc.get ()) with Gc.max_overhead = 150});
+  (* Install an appropriate function for finding preference files.  (We put
+     this in Util just because the Prefs module lives below the Os module in the
+     dependency hierarchy, so Prefs can't call Os directly.) *)
+  Util.supplyFileInUnisonDirFn 
+    (fun n -> Fspath.toString (Os.fileInUnisonDir(n)));
   (* Display status in GUI instead of on stderr *)
   let formatStatus major minor = (Util.padto 30 (major ^ "  ")) ^ minor in
   Trace.messageDisplayer := displayStatus;
@@ -57,15 +70,47 @@ let unisonInit0() =
   Uutil.setProgressPrinter showProgress;
   (* Make sure we have a directory for archives and profiles *)
   Os.createUnisonDir();
-  (* Install an appropriate function for finding preference files.  (We put
-     this in Util just because the Prefs module lives below the Os module in the
-     dependency hierarchy, so Prefs can't call Os directly.) *)
-  Util.supplyFileInUnisonDirFn 
-    (fun n -> Fspath.toString (Os.fileInUnisonDir(n)));
+  (* Extract any command line profile or roots *)
+  let clprofile = ref None in
+  begin
+    try
+      let args = Prefs.scanCmdLine Uicommon.usageMsg in
+      match Util.StringMap.find "rest" args with
+        [] -> ()
+      | [profile] -> clprofile := Some profile
+      | [root1;root2] -> Globals.setRawRoots [root1;root2]
+      | [root1;root2;profile] ->
+          Globals.setRawRoots [root1;root2];
+          clprofile := Some profile
+      | _ ->
+          (Printf.eprintf
+             "%s was invoked incorrectly (too many roots)" Uutil.myName;
+           exit 1)
+    with Not_found -> ()
+  end;
   (* Print header for debugging output *)
-  Trace.debug "" (fun() ->
+  debug (fun() ->
     Printf.eprintf "%s, version %s\n\n" Uutil.myName Uutil.myVersion);
-  Trace.debug "" (fun() -> Util.msg "initializing UI")
+  debug (fun() -> Util.msg "initializing UI");
+  debug (fun () ->
+    (match !clprofile with
+      None -> Util.msg "No profile given on command line"
+    | Some s -> Printf.eprintf "Profile '%s' given on command line" s);
+    (match Globals.rawRoots() with
+      [] -> Util.msg "No roots given on command line"
+    | [root1;root2] ->
+        Printf.eprintf "Roots '%s' and '%s' given on command line"
+          root1 root2
+    | _ -> assert false));
+  begin match !clprofile with
+    None -> ()
+  | Some n ->
+      let f = Prefs.profilePathname n in
+      if not(Sys.file_exists f)
+      then (Printf.eprintf "Profile %s does not exist" f;
+            exit 1)
+  end;
+  !clprofile
 ;;
 Callback.register "unisonInit0" unisonInit0;;
 
@@ -185,7 +230,8 @@ let unisonInit2 () =
   let reconcile updates =
     let t = Trace.startTimer "Reconciling" in
     Recon.reconcileAll updates in
-  let (reconItemList, thereAreEqualUpdates) = reconcile (findUpdates ()) in
+  let (reconItemList, thereAreEqualUpdates, dangerousPaths) =
+    reconcile (findUpdates ()) in
   Trace.showTimer t;
   if reconItemList = [] then
     if thereAreEqualUpdates then
@@ -201,6 +247,10 @@ let unisonInit2 () =
                    whatHappened = None; statusMessage = None })
       reconItemList in
   theState := Array.of_list stateItemList;
+  if dangerousPaths <> [] then begin
+    Prefs.set Globals.batch false;
+    Util.warn (Uicommon.dangerousPathMsg dangerousPaths)
+  end;
   !theState
 ;;
 Callback.register "unisonInit2" unisonInit2;;
@@ -256,6 +306,11 @@ let unisonRiSetConflict ri =
     Problem _ -> ()
   | Different(_,_,d,_) -> d := Conflict;;
 Callback.register "unisonRiSetConflict" unisonRiSetConflict;;
+let unisonRiSetMerge ri =
+  match ri.ri.replicas with
+    Problem _ -> ()
+  | Different(_,_,d,_) -> d := Merge;;
+Callback.register "unisonRiSetMerge" unisonRiSetMerge;;
 let unisonRiForceOlder ri =
   Recon.setDirection ri.ri `Older `Force;;
 Callback.register "unisonRiForceOlder" unisonRiForceOlder;;
@@ -278,7 +333,7 @@ let unisonSynchronize () =
     Trace.status "Nothing to synchronize"
   else begin
     Trace.status "Propagating changes";
-    Transport.logStartTime();
+    Transport.start ();
     let t = Trace.startTimer "Propagating changes" in
     let im = Array.length !theState in
     let rec loop i actions pRiThisRound =
@@ -293,7 +348,7 @@ let unisonSynchronize () =
                 catch (fun () ->
                          Transport.transportItem
                            theSI.ri (Uutil.File.ofLine i)
-                           (fun title text -> Trace.status (Printf.sprintf "%s: %s" title text))
+                           (fun title text -> Trace.status (Printf.sprintf "MERGE %s: %s" title text); true)
                          >>= (fun () ->
                          return Util.Succeeded))
                       (fun e ->
@@ -318,7 +373,7 @@ let unisonSynchronize () =
     Lwt_unix.run
       (loop 0 [] Common.isDeletion >>= (fun actions ->
         Lwt_util.join actions));
-    Transport.logEndTime();
+    Transport.finish ();
     Trace.showTimer t;
     Trace.status "Updating synchronizer state";
     let t = Trace.startTimer "Updating synchronizer state" in

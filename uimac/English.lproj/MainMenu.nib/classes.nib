@@ -10,6 +10,7 @@
                 ignoreName = id; 
                 ignorePath = id; 
                 leaveAlone = id; 
+                merge = id; 
                 revert = id; 
                 selectConflicts = id; 
             }; 
@@ -22,7 +23,10 @@
                 cancelProfileButton = id; 
                 createButton = id; 
                 endPasswordWindow = id; 
+                installCommandLineTool = id; 
+                onlineHelp = id; 
                 openButton = id; 
+                raiseAboutWindow = id; 
                 restartButton = id; 
                 saveProfileButton = id; 
                 syncButton = id; 
@@ -30,6 +34,8 @@
             CLASS = MyController; 
             LANGUAGE = ObjC; 
             OUTLETS = {
+                ConnectingView = NSView; 
+                aboutWindow = NSWindow; 
                 chooseProfileView = NSView; 
                 detailsTextView = NSTextView; 
                 mainWindow = NSWindow; 
@@ -43,6 +49,7 @@
                 tableView = ReconTableView; 
                 updatesText = NSTextField; 
                 updatesView = NSView; 
+                versionText = NSTextField; 
             }; 
             SUPERCLASS = NSObject; 
         }, 
@@ -86,6 +93,7 @@
                 ignoreName = id; 
                 ignorePath = id; 
                 leaveAlone = id; 
+                merge = id; 
                 revert = id; 
                 selectConflicts = id; 
             }; 

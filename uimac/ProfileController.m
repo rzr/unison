@@ -1,6 +1,7 @@
 /* Copyright (c) 2003, see file COPYING for details. */
 
 #import "ProfileController.h"
+#define CAML_NAME_SPACE
 #include <caml/mlvalues.h>
 #include <caml/callback.h>
 

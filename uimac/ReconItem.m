@@ -9,13 +9,13 @@ extern value Callback_checkexn(value,value);
 -(void)dealloc
 {
     ri = Val_unit;
-    remove_global_root(&ri);
+    caml_remove_global_root(&ri);
     [super dealloc];
 }
 
 - (void)setRi:(value)v
 {
-    register_global_root(&ri); // needed in case of ocaml garbage collection
+    caml_register_global_root(&ri); // needed in case of ocaml garbage collection
     ri = v;
 }
 
@@ -97,6 +97,9 @@ extern value Callback_checkexn(value,value);
         break;
     case '+':
         [self setDirection:"unisonRiForceNewer"];
+        break;
+    case 'm':
+        [self setDirection:"unisonRiSetMerge"];
         break;
     default:
         NSLog(@"ReconItem.doAction : unknown action");

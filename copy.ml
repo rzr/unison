@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/copy.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 01 Sep 2004 07:35:22 -0400 $ *)
+(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 let (>>=) = Lwt.bind
@@ -10,14 +10,33 @@ let debug = Trace.debug "copy"
 
 let openFileIn fspath path kind =
   match kind with
-    `DATA   -> Unix.openfile (Fspath.concatToString fspath path)
-                 [Unix.O_RDONLY] 0o444
+    `DATA   -> open_in_gen [Open_rdonly; Open_binary] 0o444
+                 (Fspath.concatToString fspath path)
   | `RESS _ -> Osx.openRessIn fspath path
 
 let openFileOut fspath path kind =
   match kind with
-    `DATA     -> Unix.openfile (Fspath.concatToString fspath path)
-                   [Unix.O_WRONLY;Unix.O_CREAT;Unix.O_EXCL] 0o600
+    `DATA     ->
+      let fullpath = Fspath.concatToString fspath path in
+      let flags = [Unix.O_WRONLY;Unix.O_CREAT] in
+      let perm = 0o600 in
+      begin match Util.osType with
+        `Win32 ->
+          open_out_gen
+            [Open_wronly; Open_creat; Open_excl; Open_binary] perm fullpath
+      | `Unix ->
+          let fd =
+            try
+              Unix.openfile fullpath (Unix.O_EXCL :: flags) perm
+            with
+              Unix.Unix_error
+                ((Unix.EOPNOTSUPP | Unix.EUNKNOWNERR 524), _, _) ->
+              (* O_EXCL not supported under a Netware NFS-mounted filesystem.
+                 Solaris and Linux report different errors. *)
+                Unix.openfile fullpath (Unix.O_TRUNC :: flags) perm
+          in
+          Unix.out_channel_of_descr fd
+      end
   | `RESS len -> Osx.openRessOut fspath path len
 
 let protect f g =
@@ -55,22 +74,26 @@ let localFile
          let outFd = openFileOut fspathTo pathTo `DATA in
          protect (fun () ->
            Uutil.readWrite inFd outFd
-             (fun l -> Uutil.showProgress id (Uutil.Filesize.ofInt l) "l"))
-           (fun () -> Unix.close outFd);
-         Unix.close outFd)
-         (fun () -> Unix.close inFd);
-       Unix.close inFd;
+             (fun l ->
+                Abort.check id;
+                Uutil.showProgress id (Uutil.Filesize.ofInt l) "l");
+           close_in inFd;
+           close_out outFd)
+           (fun () -> close_out_noerr outFd))
+         (fun () -> close_in_noerr inFd);
        if ressLength > Uutil.Filesize.zero then begin
          let inFd = openFileIn fspathFrom pathFrom (`RESS ressLength) in
          protect (fun () ->
            let outFd = openFileOut fspathTo pathTo (`RESS ressLength) in
            protect (fun () ->
              Uutil.readWriteBounded inFd outFd ressLength
-               (fun l -> Uutil.showProgress id (Uutil.Filesize.ofInt l) "l"))
-             (fun () -> Unix.close outFd);
-             Unix.close outFd)
-           (fun () -> Unix.close inFd);
-         Unix.close inFd;
+               (fun l ->
+                  Abort.check id;
+                  Uutil.showProgress id (Uutil.Filesize.ofInt l) "l");
+             close_in inFd;
+             close_out outFd)
+             (fun () -> close_out_noerr outFd))
+           (fun () -> close_in_noerr inFd);
        end;
        match update with
          `Update _ ->
@@ -116,6 +139,7 @@ let startReceivingFile
      temporary files remaining after a crash *)
   let outfd = ref None in
   let showProgress count =
+    Abort.check id;
     Uutil.showProgress id (Uutil.Filesize.ofInt count) "r" in
   (* Install a simple generic decompressor *)
   decompressor :=
@@ -135,28 +159,36 @@ let startReceivingFile
           Transfer.Rsync.aboveRsyncThreshold destFileSize
             &&
           Transfer.Rsync.aboveRsyncThreshold srcFileSize ->
-        let infd = openFileIn fspath realPath fileKind in
-        (* Now that we've successfully opened the original version
-           of the file, install a more interesting decompressor *)
-        decompressor :=
-          Remote.MsgIdMap.add file_id
-            (fun ti ->
-               let fd = destinationFd fspath path fileKind outfd in
-               Transfer.Rsync.rsyncDecompress infd fd showProgress ti)
-            !decompressor;
-        let bi =
-          protect (fun () -> Transfer.Rsync.rsyncPreprocess infd)
-            (fun () -> Unix.close infd)
-        in
-        Lwt.return (outfd, ref (Some infd), Some bi)
+        Util.convertUnixErrorsToTransient
+          "preprocessing file"
+          (fun () ->
+             let infd = openFileIn fspath realPath fileKind in
+             (* Now that we've successfully opened the original version
+                of the file, install a more interesting decompressor *)
+             decompressor :=
+               Remote.MsgIdMap.add file_id
+                 (fun ti ->
+                    let fd = destinationFd fspath path fileKind outfd in
+                    Transfer.Rsync.rsyncDecompress infd fd showProgress ti)
+                 !decompressor;
+             let bi =
+               protect (fun () -> Transfer.Rsync.rsyncPreprocess infd)
+                 (fun () -> close_in_noerr infd)
+             in
+             let (firstBi, remBi) =
+               match bi with
+                 []                 -> assert false
+               | firstBi :: remBi -> (firstBi, remBi)
+             in
+             Lwt.return (outfd, ref (Some infd), Some firstBi, remBi))
     | _ ->
-        Lwt.return (outfd, ref None, None)
+        Lwt.return (outfd, ref None, None, [])
   end else
-    Lwt.return (outfd, ref None, None)
+    Lwt.return (outfd, ref None, None, [])
 
 let processTransferInstruction conn (file_id, ti) =
   Util.convertUnixErrorsToTransient
-    "processTransferInstruction"
+    "processing a transfer instruction"
     (fun () ->
        ignore (Remote.MsgIdMap.find file_id !decompressor ti));
   Lwt.return ()
@@ -173,6 +205,8 @@ let processTransferInstructionRemotely =
     "processTransferInstruction" marshalTransferInstruction
     Remote.defaultMarshalingFunctions processTransferInstruction
 
+let blockInfos = ref Remote.MsgIdMap.empty
+
 let compress conn
      (biOpt, fspathFrom, pathFrom, fileKind, sizeFrom, id, file_id) =
   Lwt.catch
@@ -180,31 +214,59 @@ let compress conn
        let infd = openFileIn fspathFrom pathFrom fileKind in
        lwt_protect (fun () ->
          let showProgress count =
+           Abort.check id;
            Uutil.showProgress id (Uutil.Filesize.ofInt count) "r" in
          let compr =
            match biOpt with
              None     -> Transfer.send infd sizeFrom showProgress
-           | Some bi  -> Transfer.Rsync.rsyncCompress
+           | Some bi  -> let remBi =
+                           try
+                             Remote.MsgIdMap.find file_id !blockInfos
+                           with Not_found ->
+                             []
+                         in
+                         let bi = bi :: remBi in
+                         blockInfos :=
+                           Remote.MsgIdMap.remove file_id !blockInfos;
+                         Transfer.Rsync.rsyncCompress
                            bi infd sizeFrom showProgress
          in
          compr
            (fun ti -> processTransferInstructionRemotely conn (file_id, ti))
                >>= (fun () ->
-         Unix.close infd;
+         close_in infd;
          Lwt.return ()))
        (fun () ->
-          Unix.close infd))
+          close_in_noerr infd))
     (fun e ->
        Util.convertUnixErrorsToTransient
-         "rsyncSender" (fun () -> raise e))
+         "rsync sender" (fun () -> raise e))
 
 let compressRemotely = Remote.registerServerCmd "compress" compress
+
+
+let receiveRemBiLocally _ (file_id, bi) =
+  let bil =
+    try
+      Remote.MsgIdMap.find file_id !blockInfos
+    with Not_found ->
+      []
+  in
+  blockInfos := Remote.MsgIdMap.add file_id (bi :: bil) !blockInfos;
+  Lwt.return ()
+
+let receiveRemBi = Remote.registerServerCmd "receiveRemBi" receiveRemBiLocally
+let rec sendRemBi conn file_id remBi =
+  match remBi with
+    []     -> Lwt.return ()
+  | x :: r -> sendRemBi conn file_id r >>= (fun () ->
+              receiveRemBi conn (file_id, x))
 
 (****)
 
 let fileSize (fspath, path) =
   Util.convertUnixErrorsToTransient
-    "fileSize"
+    "getting file size"
     (fun () ->
        Lwt.return
         (Props.length (Fileinfo.get false fspath path).Fileinfo.desc))
@@ -227,20 +289,27 @@ let bufferSize sz =
 (****)
 
 let close_all infd outfd =
+  Util.convertUnixErrorsToTransient
+    "closing files"
+    (fun () ->
+       begin match !infd with
+         Some fd -> close_in fd; infd := None
+       | None    -> ()
+       end;
+       begin match !outfd with
+         Some fd -> close_out fd; outfd := None
+       | None    -> ()
+       end)
+
+let close_all_no_error infd outfd =
   begin match !infd with
-    Some fd -> infd := None; Unix.close fd
+    Some fd -> close_in_noerr fd
   | None    -> ()
   end;
   begin match !outfd with
-    Some fd -> outfd := None; Unix.close fd
+    Some fd -> close_out_noerr fd
   | None    -> ()
   end
-
-let close_all_no_error infd outfd =
-  try
-    close_all infd outfd
-  with Unix.Unix_error _ ->
-    ()
 
 let reallyTransmitFile
     connFrom fspathFrom pathFrom fspathTo pathTo realPathTo
@@ -258,17 +327,18 @@ let reallyTransmitFile
   (* Data fork *)
   startReceivingFile
     fspathTo pathTo realPathTo `DATA update srcFileSize id file_id
-    >>= (fun (outfd, infd, bi) ->
+    >>= (fun (outfd, infd, firstBi, remBi) ->
   Lwt.catch (fun () ->
-    Lwt_util.run_in_region transmitFileReg (bufferSize srcFileSize) (fun () ->
-      Uutil.showProgress id Uutil.Filesize.zero "f";
-      compressRemotely connFrom
-        (bi, fspathFrom, pathFrom, `DATA, srcFileSize, id, file_id))
+    Uutil.showProgress id Uutil.Filesize.zero "f";
+    sendRemBi connFrom file_id remBi >>= (fun () ->
+    compressRemotely connFrom
+      (firstBi,
+       fspathFrom, pathFrom, `DATA, srcFileSize, id, file_id)
             >>= (fun () ->
     decompressor :=
       Remote.MsgIdMap.remove file_id !decompressor; (* For GC *)
     close_all infd outfd;
-    Lwt.return ()))
+    Lwt.return ())))
     (fun e ->
        decompressor :=
          Remote.MsgIdMap.remove file_id !decompressor; (* For GC *)
@@ -279,18 +349,18 @@ let reallyTransmitFile
     startReceivingFile
       fspathTo pathTo realPathTo
       (`RESS ressLength) update ressLength id file_id
-        >>= (fun (outfd, infd, bi) ->
+        >>= (fun (outfd, infd, firstBi, remBi) ->
     Lwt.catch (fun () ->
-      Lwt_util.run_in_region transmitFileReg (bufferSize ressLength) (fun () ->
-        Uutil.showProgress id Uutil.Filesize.zero "f";
-        compressRemotely connFrom
-          (bi, fspathFrom, pathFrom,
-           `RESS ressLength, ressLength, id, file_id))
-              >>= (fun () ->
-        decompressor :=
-          Remote.MsgIdMap.remove file_id !decompressor; (* For GC *)
-        close_all infd outfd;
-        Lwt.return ()))
+      Uutil.showProgress id Uutil.Filesize.zero "f";
+      sendRemBi connFrom file_id remBi >>= (fun () ->
+      compressRemotely connFrom
+        (firstBi, fspathFrom, pathFrom,
+         `RESS ressLength, ressLength, id, file_id)
+            >>= (fun () ->
+      decompressor :=
+        Remote.MsgIdMap.remove file_id !decompressor; (* For GC *)
+      close_all infd outfd;
+      Lwt.return ())))
     (fun e ->
        decompressor :=
          Remote.MsgIdMap.remove file_id !decompressor; (* For GC *)
@@ -367,9 +437,14 @@ let transmitFileOnRoot =
 let transmitFile
     rootFrom pathFrom rootTo fspathTo pathTo realPathTo
     update desc fp ress id =
-  transmitFileOnRoot rootTo rootFrom
-    (snd rootFrom, pathFrom, fspathTo, pathTo, realPathTo,
-     update, desc, fp, ress, id)
+  let bufSz = bufferSize (max (Props.length desc) (Osx.ressLength ress)) in
+  (* This must be on the client: any lock on the server side may result
+     in a deadlock under windows *)
+  Lwt_util.run_in_region transmitFileReg bufSz (fun () ->
+    Abort.check id;
+    transmitFileOnRoot rootTo rootFrom
+      (snd rootFrom, pathFrom, fspathTo, pathTo, realPathTo,
+       update, desc, fp, ress, id))
 
 (****)
 

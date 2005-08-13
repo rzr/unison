@@ -1,4 +1,5 @@
 #import "PreferencesController.h"
+#define CAML_NAME_SPACE
 #include <caml/alloc.h>
 #include <caml/callback.h>
 
@@ -58,8 +59,9 @@ extern value Callback3_checkexn(value,value,value,value);
         }
     }
     value *f = caml_named_value("unisonProfileInit");
-    Callback3_checkexn(*f, copy_string([profileName cString]),
-                       copy_string([firstRoot cString]), copy_string([secondRoot cString]));
+    Callback3_checkexn(*f, caml_copy_string([profileName cString]),
+                       caml_copy_string([firstRoot cString]),
+		       caml_copy_string([secondRoot cString]));
     return YES;
 }
 

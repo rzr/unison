@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/uicommon.mli $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* Kinds of UI *)
@@ -35,7 +35,11 @@ val profileLabel : string Prefs.t
 (* User preference: Synchronize repeatedly *)
 val repeat : string Prefs.t
 
-(* Format the information about current contents of a path in one replica *)
+(* User preference: Try failing paths N times *)
+val retry : int Prefs.t
+
+(* Format the information about current contents of a path in one replica (the second argument
+   is used as a separator) *)
 val details2string : Common.reconItem -> string -> string
 
 (* Format a path, eliding initial components that are the same as the
@@ -61,6 +65,8 @@ val showDiffs :
   -> Uutil.File.t               (* id for transfer progress reports *)
   -> unit
 
+val dangerousPathMsg : Path.t list -> string
+
 (* Utilities for adding ignore patterns *)
 val ignorePath : Path.t -> string
 val ignoreName : Path.t -> string
@@ -78,7 +84,7 @@ val uiInit :
     getProfile:(unit -> string option) ->
     getFirstRoot:(unit -> string option) ->
     getSecondRoot:(unit -> string option) ->
-    termInteract:(string -> string) option ->
+    termInteract:(string -> string -> string) option ->
     unit
 
 val initPrefs :
@@ -86,18 +92,10 @@ val initPrefs :
   displayWaitMessage:(unit->unit) ->
   getFirstRoot:(unit->string option) ->
   getSecondRoot:(unit->string option) ->
-  termInteract:(string -> string) option ->
+  termInteract:(string -> string -> string) option ->
   unit
 
 val checkCaseSensitivity : unit -> unit Lwt.t
-
-(* Interacting with ssh *)
-type sshInfo =
-    Password of string
-  | HostAuthenticity of string * string
-  | Other of string
-
-val sshParse : string -> sshInfo
 
 (* Exit codes *)
 val perfectExit: int   (* when everything's okay *)

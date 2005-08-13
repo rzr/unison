@@ -1,6 +1,7 @@
 /* ReconItem */
 
 #import <Cocoa/Cocoa.h>
+#define CAML_NAME_SPACE
 #include <caml/mlvalues.h>
 
 @interface ReconItem : NSObject

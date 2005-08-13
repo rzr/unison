@@ -29,23 +29,6 @@ THREADS=false
 ########################################################################
 #     (There should be no need to change anything from here on)       ##
 ########################################################################
-########################################################################
-
-## Miscellaneous developer-only switches
-DEBUGGING=true
-PROFILING=false
-STATIC=false
-
-########################################################################
-### Project name
-
-# $Format: "NAME=$Project$"$
-NAME=unison
-
-########################################################################
-### Compilation rules
-
-include Makefile.OCaml
 
 ######################################################################
 # Building installation instructions
@@ -55,19 +38,45 @@ all:: strings.ml buildexecutable
 all:: INSTALL
 
 INSTALL: $(NAME)$(EXEC_EXT)
-	./$(NAME) -doc install > INSTALL
+# file isn't made for OS X, so check that it's there first
+	(if [ -f $(NAME) ]; then ./$(NAME) -doc install > INSTALLATION; fi)
+
+########################################################################
+## Miscellaneous developer-only switches
+DEBUGGING=true
+PROFILING=false
+STATIC=false
+
+# NAME, VERSION, and MAJORVERSION, automatically generated
+-include Makefile.ProjectInfo
+
+Makefile.ProjectInfo: mkProjectInfo
+	./mkProjectInfo > $@
+
+mkProjectInfo: mkProjectInfo.ml
+	ocamlc -o $@ $^
+
+clean::
+	$(RM) mkProjectInfo
+	$(RM) Makefile.ProjectInfo
+
+########################################################################
+### Compilation rules
+
+include Makefile.OCaml
 
 ######################################################################
 # Installation
 
 INSTALLDIR = $(HOME)/bin/
 
-install: $(NAME)$(EXEC_EXT)
+# This has two names because on OSX the file INSTALL shadows the target 'install'!
+install: doinstall
+
+doinstall: $(NAME)$(EXEC_EXT)
 	-mv $(INSTALLDIR)/$(NAME)$(EXEC_EXT) /tmp/$(NAME)-$(shell echo $$$$)
 	cp $(NAME)$(EXEC_EXT) $(INSTALLDIR)
-	cp $(NAME)$(EXEC_EXT) $(INSTALLDIR)$(NAME)-$(VERSION)$(EXEC_EXT)
-	@# If we're running at Penn, install a public version too
-	if [ -d /plclub/bin ]; then cp $(NAME)$(EXEC_EXT) /plclub/bin/$(NAME)-$(VERSION)$(EXEC_EXT); fi
+	cp $(NAME)$(EXEC_EXT) $(INSTALLDIR)$(NAME)-$(MAJORVERSION)$(EXEC_EXT)
 
 
 ######################################################################
@@ -220,13 +229,14 @@ runjunk: byte
 
 temp:
 	$(MAKE) UISTYLE=text
+	-mkdir a.tmp b.tmp
 	echo "A " > a.tmp/xxx
 	date >> a.tmp/xxx
 	echo "B " > b.tmp/xxx
 	date >> b.tmp/xxx
 	md5 a.tmp/xxx
 	md5 b.tmp/xxx
-	echo m | ./unison test -debug all
+	echo "l" | ./unison test -ignorelocks
 
 testmerge:
 	$(MAKE) all NATIVE=false UISTYLE=text

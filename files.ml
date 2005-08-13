@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/files.ml $ *)
-(* $I2: Last modified by bcpierce on Mon, 06 Sep 2004 15:07:18 -0400 $ *)
+(* $I2: Last modified by bcpierce on Fri, 26 Nov 2004 19:34:28 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
@@ -18,23 +18,25 @@ let writeCommitLog source target tempname =
   let targetname = Fspath.toString target in
   debug (fun() -> Util.msg "Writing commit log: renaming %s to %s via %s\n"
     sourcename targetname tempname);
-  let c =
-    Util.convertUnixErrorsToFatal
-      "writing commit log"
-      (fun() ->
+  Util.convertUnixErrorsToFatal
+    "writing commit log"
+    (fun () ->
+       let c =
          open_out_gen [Open_wronly; Open_creat; Open_trunc; Open_excl]
-           0o600 commitLogName) in
-  Printf.fprintf c "Warning: the last run of %s terminated abnormally " Uutil.myName;
-  Printf.fprintf c "while moving\n   %s\nto\n   %s\nvia\n   %s\n\n"
-    sourcename targetname tempname;
-  Printf.fprintf c "Please check the state of these files immediately\n";
-  Printf.fprintf c "(and delete this notice when you've done so).\n";
-  close_out c
+           0o600 commitLogName in
+       Printf.fprintf c "Warning: the last run of %s terminated abnormally "
+         Uutil.myName;
+       Printf.fprintf c "while moving\n   %s\nto\n   %s\nvia\n   %s\n\n"
+         sourcename targetname tempname;
+       Printf.fprintf c "Please check the state of these files immediately\n";
+       Printf.fprintf c "(and delete this notice when you've done so).\n";
+       close_out c)
 
 let clearCommitLog () =
   debug (fun() -> (Util.msg "Deleting commit log\n"));
-  try Unix.unlink commitLogName
-  with Unix.Unix_error(_) -> ()
+  Util.convertUnixErrorsToFatal
+    "clearing commit log"
+      (fun () -> Unix.unlink commitLogName)
 
 let processCommitLog () =
   if Sys.file_exists commitLogName then begin
@@ -120,10 +122,8 @@ let setProp fromRoot fromPath toRoot toPath newDesc oldDesc uiFrom uiTo =
       (Props.toString oldDesc));
   Update.transaction (fun id ->
     Update.updateProps fromRoot fromPath None uiFrom id >>= (fun _ ->
-    (*
-      [uiTo] provides the modtime while [desc] provides the other
-      file properties
-    *)
+    (* [uiTo] provides the modtime while [desc] provides the other
+       file properties *)
     Update.updateProps toRoot toPath (Some newDesc) uiTo id >>=
       (fun toLocalPath ->
     setPropRemote2 toRoot (toLocalPath, `Update oldDesc, newDesc))))
@@ -186,17 +186,29 @@ let renameLocal (_, (keepbackups, fspath, pathFrom, pathTo)) =
          let temp' = Fspath.toString temp in (* only for debugmsg, delete? *)
          writeCommitLog source target temp';
          debug (fun() -> Util.msg "rename %s to %s\n" target' temp');
-         Os.rename target Path.empty temp Path.empty;
-         if keepbackups then
-          (*FIX: should be recursive*)
-           Xferhint.renameEntry (fspath, pathTo) (fspath, tmpPath);
-         debug (fun() -> Util.msg "rename %s to %s\n" source' target');
-         Os.rename source Path.empty target Path.empty;
-         (*FIX: should be recursive*)
-         Xferhint.renameEntry (fspath, pathFrom) (fspath, pathTo);
-         if not keepbackups then
-           Os.delete fspath tmpPath;
-         clearCommitLog()
+         match Os.renameIfAllowed target Path.empty temp Path.empty with
+           None ->
+             (* If the renaming fails, we will be left with
+                DANGER.README file which will make any other
+                (similar) renaming fail in a cryptic way.  So, it
+                seems better to abort early. *)
+             Util.convertUnixErrorsToFatal "renaming with commit log"
+               (fun () ->
+                  if keepbackups then
+                    (*FIX: should be recursive*)
+                    Xferhint.renameEntry (fspath, pathTo) (fspath, tmpPath);
+                  debug (fun()-> Util.msg "rename %s to %s\n" source' target');
+                  Os.rename source Path.empty target Path.empty;
+                 (*FIX: should be recursive*)
+                 Xferhint.renameEntry (fspath, pathFrom) (fspath, pathTo);
+                 if not keepbackups then
+                   Os.delete fspath tmpPath;
+                 clearCommitLog())
+         | Some e ->
+             (* We are not able to move the file.  We clear the commit
+                log as nothing happened, then fail. *)
+             clearCommitLog();
+             Util.convertUnixErrorsToTransient "renaming" (fun () -> raise e)
        end else begin
          debug (fun() -> Util.msg "rename: moveFirst=false\n");
          Os.rename source Path.empty target Path.empty;
@@ -341,6 +353,7 @@ let copy
     match f with
       Update.ArchiveFile (desc, dig, stamp, ress) ->
         Lwt_util.run_in_region copyReg 1 (fun () ->
+          Abort.check id;
           Copy.file
             rootFrom pFrom rootTo workingDir pTo realPTo
             update desc dig ress id
@@ -350,12 +363,14 @@ let copy
         Lwt_util.run_in_region copyReg 1 (fun () ->
           debug (fun() -> Util.msg "Making symlink %s/%s -> %s\n"
                             (root2string rootTo) (Path.toString pTo) l);
+          Abort.check id;
           makeSymlink rootTo (workingDir, pTo, l))
     | Update.ArchiveDir (desc, children) ->
         Lwt_util.run_in_region copyReg 1 (fun () ->
           debug (fun() -> Util.msg "Creating directory %s/%s\n"
             (root2string rootTo) (Path.toString pTo));
           mkdir rootTo workingDir pTo) >>= (fun initialDesc ->
+        Abort.check id;
         let actions =
           Update.NameMap.fold
             (fun name child rem ->
@@ -371,22 +386,29 @@ let copy
           (fun e ->
              (* If one thread fails (in a non-fatal way), we wait for
                 all other threads to terminate before continuing *)
+             Abort.file id;
              match e with
                Util.Transient _ ->
+                 let e = ref e in
                  Lwt_util.iter
                    (fun act ->
                       Lwt.catch
                          (fun () -> act)
-                         (fun e ->
-                            match e with
-                              Util.Transient _ -> Lwt.return ()
-                            | _                -> Lwt.fail e))
-                   actions
+                         (fun e' ->
+                            match e' with
+                              Util.Transient _ ->
+                                if Abort.testException !e then e := e';
+                                Lwt.return ()
+                            | _                ->
+                                Lwt.fail e'))
+                   actions >>= (fun () ->
+                 Lwt.fail !e)
              | _ ->
                  Lwt.fail e) >>= (fun () ->
         Lwt_util.run_in_region copyReg 1 (fun () ->
           (* We use the actual file permissions so as to preserve
              inherited bits *)
+          Abort.check id;
           setPropRemote rootTo
             (workingDir, pTo, `Set initialDesc, desc))))
     | Update.NoArchive ->
@@ -424,15 +446,25 @@ let readChannelTillEof c =
   String.concat "\n" (Safelist.rev (loop []))
 
 let diffCmd =
-  Prefs.createString "diff" "diff"
+  Prefs.createString "diff" "diff -u"
     "*command for showing differences between files"
-    ("This preference can be used to control the name (and command-line "
-     ^ "arguments) of the system "
+    ("This preference can be used to control the name and command-line "
+     ^ "arguments of the system "
      ^ "utility used to generate displays of file differences.  The default "
-     ^ "is `\\verb|diff|'.  The diff program should expect two file names "
-     ^ "as arguments")
+     ^ "is `\\verb|diff -u|'.  If the value of this preference contains the substrings "
+     ^ "CURRENT1 and CURRENT2, these will be replaced by the names of the files to be "
+     ^ "diffed.  If not, the two filenames will be appended to the command.  In both "
+     ^ "cases, the filenames are suitably quoted.")
 
-let quotes s = "'" ^ Util.replacesubstring s "'" "'\''" ^ "'"
+(* Using single quotes is simpler under Unix but they are not accepted
+   by the Windows shell.  Double quotes without further quoting is
+   sufficient with Windows as filenames are not allowed to contain
+   double quotes. *)
+let quotes s =
+  if Util.osType = `Win32 && not Util.isCygwin then
+    "\"" ^ s ^ "\""
+  else
+    "'" ^ Util.replacesubstring s "'" "'\''" ^ "'"
 
 let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
   debug (fun () ->
@@ -441,9 +473,15 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
       (root2string root1) (Path.toString path1)
       (root2string root2) (Path.toString path2));
   let displayDiff fspath1 fspath2 =
-    let cmd = (Prefs.read diffCmd)
-                 ^ " " ^ (quotes (Fspath.toString fspath1))
-                 ^ " " ^ (quotes (Fspath.toString fspath2)) in
+    let cmd =
+      if Util.findsubstring "CURRENT1" (Prefs.read diffCmd) = None then
+          (Prefs.read diffCmd)
+        ^ " " ^ (quotes (Fspath.toString fspath1))
+        ^ " " ^ (quotes (Fspath.toString fspath2))
+      else
+        Util.replacesubstrings (Prefs.read diffCmd)
+          ["CURRENT1", quotes (Fspath.toString fspath1);
+           "CURRENT2", quotes (Fspath.toString fspath2)] in
     let c = Unix.open_process_in cmd in
     showDiff cmd (readChannelTillEof c);
     ignore(Unix.close_process_in c) in
@@ -469,8 +507,8 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
            Lwt_unix.run
              (Update.translatePath root2 path2 >>= (fun path2 ->
               Copy.file root2 path2 root1 workingDir tmppath realPath
-                `Copy (Props.setLength Props.fileSafe (Props.length desc1))
-                 fp1 ress1 id));
+                `Copy (Props.setLength Props.fileSafe (Props.length desc2))
+                 fp2 ress2 id));
            displayDiff
 	     (Fspath.concat workingDir realPath)
              (Fspath.concat workingDir tmppath);
@@ -485,10 +523,10 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
              Path.addSuffixToFinalName realPath "#unisondiff-" in
            Lwt_unix.run
              (Update.translatePath root1 path1 >>= (fun path1 ->
-              (* Note that we don't need the ressource fork *)
+              (* Note that we don't need the resource fork *)
               Copy.file root1 path1 root2 workingDir tmppath realPath
-                `Copy (Props.setLength Props.fileSafe (Props.length desc2))
-                 fp2 ress2 id));
+                `Copy (Props.setLength Props.fileSafe (Props.length desc1))
+                 fp1 ress1 id));
            displayDiff
              (Fspath.concat workingDir tmppath)
 	     (Fspath.concat workingDir realPath);
@@ -714,7 +752,7 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
       raise (Util.Transient "Merge program exited with non-zero status");
 
     let mergeText =
-      cmd ^ "\n\n" ^ 
+      cmd ^ "\n" ^ 
       (if mergeLog="" then "Merge program exited normally"
       else mergeLog) in
 
@@ -779,7 +817,9 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
         end else if dig1 = dig1' then begin
           debug (fun () -> Util.msg "Merge program changed just second input\n");
           copy [(working2,working1);(working2,workingarch)]
-        end else assert false
+        end else
+          raise (Util.Transient ("Error: the merge function changed both of "
+                                 ^ "its inputs but did not make them equal"))
       end
 
       else if working1_still_exists && (not working2_still_exists) then begin

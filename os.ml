@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/os.ml $ *)
-(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
+(* $I2: Last modified by vouillon on Fri, 05 Nov 2004 10:12:27 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* This file attempts to isolate operating system specific details from the  *)
@@ -43,7 +43,7 @@ let maxbackups =
      ^ "be kept by unison, for each path that matches the predicate "
      ^ "\\verb|backup|.  The default is 2.")
 
-let _ = Prefs.alias "maxbackups" "mirrorversions"
+let _ = Prefs.alias maxbackups "mirrorversions"
 
 let minbackups =
   Prefs.createInt "minbackups" 1
@@ -150,10 +150,30 @@ and childrenOf fspath path =
         loop newChildren directory
       in
       let absolutePath = Fspath.concat fspath path in
-      let directory = Fspath.opendir absolutePath in
-      let result = loop [] directory in
-      Unix.closedir directory;
-      result)
+      let directory =
+        try
+          Some (Fspath.opendir absolutePath)
+        with Unix.Unix_error (Unix.ENOENT, _, _) ->
+          (* FIX (in Ocaml): under Windows, when a directory is empty
+             (not even "." and ".."), FindFirstFile fails with
+             ERROR_FILE_NOT_FOUND while ocaml expects the error
+             ERROR_NO_MORE_FILES *)
+          None
+      in
+      match directory with
+        Some directory ->
+          begin try
+            let result = loop [] directory in
+            Unix.closedir directory;
+            result
+          with Unix.Unix_error _ as e ->
+            begin try
+              Unix.closedir directory
+            with Unix.Unix_error _ -> () end;
+            raise e
+          end
+      | None ->
+          [])
 
 (*****************************************************************************)
 (*                        ACTIONS ON FILESYSTEM                              *)
@@ -167,14 +187,19 @@ and delete fspath path =
        let absolutePath = Fspath.concatToString fspath path in
        match (Fileinfo.get false fspath path).Fileinfo.typ with
          `DIRECTORY ->
-           Unix.chmod absolutePath 0o700;
+           begin try
+             Unix.chmod absolutePath 0o700
+           with Unix.Unix_error _ -> () end;
            Safelist.iter
              (fun child -> delete fspath (Path.child path child))
              (childrenOf fspath path);
            Unix.rmdir absolutePath
        | `FILE ->
-           if Util.osType <> `Unix then
-             Unix.chmod absolutePath 0o600;
+           if Util.osType <> `Unix then begin
+             try
+               Unix.chmod absolutePath 0o600;
+             with Unix.Unix_error _ -> ()
+           end;
            Unix.unlink absolutePath;
            if Prefs.read Osx.rsrc then begin
              let pathDouble = Osx.appleDoubleFile fspath path in
@@ -206,6 +231,29 @@ let rename sourcefspath sourcepath targetfspath targetpath =
            Unix.unlink targetDouble
        end)
 
+let renameIfAllowed sourcefspath sourcepath targetfspath targetpath =
+  let source = Fspath.concat sourcefspath sourcepath in
+  let source' = Fspath.toString source in
+  let target = Fspath.concat targetfspath targetpath in
+  let target' = Fspath.toString target in
+  Util.convertUnixErrorsToTransient
+  "renaming"
+    (fun () ->
+       debug (fun() -> Util.msg "rename %s to %s\n" source' target');
+       let allowed =
+         try Unix.rename source' target'; None with
+           Unix.Unix_error (Unix.EPERM, _, _) as e -> Some e
+       in
+       if allowed = None && Prefs.read Osx.rsrc then begin
+         let sourceDouble = Osx.appleDoubleFile sourcefspath sourcepath in
+         let targetDouble = Osx.appleDoubleFile targetfspath targetpath in
+         if Sys.file_exists sourceDouble then
+           Unix.rename sourceDouble targetDouble
+         else if Sys.file_exists targetDouble then
+           Unix.unlink targetDouble
+       end;
+       allowed)
+
 let symlink =
   if Util.isCygwin || (Util.osType != `Win32) then
     fun fspath path l ->
@@ -223,11 +271,8 @@ let createDir fspath path props =
   Util.convertUnixErrorsToTransient
   "creating directory"
     (fun () ->
-       let rec createDirAndParents d =
-         if not (Sys.file_exists (Filename.dirname d)) then
-           createDirAndParents (Filename.dirname d);
-         Unix.mkdir d (Props.perms props) in
-       createDirAndParents (Fspath.concatToString fspath path))
+       let absolutePath = Fspath.concatToString fspath path in
+       Unix.mkdir absolutePath (Props.perms props))
 
 (*****************************************************************************)
 (*                              FINGERPRINTS                                 *)
@@ -348,25 +393,6 @@ let backupPath fspath path =
     tempPath
   in
   f 1
-
-
-(*****************************************************************************)
-(*                        PARENT VERIFICATION                                *)
-(*****************************************************************************)
-
-let isdir p =
-  try
-    (Fspath.stat p).Unix.LargeFile.st_kind = Unix.S_DIR
-  with Unix.Unix_error _ -> false
-
-let checkThatParentPathIsADir fspath path =
-  if not (exists fspath path) then
-    let (workingDir,realPath) = Fspath.findWorkingDir fspath path in
-    if not (isdir workingDir) then
-      raise (Util.Fatal (Printf.sprintf
-                           "Path %s is not valid because %s is not a directory"
-                           (Fspath.concatToString fspath path)
-                           (Fspath.toString workingDir)))
 
 (*****************************************************************************)
 (*                     INTERRUPTED SYSTEM CALLS                              *)

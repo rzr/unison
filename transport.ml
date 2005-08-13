@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/transport.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I2: Last modified by vouillon on Fri, 05 Nov 2004 10:12:27 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
@@ -15,7 +15,8 @@ let fileSize uiFrom uiTo =
   match uiFrom, uiTo with
     _, Updates (File (props, ContentsUpdated (_, _, ress)), _) ->
       (Props.length props, Osx.ressLength ress)
-  | Updates (File _, Previous (_, props, _, ress)), NoUpdates ->
+  | Updates (_, Previous (`FILE, props, _, ress)),
+    (NoUpdates | Updates (File (_, ContentsSame), _)) ->
       (Props.length props, Osx.ressLength ress)
   | _ ->
       assert false
@@ -106,7 +107,7 @@ let doAction (fromRoot,toRoot) path fromContents toContents id =
                   fromRoot path uiFrom toRoot path uiTo id))
       (fun e -> Trace.log
           (Printf.sprintf
-             "Failed with exception %s\n" (Printexc.to_string e));
+             "Failed: %s\n" (Util.printException e));
         return ()))
 
 let propagate root1 root2 reconItem id showMergeFn =
@@ -143,7 +144,8 @@ let transportItem reconItem id showMergeFn =
 let months = ["Jan"; "Feb"; "Mar"; "Apr"; "May"; "Jun"; "Jul"; "Aug"; "Sep";
               "Oct"; "Nov"; "Dec"]
 
-let logStartTime () =
+let start () =
+  Abort.reset ();
   let tm = Util.localtime (Util.time()) in
   let m =
     Printf.sprintf
@@ -154,7 +156,7 @@ let logStartTime () =
       (tm.Unix.tm_year+1900) in
   Trace.log m
 
-let logEndTime () =
+let finish () =
   let tm = Util.localtime (Util.time()) in
   let m =
     Printf.sprintf

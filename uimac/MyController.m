@@ -17,21 +17,21 @@ static MyController *me; // needed by reloadTable and displayStatus, below
 - (void)resizeWindowToSize:(NSSize)newSize
 {
     NSRect aFrame;
-    
+
     float newHeight = newSize.height;
     float newWidth = newSize.width;
 
-    aFrame = [NSWindow contentRectForFrameRect:[mainWindow frame] 
+    aFrame = [NSWindow contentRectForFrameRect:[mainWindow frame]
                        styleMask:[mainWindow styleMask]];
-    
+
     aFrame.origin.y += aFrame.size.height;
     aFrame.origin.y -= newHeight;
     aFrame.size.height = newHeight;
     aFrame.size.width = newWidth;
-    
-    aFrame = [NSWindow frameRectForContentRect:aFrame 
+
+    aFrame = [NSWindow frameRectForContentRect:aFrame
                        styleMask:[mainWindow styleMask]];
-    
+
     [mainWindow setFrame:aFrame display:YES animate:YES];
 }
 
@@ -41,33 +41,6 @@ static MyController *me; // needed by reloadTable and displayStatus, below
     [self resizeWindowToSize:chooseProfileSize];
     [mainWindow setContentView:chooseProfileView];
     [mainWindow makeFirstResponder:[profileController tableView]]; // profiles get keyboard input
-}
-
-- (void)awakeFromNib
-{
-    me = self;
-    // call some ocaml init code.  FIX: Does this occur before ProfileController awakeFromNib?
-    value *f = NULL;
-    f = caml_named_value("unisonInit0");
-    Callback_checkexn(*f, Val_unit);
-    caml_reconItems = preconn = Val_int(0); // caml []
-    register_global_root(&caml_reconItems);
-    register_global_root(&preconn);
-    
-    // Initialize locals and set up the first window the user will see
-    chooseProfileSize = [chooseProfileView frame].size;
-    updatesSize = [updatesView frame].size;
-    preferencesSize = [preferencesView frame].size;
-
-    // Double clicking in the profile list will open the profile
-    [[profileController tableView] setTarget:self];
-    [[profileController tableView] setDoubleAction:@selector(openButton:)];
-
-    blankView = [[NSView alloc] init];
-    
-//    [mainWindow setContentSize:chooseProfileSize];
-//    [mainWindow setContentView:chooseProfileView];
-    [self chooseProfiles];
 }
 
 - (IBAction)createButton:(id)sender
@@ -130,7 +103,7 @@ static MyController *me; // needed by reloadTable and displayStatus, below
     [self updateReconItems];
     if ([reconItems count] > 0)
         [tableView selectRow:0 byExtendingSelection:NO];
-    
+
     // label the left and right columns with the roots
     NSTableHeaderCell *left = [[[tableView tableColumns] objectAtIndex:0] headerCell];
     value *f = caml_named_value("unisonFirstRootString");
@@ -138,10 +111,10 @@ static MyController *me; // needed by reloadTable and displayStatus, below
     NSTableHeaderCell *right = [[[tableView tableColumns] objectAtIndex:2] headerCell];
     f = caml_named_value("unisonSecondRootString");
     [right setObjectValue:[NSString stringWithCString:String_val(Callback_checkexn(*f, Val_unit))]];
-    
+
     // cause scrollbar to display if necessary
     [tableView reloadData];
-    
+
     // activate menu items
     [tableView setEditable:YES];
 }
@@ -153,12 +126,10 @@ static MyController *me; // needed by reloadTable and displayStatus, below
     [self clearDetails];
     [reconItems release];
     reconItems = nil;
-    [updatesText setStringValue:[NSString stringWithFormat:@"Synchronizing profile '%@'",
-                                          [profileController selected]]];
     [mainWindow setContentView:blankView];
     [self resizeWindowToSize:updatesSize];
     [mainWindow setContentView:updatesView];
-    
+
     // reconItems table gets keyboard input
     [mainWindow makeFirstResponder:tableView];
 
@@ -169,16 +140,21 @@ static MyController *me; // needed by reloadTable and displayStatus, below
         toTarget:self withObject:nil];
 }
 
-- (IBAction)openButton:(id)sender
+- (void)connect:(value)profileName
 {
-    NSLog(@"Connecting...");
     // contact server, propagate prefs
-    value *f = NULL;
-    const char *s = [[profileController selected] cString];
-    value caml_s = copy_string(s);
+    NSLog(@"Connecting...");
+
+    // Switch to ConnectingView
+    [mainWindow setContentView:blankView];
+    [self resizeWindowToSize:ConnectingSize];
+    [mainWindow setContentView:ConnectingView];
+    [ConnectingView setNeedsDisplay:YES]; // FIX: this doesn't seem to work fast enough
+
     // possibly slow -- need another thread?  Print "contacting server"
+    value *f = NULL;
     f = caml_named_value("unisonInit1");
-    preconn = Callback_checkexn(*f, caml_s);
+    preconn = Callback_checkexn(*f, profileName);
     if (preconn == Val_unit) {
         [self afterOpen]; // no prompting required
         return;
@@ -195,6 +171,17 @@ static MyController *me; // needed by reloadTable and displayStatus, below
         return;
     }
     [self raisePasswordWindow:[NSString stringWithCString:String_val(Field(prompt,0))]];
+}
+
+- (IBAction)openButton:(id)sender
+{
+    NSString *profile = [profileController selected];
+    [updatesText setStringValue:[NSString stringWithFormat:@"Synchronizing profile '%@'",
+                                          profile]];
+    const char *s = [profile cString];
+    value caml_s = caml_copy_string(s);
+    [self connect:caml_s];
+    return;
 }
 
 - (IBAction)restartButton:(id)sender
@@ -280,7 +267,7 @@ CAMLprim value reloadTable(value row)
     // FIX: some prompts don't ask for password, need to look at it
     NSLog(@"Got the prompt: '%@'",prompt);
     value *f = caml_named_value("unisonPasswordMsg");
-    value v = Callback_checkexn(*f, copy_string([prompt cString]));
+    value v = Callback_checkexn(*f, caml_copy_string([prompt cString]));
     if (v == Val_true) {
         [NSApp beginSheet:passwordWindow
             modalForWindow:mainWindow
@@ -290,12 +277,12 @@ CAMLprim value reloadTable(value row)
         return;
     }
     f = caml_named_value("unisonAuthenticityMsg");
-    v = Callback_checkexn(*f, copy_string([prompt cString]));
+    v = Callback_checkexn(*f, caml_copy_string([prompt cString]));
     if (v == Val_true) {
         int i = NSRunAlertPanel(@"New host",prompt,@"Yes",@"No",nil);
         if (i == NSAlertDefaultReturn) {
             f = caml_named_value("openConnectionReply");
-            Callback2_checkexn(*f, preconn, copy_string("yes"));
+            Callback2_checkexn(*f, preconn, caml_copy_string("yes"));
             f = caml_named_value("openConnectionPrompt");
             value prompt = Callback_checkexn(*f, preconn);
             if (prompt == Val_unit) {
@@ -333,7 +320,7 @@ CAMLprim value reloadTable(value row)
     NSNumber *reason = [[notification userInfo] objectForKey:@"NSTextMovement"];
     int code = [reason intValue];
     if (code == NSReturnTextMovement)
-        [self endPasswordWindow:self];    
+        [self endPasswordWindow:self];
 }
 // Or, the Continue button will invoke this when clicked
 - (IBAction)endPasswordWindow:(id)sender
@@ -343,12 +330,13 @@ CAMLprim value reloadTable(value row)
     if ([sender isEqualTo:passwordCancelButton]) {
         value *f = caml_named_value("openConnectionCancel");
         Callback_checkexn(*f, preconn);
-       return;
+        [self chooseProfiles];
+        return;
     }
     NSString *password = [passwordText stringValue];
     value *f = NULL;
     const char *s = [password cString];
-    value caml_s = copy_string(s);
+    value caml_s = caml_copy_string(s);
     f = caml_named_value("openConnectionReply");
     Callback2_checkexn(*f, preconn, caml_s);
     f = caml_named_value("openConnectionPrompt");
@@ -361,6 +349,18 @@ CAMLprim value reloadTable(value row)
     }
     else [self raisePasswordWindow:[NSString stringWithCString:String_val(Field(prompt,0))]];
 }
+
+- (IBAction)raiseAboutWindow:(id)sender
+{
+    [aboutWindow makeKeyAndOrderFront:nil];
+}
+
+- (IBAction)onlineHelp:(id)sender
+{
+	[[NSWorkspace sharedWorkspace]
+		openURL:[NSURL URLWithString:@"http://www.cis.upenn.edu/~bcpierce/unison/docs.html"]];
+}
+
 
 - (NSMutableArray *)reconItems // used in ReconTableView only
 {
@@ -387,6 +387,111 @@ CAMLprim value displayStatus(value s)
     [me statusTextSet:[NSString stringWithCString:String_val(s)]];
 //    NSLog(@"dS: %s",String_val(s));
     return Val_unit;
+}
+
+- (void)awakeFromNib
+{
+    /**** Initialize locals ****/
+    me = self;
+    chooseProfileSize = [chooseProfileView frame].size;
+    updatesSize = [updatesView frame].size;
+    preferencesSize = [preferencesView frame].size;
+    ConnectingSize = [ConnectingView frame].size;
+    blankView = [[NSView alloc] init];
+    /* Double clicking in the profile list will open the profile */
+    [[profileController tableView] setTarget:self];
+    [[profileController tableView] setDoubleAction:@selector(openButton:)];
+    /* Set up the version string in the about box.  We use a custom
+       about box just because PRCS doesn't seem capable of getting the
+       version into the InfoPlist.strings file; otherwise we'd use the
+       standard about box. */
+    value *f = NULL;
+    f = caml_named_value("unisonGetVersion");
+    [versionText setStringValue:
+		   [NSString stringWithCString:
+			       String_val(Callback_checkexn(*f, Val_unit))]];
+
+    /* Ocaml initialization */
+    // FIX: Does this occur before ProfileController awakeFromNib?
+    caml_reconItems = preconn = Val_int(0);
+    caml_register_global_root(&caml_reconItems);
+    caml_register_global_root(&preconn);
+
+    /* Command-line processing */
+    f = caml_named_value("unisonInit0");
+    value clprofile = Callback_checkexn(*f, Val_unit);
+
+    /* Set up the first window the user will see */
+    if (Is_block(clprofile)) {
+      /* A profile name was given on the command line */
+      value caml_profile = Field(clprofile,0);
+      NSString *profile = [NSString stringWithCString:String_val(caml_profile)];
+      [updatesText setStringValue:[NSString stringWithFormat:@"Synchronizing profile '%@'",
+                                            profile]];
+      /* If invoked from terminal we need to bring the app to the front */
+      [NSApp activateIgnoringOtherApps:YES];
+
+      /* Start the connection */
+      [self connect:caml_profile];
+    }
+    else {
+      /* If invoked from terminal we need to bring the app to the front */
+      [NSApp activateIgnoringOtherApps:YES];
+      /* Bring up the dialog to choose a profile */
+      [self chooseProfiles];
+    }
+}
+
+/* from http://developer.apple.com/documentation/Security/Conceptual/authorization_concepts/index.html */
+#include <Security/Authorization.h>
+#include <Security/AuthorizationTags.h>
+- (IBAction)installCommandLineTool:(id)sender
+{
+  /* Install the command-line tool in /usr/bin/unison.
+     Requires root privilege, so we ask for it and pass the task off to /bin/sh. */
+
+  OSStatus myStatus;
+
+  AuthorizationFlags myFlags = kAuthorizationFlagDefaults;
+  AuthorizationRef myAuthorizationRef;
+  myStatus = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,
+				 myFlags, &myAuthorizationRef);
+  if (myStatus != errAuthorizationSuccess) return;
+
+  {
+    AuthorizationItem myItems = {kAuthorizationRightExecute, 0,
+				 NULL, 0};
+    AuthorizationRights myRights = {1, &myItems};
+    myFlags = kAuthorizationFlagDefaults |
+      kAuthorizationFlagInteractionAllowed |
+      kAuthorizationFlagPreAuthorize |
+      kAuthorizationFlagExtendRights;
+    myStatus =
+      AuthorizationCopyRights(myAuthorizationRef,&myRights,NULL,myFlags,NULL);
+  }
+  if (myStatus == errAuthorizationSuccess) {
+    NSBundle *bundle = [NSBundle mainBundle];
+    NSString *bundle_path = [bundle bundlePath];
+    NSString *exec_path =
+      [bundle_path stringByAppendingString:@"/Contents/MacOS/cltool"];
+    // Not sure why but this doesn't work:
+    // [bundle pathForResource:@"cltool" ofType:nil];
+
+    if (exec_path == nil) return;
+    char *args[] = { "-f", (char *)[exec_path cString], "/usr/bin/unison", NULL };
+
+    myFlags = kAuthorizationFlagDefaults;
+    myStatus = AuthorizationExecuteWithPrivileges
+      (myAuthorizationRef, "/bin/cp", myFlags, args,
+       NULL);
+  }
+  AuthorizationFree (myAuthorizationRef, kAuthorizationFlagDefaults);
+
+  /*
+  if (myStatus == errAuthorizationCanceled)
+    NSLog(@"The attempt was canceled\n");
+  else if (myStatus) NSLog(@"There was an authorization error: %ld\n", myStatus);
+  */
 }
 
 @end

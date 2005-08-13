@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/transfer.ml $ *)
-(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
+(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* rsync compression algorithm
@@ -52,16 +52,14 @@ type transmitter = transfer_instruction -> unit Lwt.t
 
 let reallyRead infd buffer pos length =
   let rec read pos length =
-    let n = Unix.read infd buffer pos length in
+    let n = input infd buffer pos length in
     if n = length || n = 0 then pos + n else
     read (pos + n) (length - n)
   in
   read pos length - pos
 
 let rec reallyWrite outfd buffer pos length =
-  let n = Unix.write outfd buffer pos length in
-  if n < length then reallyWrite outfd buffer (pos + n) (length + n)
-
+  output outfd buffer pos length
 
 (*************************************************************************)
 (*                            TOKEN QUEUE                                *)
@@ -295,8 +293,7 @@ struct
   let aboveRsyncThreshold sz = sz >= blockSizeFs
 
   (* The type of the info that will be sent to the source host *)
-  type rsync_block_info =
-      { blockSize : int; signatures : (Checksum.t * Digest.t) list }
+  type rsync_block_info = (Checksum.t * Digest.t) list
 
 
   (*** PREPROCESS ***)
@@ -308,7 +305,7 @@ struct
      'blockSize') of the input stream (pointed by 'infd').
      The procedure uses a buffer of size 'bufferSize' to load the input,
      and eventually handles the buffer update. *)
-  let blockIter infd blockSize f arg maxCount =
+  let blockIter infd f arg maxCount =
     let bufferSize = 8192 + blockSize in
     let buffer = String.create bufferSize in
     let rec iter count arg offset length =
@@ -321,7 +318,7 @@ struct
           String.blit buffer offset buffer 0 chunkSize;
           iter count arg 0 chunkSize
         end else begin
-          let l = Unix.read infd buffer length (bufferSize - length) in
+          let l = input infd buffer length (bufferSize - length) in
           if l = 0 then
             arg
           else
@@ -330,6 +327,16 @@ struct
       end
     in
     iter 0 arg 0 0
+
+  let rec rev_split_rec accu1 accu2 n l =
+    if n = 100000 then
+      rev_split_rec (accu2 :: accu1) [] 0 l
+    else
+      match l with
+        []     -> accu2 :: accu1
+      | x :: r -> rev_split_rec accu1 (x :: accu2) (n + 1) r
+
+  let rev_split l = rev_split_rec [] [] 0 l
 
   (* Given a block size, get blocks from the old file and compute a
      checksum and a fingerprint for each one. *)
@@ -344,14 +351,14 @@ struct
     in
     (* Make sure we are at the beginning of the file
        (important for AppleDouble files *)
-    ignore (Unix.lseek infd 0 Unix.SEEK_SET);
+    LargeFile.seek_in infd 0L;
     (* Limit the number of block so that there is no overflow in
        encodeInt3 *)
-    let rev_bi = blockIter infd blockSize addBlock [] (256*256*256) in
-    let bi = Safelist.rev rev_bi in
+    let rev_bi = blockIter infd addBlock [] (256*256*256) in
+    let bi = rev_split rev_bi in
     debugLog (fun() -> Util.msg "%d blocks\n" (Safelist.length bi));
     Trace.showTimer timer;
-    { blockSize = blockSize; signatures = bi }
+    bi
 
 
   (*** DECOMPRESSION ***)
@@ -374,8 +381,7 @@ struct
         reallyWrite outfd decomprBuf 0 length
     in
     let copyBlocks n k =
-      ignore
-        (Unix.LargeFile.lseek infd (Int64.mul n blockSize64) Unix.SEEK_SET);
+      LargeFile.seek_in infd (Int64.mul n blockSize64);
       let length = k * blockSize in
       copy length;
       progress := !progress + length
@@ -421,6 +427,11 @@ struct
 
   let hash checksum = checksum
 
+  let rec sigLength sigs =
+    match sigs with
+      []     -> 0
+    | x :: r -> Safelist.length x + sigLength r
+
   (* Compute the hash table length as a function of the number of blocks *)
   let hashTableLength signatures =
     let rec upperPowerOfTwo n n2 =
@@ -429,19 +440,24 @@ struct
       else
         upperPowerOfTwo n (2 * n2)
     in
-    2 * (upperPowerOfTwo (Safelist.length signatures) 32)
+    2 * (upperPowerOfTwo (sigLength signatures) 32)
 
   (* Hash the block signatures into the hash table *)
   let hashSig hashTableLength signatures =
-    let rec addList hashTable k = function
-      | [] -> hashTable
-      | (cs, fp) :: r ->
+    let hashTable = Array.make hashTableLength [] in
+    let rec addList k l l' =
+      match l, l' with
+        [], [] ->
+          ()
+      | [], r :: r' ->
+          addList k r r'
+      | ((cs, fp) :: r), _ ->
           let h = (hash cs) land (hashTableLength - 1) in
           hashTable.(h) <- (k, cs, fp)::(hashTable.(h));
-          addList hashTable (k + 1) r
+          addList (k + 1) r l'
     in
-    let hashTable = Array.make hashTableLength [] in
-    addList hashTable 0 signatures
+    addList 0 [] signatures;
+    hashTable
 
   (* Given a key, retrieve the corresponding entry in the table *)
   let findEntry hashTable hashTableLength checksum :
@@ -506,9 +522,7 @@ struct
   let comprBufSizeFS = Uutil.Filesize.ofInt 8192
 
   (* Compress the file using the algorithm described in the header *)
-  let rsyncCompress
-      { blockSize = blockSize; signatures = sigs }
-      infd srcLength showProgress transmit =
+  let rsyncCompress sigs infd srcLength showProgress transmit =
     debug (fun() -> Util.msg "compressing\n");
     debugLog (fun() -> Util.msg
         "compression buffer size = %d bytes\n" comprBufSize);

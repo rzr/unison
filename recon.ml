@@ -30,6 +30,10 @@ let setDirection ri dir force =
             d := Replica1ToReplica2
           else
             d := Replica2ToReplica1
+        end else if s1=`Deleted && dir=`Newer then begin
+          d := Replica2ToReplica1
+        end else if s2=`Deleted && dir=`Newer then begin
+          d := Replica1ToReplica2
         end
   | _ ->
       ()
@@ -113,7 +117,7 @@ let overrideReconcilerChoices ris =
   let (root,force) = lookupPreferredRoot() in
   if root<>"" then begin
     let dir = root2direction root in
-    List.iter (fun ri -> setDirection ri dir force) ris
+    Safelist.iter (fun ri -> setDirection ri dir force) ris
   end
 
 (* Look up the preferred root and verify that it is OK (this is called at    *)
@@ -137,8 +141,8 @@ let rec checkForError ui =
       raise (UpdateError err)
   | Updates (uc, _) ->
       match uc with
-        Dir (_, children, _) ->
-          List.iter (fun (_, uiSub) -> checkForError uiSub) children
+        Dir (_, children, _, _) ->
+          Safelist.iter (fun (_, uiSub) -> checkForError uiSub) children
       | Absent | File _ | Symlink _ ->
           ()
 
@@ -175,17 +179,17 @@ let update2replicaContent (conflict: bool) ui ucNew oldType:
       (`SYMLINK, `Created, Props.dummy, ui)
   | Symlink l ->
       (`SYMLINK, `Modified, Props.dummy, ui)
-  | Dir (desc, _, _) when oldType <> `DIRECTORY ->
+  | Dir (desc, _, _, _) when oldType <> `DIRECTORY ->
       (`DIRECTORY, `Created, desc, ui)
-  | Dir (desc, _, PropsUpdated) ->
+  | Dir (desc, _, PropsUpdated, _) ->
       (`DIRECTORY, `PropsChanged, desc, ui)
-  | Dir (desc, _, PropsSame) when conflict ->
+  | Dir (desc, _, PropsSame, _) when conflict ->
       (* Special case: the directory contents has been modified and the      *)
       (* directory is in conflict.  (We don't want to display a conflict     *)
       (* between an unchanged directory and a file, for instance: this would *)
       (* be rather puzzling to the user)                                     *)
       (`DIRECTORY, `Modified, desc, ui)
-  | Dir (desc, _, PropsSame) ->
+  | Dir (desc, _, PropsSame, _) ->
       (`DIRECTORY, `Unchanged, desc, ui)
 
 let oldType (prev: Common.prevState): Fileinfo.typ =
@@ -228,7 +232,8 @@ let rec reconcileNoConflict ui whatIsUpdated
   | NoUpdates -> result
   | Error err ->
       Tree.add result (Problem err)
-  | Updates (Dir (desc, children, permchg), Previous(`DIRECTORY, _, _, _)) ->
+  | Updates (Dir (desc, children, permchg, _),
+             Previous(`DIRECTORY, _, _, _)) ->
       let r =
         if permchg = PropsSame then result else Tree.add result (different ())
       in
@@ -317,15 +322,15 @@ let rec reconcile path ui1 ui2 counter equals unequals =
       (equals, reconcileNoConflict ui1 Rep1Updated unequals)
   | (Updates (Absent, _), Updates (Absent, _)) ->
       (add_equal counter equals (Absent, Absent), unequals)
-  | (Updates (Dir (desc1, children1, propsChanged1) as uc1, prevState1),
-     Updates (Dir (desc2, children2, propsChanged2) as uc2, prevState2)) ->
+  | (Updates (Dir (desc1, children1, propsChanged1, _) as uc1, prevState1),
+     Updates (Dir (desc2, children2, propsChanged2, _) as uc2, prevState2)) ->
        (* See if the directory itself should have a reconItem *)
        let dirResult =
          if propsChanged1 = PropsSame && propsChanged2 = PropsSame then
            (equals, unequals)
          else if Props.similar desc1 desc2 then
-           let uc1 = Dir (desc1, [], PropsSame) in
-           let uc2 = Dir (desc2, [], PropsSame) in
+           let uc1 = Dir (desc1, [], PropsSame, false) in
+           let uc2 = Dir (desc2, [], PropsSame, false) in
            (add_equal counter equals (uc1, uc2), unequals)
          else
            let action =
@@ -397,25 +402,36 @@ let rec leavePath p t =
     None          -> t
   | Some (nm, p') -> leavePath p' (Tree.leave t)
 
+(* A path is dangerous if one replica has been emptied but not the other *)
+let dangerousPath u1 u2 =
+  let emptied u =
+    match u with
+      Updates (Absent, _)                 -> true
+    | Updates (Dir (_, _, _, emptied), _) -> emptied
+    | _                                   -> false
+  in
+  emptied u1 <> emptied u2
+
 (* The second component of the return value is true if there is at least one *)
 (* file that is updated in the same way on both roots                        *)
 let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
-    : Common.reconItem list * bool =
+    : Common.reconItem list * bool * Path.t list =
   let counter = ref 0 in
   let archiveUpdated = ref false in
-  let (equals, unequals) =
+  let (equals, unequals, dangerous) =
     Safelist.fold_left
-      (fun (equals, unequals) (path,updatesList) ->
+      (fun (equals, unequals, dangerous) (path,updatesList) ->
         match updatesList with
           [ui1; ui2] ->
             let (equals, unequals) =
               reconcile path ui1 ui2 (counter, archiveUpdated)
                 (enterPath path equals) (enterPath path unequals)
             in
-            (leavePath path equals, leavePath path unequals)
+            (leavePath path equals, leavePath path unequals,
+             if dangerousPath ui1 ui2 then path :: dangerous else dangerous)
         | _ ->
             assert false)
-      (Tree.start, Tree.start) pathUpdatesList in
+      (Tree.start, Tree.start, []) pathUpdatesList in
   let unequals = Tree.finish unequals in
   debug (fun() -> Util.msg "reconcile: %d results\n" (Tree.size unequals));
   let equals = Tree.finish equals in
@@ -424,10 +440,10 @@ let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
   if !archiveUpdated then Update.commitUpdates ();
   let result = Tree.flatten unequals Path.empty Path.child [] in
   let unsorted =
-    List.map (fun (p, rplc) -> {path = p; replicas = rplc}) result in
+    Safelist.map (fun (p, rplc) -> {path = p; replicas = rplc}) result in
   let sorted = Sortri.sortReconItems unsorted in
   overrideReconcilerChoices sorted;
-  (sorted, not (Tree.is_empty equals))
+  (sorted, not (Tree.is_empty equals), dangerous)
 
 (* This is the main function: it takes a list of updateItem lists and,       *)
 (* according to the roots and paths of synchronization, builds the           *)

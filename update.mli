@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/update.mli $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I2: Last modified by tjim on Tue, 14 Sep 2004 11:51:02 -0400 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 module NameMap : Map.S with type key = Name.t
@@ -89,3 +89,7 @@ val fastcheck : string Prefs.t
 
 (* Print the archive to the current formatter (see Format) *)
 val showArchive: archive -> unit
+
+(* Internal prefs, needed to know whether to do filenames checks *)
+val someHostIsRunningWindows : bool Prefs.t
+val allHostsAreRunningWindows : bool Prefs.t
