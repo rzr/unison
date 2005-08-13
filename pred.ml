@@ -10,7 +10,7 @@ let debug = Util.debug "pred"
 
 type t =
   { pref: string list Prefs.t;
-    name: string;
+    name: string;                  (* XXX better to get it from Prefs! *)
     mutable default: string list;
     mutable last_pref : string list;
     mutable last_def : string list;
@@ -86,6 +86,8 @@ let create name fulldoc =
 let addDefaultPatterns p pats =
   p.default <- Safelist.append pats p.default
 
+let alias p n = Prefs.alias p.pref n
+
 let recompile mode p =
   let pref = Prefs.read p.pref in
   let compiledList = Safelist.map compile_pattern (Safelist.append p.default pref) in
@@ -125,7 +127,7 @@ let extern p = Prefs.read p.pref
 
 let test p s =
   recompile_if_needed p;
-  let res = Rx.match_string p.compiled s in
+  let res = Rx.match_string p.compiled (Case.normalize s) in
   debug (fun() -> Util.msg "%s '%s' = %b\n" p.name s res);
   res
 

@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/transfer.mli $ *)
-(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (*
@@ -49,14 +49,14 @@ type transmitter = transfer_instruction -> unit Lwt.t
 
 (* Send the whole source file encoded in transfer instructions *)
 val send :
-    Unix.file_descr        (* source file descriptor *)
+    in_channel             (* source file descriptor *)
  -> Uutil.Filesize.t       (* source file length *)
  -> (int -> unit)          (* progress report *)
  -> transmitter            (* transfer instruction transmitter *)
  -> unit Lwt.t
 
 val receive :
-    Unix.file_descr        (* destination file descriptor *)
+    out_channel            (* destination file descriptor *)
  -> (int -> unit)          (* progress report *)
  -> transfer_instruction   (* transfer instruction received *)
  -> bool                   (* Whether we have reach the end of the file *)
@@ -68,7 +68,7 @@ val receive :
 
 module Rsync :
   sig
-    
+
     (*** DESTINATION HOST ***)
 
     (* The rsync compression can only be activated when the file size is
@@ -77,16 +77,16 @@ module Rsync :
 
     (* Built from the old file by the destination computer *)
     type rsync_block_info
-	
+
     (* Compute block informations from the old file *)
-    val rsyncPreprocess : 
-	   Unix.file_descr    (* old file descriptor *) 
-        -> rsync_block_info
+    val rsyncPreprocess :
+	   in_channel            (* old file descriptor *)
+        -> rsync_block_info list
 
     (* Interpret a transfer instruction *)
     val rsyncDecompress :
-           Unix.file_descr       (* old file descriptor *)
-	-> Unix.file_descr       (* output file descriptor *)
+           in_channel            (* old file descriptor *)
+	-> out_channel           (* output file descriptor *)
         -> (int -> unit)         (* progress report *)
 	-> transfer_instruction  (* transfer instruction received *)
 	-> bool
@@ -96,8 +96,9 @@ module Rsync :
     (* Using block informations, parse the new file and send transfer
        instructions accordingly *)
     val rsyncCompress :
-	   rsync_block_info   (* block info received from the destination *) 
-        -> Unix.file_descr    (* new file descriptor *)
+	   rsync_block_info list
+                              (* block info received from the destination *)
+        -> in_channel         (* new file descriptor *)
         -> Uutil.Filesize.t   (* source file length *)
         -> (int -> unit)      (* progress report *)
 	-> transmitter        (* transfer instruction transmitter *)

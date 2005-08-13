@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/update.ml $ *)
-(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
+(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
@@ -19,7 +19,9 @@ let debugbackups = Trace.debug "backup"
    archive changes: old archives will then automatically be discarded.  (We
    do not use the unison version number for this because usually the archive
    representation does not change between unison versions.) *)
-let archiveFormat = 21
+(*FIX: change the approximate function in props.ml next time the
+  format is modified (see file props.ml for the new function) *)
+let archiveFormat = 22
 
 module NameMap = MyMap.Make (Name)
 
@@ -111,7 +113,7 @@ let root2stringOrAlias (root: Common.root): string =
 let storeRootsName () =
   let n =
     String.concat ", "
-      (List.sort compare
+      (Safelist.sort compare
          (Safelist.map root2stringOrAlias
             (Safelist.map
                (function
@@ -146,7 +148,7 @@ let showArchiveName =
      ^ "of the roots, in the same form as is expected by the {\\tt rootalias}"
      ^ "preference.")
 
-let _ = Prefs.alias "showarchive" "showArchiveName"
+let _ = Prefs.alias showArchiveName "showArchiveName"
 
 let archiveHash fspath =
   (* Conjoin the canonical name of the current host and the canonical
@@ -347,13 +349,14 @@ let postCommitArchiveLocal (fspath,())
      let fto = Fspath.toString (Os.fileInUnisonDir toname) in
      debug (fun() -> Util.msg "Copying archive %s to %s\n" ffrom fto);
      Util.convertUnixErrorsToFatal "copying archive" (fun () ->
-       let outFd = Unix.openfile fto
-         [Unix.O_RDWR;Unix.O_CREAT;Unix.O_TRUNC] 0o600 in
+       let outFd =
+         open_out_gen
+           [Open_wronly; Open_creat; Open_trunc; Open_binary] 0o600 fto in
        Unix.chmod fto 0o600; (* In case the file already existed *)
-       let inFd = Unix.openfile ffrom [Unix.O_RDONLY] 0o444 in
+       let inFd = open_in_gen [Open_rdonly; Open_binary] 0o444 ffrom in
        Uutil.readWrite inFd outFd (fun _ -> ());
-       Unix.close inFd;
-       Unix.close outFd;
+       close_in inFd;
+       close_out outFd;
        let arcFspath = Os.fileInUnisonDir toname in
        let info = Fileinfo.get false arcFspath Path.empty in
        Hashtbl.replace archiveInfoCache thisRoot info))
@@ -461,6 +464,10 @@ let loadArchiveOnRoot: Common.root -> bool -> (int * string) option Lwt.t =
               perform archive recovery.  So, the optimistic loading
               fails. *)
            Sys.file_exists (Fspath.toString (Os.fileInUnisonDir newArcName))
+             ||
+           let (lockFilename, _) = archiveName fspath Lock in
+           let lockFile = Fspath.toString (Os.fileInUnisonDir lockFilename) in
+           Lock.is_locked lockFile
          then
            Lwt.return None
          else
@@ -513,14 +520,19 @@ let loadArchives (optimistic: bool) : bool Lwt.t =
      >>= (fun checksums ->
   let identicals = archivesIdentical checksums in
   if not (optimistic || identicals) then
-    raise (Util.Fatal (
-        "Internal error: On-disk archives are not identical.\n\n"
-      ^ "If you get this message repeatedly, please \n "
-      ^ "  a) notify unison-help@cis.upenn.edu\n"
-      ^ "  b) move the archive files (~/.unison/arNNNNN) on each "
-      ^ "     machine to some other directory (in case they may be\n"
-      ^ "     useful for debugging)\n"
-      ^ "  c) run unison again to synchronize from scratch."));
+    raise (Util.Fatal(
+	"Internal error: On-disk archives are not identical.\n"
+      ^ "\n"
+      ^ "If you get this message repeatedly, please:\n"
+      ^ "  a) Notify unison-help@cis.upenn.edu.\n"
+      ^ "  b) Move the archive files on each machine to some other directory\n"
+      ^ "     (in case they may be useful for debugging).\n"
+      ^ "     The archive files on this machine are in the directory\n"
+      ^ (Printf.sprintf "       %s\n" (Fspath.toString Os.unisonDir))
+      ^ "     and have names of the form\n"
+      ^ "       arXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n"
+      ^ "     where the X's are a hexidecimal number .\n"
+      ^ "  c) Run unison again to synchronize from scratch.\n"));
   if Prefs.read dumpArchives then 
     Globals.allRootsMap (fun r -> dumpArchiveOnRoot r ())
      >>= (fun _ -> Lwt.return identicals)
@@ -647,7 +659,7 @@ let lockArchives () =
   assert (!locked = false);
   Globals.allRootsMap
     (fun r -> lockArchiveOnRoot r ()) >>= (fun result ->
-  if List.exists (fun x -> x <> None) result
+  if Safelist.exists (fun x -> x <> None) result
   && not (Prefs.read ignorelocks) then begin
     Globals.allRootsIter2
       (fun r st ->
@@ -909,13 +921,21 @@ let childrenOf fspath path
   let absolutePath = Fspath.concat fspath path in
   try
     let directory = Fspath.opendir absolutePath in
-    let result =
+    begin try
       Util.convertUnixErrorsToTransient
         "scanning directory"
-        (fun () -> loop [] directory) in
-    Unix.closedir directory;
-    result
-  with Unix.Unix_error _ -> []
+          (fun () ->
+             let result = loop [] directory in
+             Unix.closedir directory;
+             result)
+    with Util.Transient _ as e ->
+      begin try
+        Unix.closedir directory
+      with Unix.Unix_error _ -> () end;
+      raise e
+    end
+  with Unix.Unix_error _ ->
+    []
 
 let isDir fspath path =
   let fullFspath = Fspath.concat fspath path in
@@ -978,18 +998,18 @@ let findAllBackups filePath =
   let parentPath = Path.parent filePath in
   let path = Path.toString filePath in
   let files =
-    List.map
+    Safelist.map
       (fun a ->
          Path.toString (Path.child parentPath (Name.fromString a)))
       (childrenOf (backupDirectory()) parentPath)
   in
-  let backups = List.filter (fun p -> fileNameOfBackup p = path) files in
+  let backups = Safelist.filter (fun p -> fileNameOfBackup p = path) files in
   let newL =
-    List.map
+    Safelist.map
       (fun a -> let (x,y) = incrNameOfBackup a in (x, a, y))
       backups
   in
-  List.sort (fun (a, _, _) (b, _, _) -> - (compare a b)) newL
+  Safelist.sort (fun (a, _, _) (b, _, _) -> - (compare a b)) newL
 
 
 (*** Main backup functions ***)
@@ -999,7 +1019,7 @@ let incrVersionsOfBackups filePath =
   debugbackups (fun () ->
            (Util.msg "incrVersionOfBackups for %s...\n"
               (Fspath.concatToString (backupDirectory()) filePath)));
-  List.iter
+  Safelist.iter
     (fun (curVersion, curPath, newPath) ->
        if curVersion + 1 < Prefs.read Os.maxbackups then begin
          debugbackups (fun () ->
@@ -1352,14 +1372,23 @@ let checkContentsChange
 
    Note that case conflicts and illegal filenames can only occur under Unix,
    when syncing with a Windows file system. *)
+let someHostIsRunningWindows =
+  Prefs.createBool "someHostIsRunningWindows" false "*" ""
+let allHostsAreRunningWindows =
+  Prefs.createBool "allHostsAreRunningWindows" false "*" ""
 let badWindowsFilenameRx =
   (* FIX: This should catch all device names (like aux, con, ...).  I don't
      know what all the possible device names are. *)
-  Rx.case_insensitive (Rx.rx "aux|con|lpt1|prn|(.*[\000-\031\\/<>:\"|].*)")
+  Rx.case_insensitive
+    (Rx.rx "\\.*|aux|con|lpt1|prn|(.*[\000-\031\\/<>:\"|].*)")
+
 let isBadWindowsFilename s =
   (* FIX: should also check for a max filename length, not sure how much *)
-  Case.insensitive () &&
   Rx.match_string badWindowsFilenameRx (Name.toString s)
+let badFilename s =
+  (* Don't check unless we are syncing with Windows *)
+  Prefs.read someHostIsRunningWindows &&
+  isBadWindowsFilename s
 
 let getChildren fspath path =
   let children =
@@ -1375,7 +1404,7 @@ let getChildren fspath path =
   let childStatus nm count =
     if count > 1 then
       `Dup
-    else if isBadWindowsFilename nm then
+    else if badFilename nm then
       `Bad
     else
       `Ok
@@ -1399,10 +1428,11 @@ let getChildren fspath path =
 (* from a list of (name, archive) pairs {usually the items in the same
    directory}, build two lists: the first a named list of the _old_
    archives, with their timestamps updated for the files whose contents
-   remain unchanged, the second a named list of updates *)
+   remain unchanged, the second a named list of updates; also returns
+   whether the directory is now empty *)
 let rec buildUpdateChildren
     fspath path (archChi: archive NameMap.t) fastCheck
-    : archive NameMap.t option * (Name.t * Common.updateItem) list
+    : archive NameMap.t option * (Name.t * Common.updateItem) list * bool
     =
   let t = Trace.startTimerQuietly
             (Printf.sprintf "checking %s" (Path.toString path)) in
@@ -1411,6 +1441,7 @@ let rec buildUpdateChildren
     not (Pred.test immutablenot (Path.toString path))
   in
   let curChildren = ref (getChildren fspath path) in
+  let emptied = not (NameMap.is_empty archChi) && !curChildren = [] in
   let updates = ref [] in
   let archUpdated = ref false in
   let handleChild nm archive status =
@@ -1452,7 +1483,7 @@ let rec buildUpdateChildren
           archive
       | `Bad ->
           let uiChild =
-            Error ("The name of this Unix file is not allowed in Windows/OSX ("
+            Error ("The name of this Unix file is not allowed in Windows ("
                    ^ Path.toString path' ^ ")")
           in
           updates := (nm, uiChild) :: !updates;
@@ -1479,14 +1510,15 @@ let rec buildUpdateChildren
         end
   in
   let newChi = NameMap.mapii matchChild archChi in
-  List.iter
+  Safelist.iter
     (fun (nm, st) ->
        let arch = handleChild nm NoArchive st in
        assert (arch = NoArchive))
     !curChildren;
   Trace.showTimer t;
   (* The Recon module relies on the updates to be sorted *)
-  ((if !archUpdated then Some newChi else None), List.rev !updates)
+  ((if !archUpdated then Some newChi else None),
+   Safelist.rev !updates, emptied)
 
 and buildUpdateRec archive currfspath path fastCheck =
   try
@@ -1541,20 +1573,20 @@ and buildUpdateRec archive currfspath path fastCheck =
             (PropsSame, archDesc)
           else
             (PropsUpdated, info.Fileinfo.desc) in
-        let (newChildren, childUpdates) =
+        let (newChildren, childUpdates, emptied) =
           buildUpdateChildren currfspath path prevChildren fastCheck in
         (begin match newChildren with
            Some ch -> Some (ArchiveDir (archDesc, ch))
          | None    -> None
          end,
          if childUpdates <> [] || permchange = PropsUpdated then
-           Updates (Dir (desc, childUpdates, permchange),
+           Updates (Dir (desc, childUpdates, permchange, emptied),
                     oldInfoOf archive)
          else
            NoUpdates)
     | (`DIRECTORY, _) ->
         debug (fun() -> Util.msg "  buildUpdate -> New directory\n");
-        let (newChildren, childUpdates) =
+        let (newChildren, childUpdates, _) =
           buildUpdateChildren currfspath path NameMap.empty fastCheck in
         (* BCPFIX: This is a bit of a hack and does not really work, since
            it means that we calculate the size of a directory just once and
@@ -1562,11 +1594,11 @@ and buildUpdateRec archive currfspath path fastCheck =
            really be recalculated when things change. *)
         let newdesc =
            Props.setLength info.Fileinfo.desc
-             (List.fold_left
+             (Safelist.fold_left
                (fun s (_,ui) -> Uutil.Filesize.add s (uiLength ui))
                Uutil.Filesize.zero childUpdates) in
         (None,
-         Updates (Dir (newdesc, childUpdates, PropsUpdated),
+         Updates (Dir (newdesc, childUpdates, PropsUpdated, false),
                   oldInfoOf archive))
   with
     Util.Transient(s) -> None, Error(s)
@@ -1578,7 +1610,6 @@ and buildUpdateRec archive currfspath path fastCheck =
 let rec buildUpdate archive fspath fullpath here path =
   match Path.deconstruct path with
     None ->
-      Os.checkThatParentPathIsADir fspath here;
       showStatus path;
       let (arch, ui) =
         buildUpdateRec archive fspath here (useFastChecking()) in
@@ -1588,12 +1619,23 @@ let rec buildUpdate archive fspath fullpath here path =
        end,
        ui)
   | Some(name, path') ->
+      if not (isDir fspath here) then
+        (archive,
+         if Path.isEmpty here then
+           Error (Printf.sprintf
+                    "path %s is not valid because the root of one of the replicas is not a directory"
+                    (Path.toString fullpath))
+         else
+           Error (Printf.sprintf
+                    "path %s is not valid because %s is not a directory in one of the replicas"
+                    (Path.toString fullpath) (Path.toString here)))
+      else
       let children = getChildren fspath here in
       let (name', status) =
         try
-          List.find (fun (name', _) -> Name.eq name name') children
+          Safelist.find (fun (name', _) -> Name.eq name name') children
         with Not_found ->
-          (name, if isBadWindowsFilename name then `Bad else `Ok)
+          (name, if badFilename name then `Bad else `Ok)
       in
       match status with
         `Bad ->
@@ -1625,7 +1667,7 @@ let rec buildUpdate archive fspath fullpath here path =
              Note that we may also put NoArchive deep inside an
              archive...
           *)
-          (ArchiveDir (desc, NameMap.add name' child otherChildren),
+          (ArchiveDir (desc, NameMap.add name' arch otherChildren),
            updates)
 
 (* for the given path, find the archive and compute the list of update
@@ -1800,7 +1842,7 @@ let rec updateArchiveRec ui archive =
           ArchiveFile (desc, dig, stamp, ress)
       | Symlink l ->
           ArchiveSymlink l
-      | Dir (desc, children, _) ->
+      | Dir (desc, children, _, _) ->
           begin match archive with
             ArchiveDir (_, arcCh) ->
               let ch =
@@ -1983,7 +2025,7 @@ let doUpdateProps arch propOpt ui =
         end
     | Updates (File (desc, ContentsUpdated (dig, stamp, ress)), _) ->
         ArchiveFile(desc, dig, stamp, ress)
-    | Updates (Dir (desc, _, _), _) ->
+    | Updates (Dir (desc, _, _, _), _) ->
         begin match arch with
           ArchiveDir (_, children) -> ArchiveDir (desc, children)
         | _                        -> ArchiveDir (desc, NameMap.empty)

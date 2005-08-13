@@ -37,6 +37,7 @@
         || [menuItem action] == @selector(forceNewer:)
         || [menuItem action] == @selector(forceOlder:)
         || [menuItem action] == @selector(revert:)
+        || [menuItem action] == @selector(merge:)
         || [menuItem action] == @selector(ignorePath:)
         || [menuItem action] == @selector(ignoreExt:)
         || [menuItem action] == @selector(ignoreName:))
@@ -89,10 +90,12 @@
         [[reconItems objectAtIndex:i] doAction:c];
     }
     if (numSelected>0) {
-        if (numSelected == 1 && [self numberOfRows] > i+1)
+      if (numSelected == 1 && [self numberOfRows] > i+1) {
             // Move to next row, unless already at last row, or if more than one row selected
             [self selectRow:i+1 byExtendingSelection:NO];
-        [self reloadData];
+            [self scrollRowToVisible:i+1];
+      }
+      else [self reloadData];
     }
 }
 
@@ -143,6 +146,11 @@
         [[reconItems objectAtIndex:i] revertDirection];
     }
     [self reloadData];
+}
+
+- (IBAction)merge:(id)sender
+{
+    [self doAction:'m'];
 }
 
 /* There are menu commands for these, but we add some shortcuts so you don't

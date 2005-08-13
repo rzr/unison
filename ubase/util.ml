@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/ubase/util.ml $ *)
-(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
+(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (*****************************************************************************)
@@ -206,6 +206,14 @@ let ignoreTransientErrors thunk =
   with
     Transient(s) -> ()
 
+let printException e =
+  try
+    raise e
+  with
+    Transient s -> s
+  | Fatal s -> s
+  | e -> Printexc.to_string e
+
 (* Safe version of Unix getenv -- raises a comprehensible error message if
    called with an env variable that doesn't exist                            *)
 let safeGetenv var =
@@ -244,14 +252,28 @@ let time () =
   convertUnixErrorsToTransient "time" Unix.time
 
 let time2string timef =
-  let time = localtime timef in
-  Printf.sprintf
-    "%2d:%.2d on %2d %3s, %4d"
-    time.Unix.tm_hour
-    time.Unix.tm_min
-    time.Unix.tm_mday
-    (monthname time.Unix.tm_mon)
-    (time.Unix.tm_year + 1900)
+  try
+    let time = localtime timef in
+(* Old-style:
+    Printf.sprintf
+      "%2d:%.2d:%.2d on %2d %3s, %4d"
+      time.Unix.tm_hour
+      time.Unix.tm_min
+      time.Unix.tm_sec
+      time.Unix.tm_mday
+      (monthname time.Unix.tm_mon)
+      (time.Unix.tm_year + 1900)
+*)
+    Printf.sprintf
+      "%4d-%02d-%02d at %2d:%.2d:%.2d"
+      (time.Unix.tm_year + 1900)
+      (time.Unix.tm_mon + 1)
+      time.Unix.tm_mday
+      time.Unix.tm_hour
+      time.Unix.tm_min
+      time.Unix.tm_sec
+  with Transient _ ->
+    "(invalid date)"
 
 let percentageOfTotal current total =
   (int_of_float ((float current) *. 100.0 /. (float total)))
@@ -272,8 +294,8 @@ let option2string (prt: 'a -> string) = function
 
 let truncateString string length =
   let actualLength = String.length string in
-  if actualLength <= length then
-    string^(String.make (length - actualLength) ' ')
+  if actualLength <= length then string^(String.make (length - actualLength) ' ')
+  else if actualLength < 3 then string
   else (String.sub string 0 (length - 3))^ "..."
 
 let findsubstring s1 s2 =
@@ -293,6 +315,11 @@ let rec replacesubstring s fromstring tostring =
       let afterpos = i + (String.length fromstring) in
       let after = String.sub s afterpos ((String.length s) - afterpos) in
       before ^ tostring ^ (replacesubstring after fromstring tostring)
+
+let replacesubstrings s pairs =
+  Safelist.fold_left 
+    (fun s' (froms,tos) -> replacesubstring s' froms tos)
+    s pairs
 
 let startswith s1 s2 =
   let l1 = String.length s1 in
@@ -355,19 +382,20 @@ let padto n s = s ^ (String.make (max 0 (n - String.length s)) ' ')
 (*****************************************************************************)
 
 let fileInHomeDir n =
-  match osType with
-    `Win32 ->
-      let dirString =
-        try Unix.getenv "USERPROFILE" (* Windows NT/2K *)
-        with Not_found ->
-        try Unix.getenv "HOME" (* Windows 9x with Cygwin HOME set *)
-        with Not_found ->
-        try Unix.getenv "UNISON" (* Use UNISON dir if none of
-                                    the above are set *)
-        with Not_found -> "c:/" (* Default *) in
-      Filename.concat dirString n
-  | `Unix ->
-      Filename.concat (safeGetenv "HOME") n
+  if (osType = `Unix) || isCygwin then
+    Filename.concat (safeGetenv "HOME") n
+  else if osType = `Win32 then
+    let dirString =
+      try Unix.getenv "HOME" (* Windows 9x with Cygwin HOME set *)
+      with Not_found ->
+      try Unix.getenv "USERPROFILE" (* Windows NT/2K standard *)
+      with Not_found ->
+      try Unix.getenv "UNISON" (* Use UNISON dir if it is set *)
+      with Not_found ->
+      "c:/" (* Default *) in
+    Filename.concat dirString n
+  else
+    assert false (* osType can't be anything else *)
 
 (*****************************************************************************)
 (*           "Upcall" for building pathnames in the .unison dir              *)

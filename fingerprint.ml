@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/fingerprint.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 01 Sep 2004 07:35:22 -0400 $ *)
+(* $I2: Last modified by vouillon on Fri, 05 Nov 2004 10:12:27 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (* NOTE: IF YOU CHANGE TYPE "FINGERPRINT", THE ARCHIVE FORMAT CHANGES;       *)
@@ -22,17 +22,21 @@ let subfile path offset len =
   Util.convertUnixErrorsToTransient
     "digesting subfile"
     (fun () ->
-       let inch = open_in path in
-       LargeFile.seek_in inch offset;
+       let inch = open_in_bin path in
        begin try
+         LargeFile.seek_in inch offset;
          let res = Digest.channel inch (Uutil.Filesize.toInt len) in
          close_in inch;
          res
-       with End_of_file ->
-         close_in inch;
-         raise (Util.Transient
-                  (Format.sprintf
-                     "Error in digesting subfile '%s': truncated file" path))
+       with
+         End_of_file ->
+           close_in_noerr inch;
+           raise (Util.Transient
+                    (Format.sprintf
+                       "Error in digesting subfile '%s': truncated file" path))
+       | e ->
+           close_in_noerr inch;
+           raise e
        end)
 
 let int2hexa quartet =

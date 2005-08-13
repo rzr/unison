@@ -1,18 +1,16 @@
 (* $I1: Unison file synchronizer: src/uutil.ml $ *)
-(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
+(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 (*****************************************************************************)
 (*                      Unison name and version                              *)
 (*****************************************************************************)
 
-(* $Format: "let myName = \"$Project$\""$ *)
-let myName = "unison"
+let myName = ProjectInfo.myName
 
-let versionprefix = "2."
+let myVersion = ProjectInfo.myVersion
 
-(* $Format: "let myVersion = versionprefix ^ \"$ProjectVersion$\""$ *)
-let myVersion = versionprefix ^ "10.2"
+let myMajorVersion = ProjectInfo.myMajorVersion
 
 (*****************************************************************************)
 (*                             HASHING                                       *)
@@ -83,42 +81,46 @@ let showProgress i bytes ch =
 (*               Copy bytes from one file_desc to another                    *)
 (*****************************************************************************)
 
-let bufsize = 10000
+let bufsize = 16384
 let bufsizeFS = Filesize.ofInt bufsize
 let buf = String.create bufsize
 
 let readWrite source target notify =
+  let len = ref 0 in
   let rec read () =
-    let n = Unix.read source buf 0 bufsize in
-    if n>0 then begin
-      let rec write pos =
-        let w = Unix.write target buf pos (n-pos) in
-        notify w;
-        if (pos+w)<>n then write (pos+w)
-      in
-      write 0;
-      read()
-    end
+    let n = input source buf 0 bufsize in
+    if n > 0 then begin
+      output target buf 0 n;
+      len := !len + n;
+      if !len > 100 * 1024 then begin
+        notify !len;
+        len := 0
+      end;
+      read ()
+    end else if !len > 0 then
+      notify !len
   in
-    Util.convertUnixErrorsToTransient "readWrite"
-      read
+  Util.convertUnixErrorsToTransient "readWrite" read
 
 let readWriteBounded source target len notify =
+  let l = ref 0 in
   let rec read len =
     if len > Filesize.zero then begin
       let n =
-        Unix.read source buf 0
+        input source buf 0
           (if len > bufsizeFS then bufsize else Filesize.toInt len)
       in
       if n > 0 then begin
-        let rec write pos =
-          let w = Unix.write target buf pos (n - pos) in
-          notify w;
-          if (pos + w) <> n then write (pos + w)
-        in
-        write 0;
+        let w = output target buf 0 n in
+        l := !l + n;
+        if !l > 100 * 1024 then begin
+          notify !l;
+          l := 0
+        end;
         read (Filesize.sub len (Filesize.ofInt n))
-      end
-    end
+      end else if !l > 0 then
+        notify !l
+    end else if !l > 0 then
+      notify !l
   in
   Util.convertUnixErrorsToTransient "readWrite" (fun () -> read len)

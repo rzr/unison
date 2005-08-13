@@ -1,5 +1,5 @@
 (* $I1: Unison file synchronizer: src/uigtk.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
+(* $I2: Last modified by vouillon on Thu, 09 Sep 2004 08:43:03 -0400 $ *)
 (* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
 
 open Common
@@ -809,7 +809,7 @@ let getProfile () =
          if profile = default then selRow := !i;
          lst#set_row_data !i (profile, info);
          incr i)
-      (List.sort (fun (p, _) (p', _) -> compare p p') !profilesAndRoots);
+      (Safelist.sort (fun (p, _) (p', _) -> compare p p') !profilesAndRoots);
     let r = lst#rows in
     let p = if r < 2 then 0. else float !selRow /. float (r - 1) in
     lst#scroll_vertical `JUMP p;
@@ -1296,8 +1296,8 @@ let rec createToplevelWindow () =
   let mergeLogo = buildPixmaps Pixmaps.mergeLogo greenPixel in
   let mergeLogoBlack = buildPixmap (Pixmaps.mergeLogo blackPixel) in
 
-  let displayArrow i action =
-    let changedFromDefault = match !theState.(i).ri.replicas with
+  let displayArrow i j action =
+    let changedFromDefault = match !theState.(j).ri.replicas with
         Different(_,_,{contents=curr},default) -> curr<>default
       | _ -> false in
     let sel pixmaps =
@@ -1326,7 +1326,7 @@ let rec createToplevelWindow () =
     for i = Array.length !theState - 1 downto 0 do
       let (r1, action, r2, status, path) = columnsOf i in
       ignore (mainWindow#prepend [ r1; ""; r2; status; transcode path ]);
-      displayArrow 0 action
+      displayArrow 0 i action
     done;
     debug (fun()-> Util.msg "reset current to %s\n"
              (match savedCurrent with None->"None" | Some(i) -> string_of_int i));
@@ -1341,7 +1341,7 @@ let rec createToplevelWindow () =
     let (r1, action, r2, status, path) = columnsOf i in
     mainWindow#freeze ();
     mainWindow#set_cell ~text:r1     i 0;
-    displayArrow i action;
+    displayArrow i i action;
     mainWindow#set_cell ~text:r2     i 2;
     displayStatusIcon i status;
     mainWindow#set_cell ~text:(transcode path)   i 4;
@@ -1481,7 +1481,8 @@ let rec createToplevelWindow () =
     let reconcile updates =
       let t = Trace.startTimer "Reconciling" in
       Recon.reconcileAll updates in
-    let (reconItemList, thereAreEqualUpdates) = reconcile (findUpdates ()) in
+    let (reconItemList, thereAreEqualUpdates, dangerousPaths) =
+      reconcile (findUpdates ()) in
     Trace.showTimer t;
     if reconItemList = [] then
       if thereAreEqualUpdates then
@@ -1499,7 +1500,11 @@ let rec createToplevelWindow () =
     current := None;
     displayMain();
     grSet grGo (Array.length !theState > 0);
-    grSet grRestart true 
+    grSet grRestart true;
+    if dangerousPaths <> [] then begin
+      Prefs.set Globals.batch false;
+      Util.warn (Uicommon.dangerousPathMsg dangerousPaths)
+    end;
 in
 
   (*********************************************************************
@@ -1585,7 +1590,7 @@ in
       grSet grRestart false;
 
       Trace.status "Propagating changes";
-      Transport.logStartTime();
+      Transport.start ();
       let totalLength =
         Array.fold_left
           (fun l si -> Uutil.Filesize.add l (Common.riLength si.ri))
@@ -1606,7 +1611,7 @@ in
                   catch (fun () ->
                            Transport.transportItem
                              theSI.ri (Uutil.File.ofLine i)
-                             (fun title text -> Trace.status (Printf.sprintf "\n%s\n\n%s\n\n" title text))
+                             (fun title text -> Trace.status (Printf.sprintf "\n%s\n\n%s\n\n" title text); true)
                            >>= (fun () ->
                            return Util.Succeeded))
                         (fun e ->
@@ -1634,7 +1639,7 @@ in
       Lwt_unix.run
         (loop 0 [] Common.isDeletion >>= (fun actions ->
           Lwt_util.join actions));
-      Transport.logEndTime();
+      Transport.finish ();
       Trace.showTimer t;
       Trace.status "Updating synchronizer state";
       let t = Trace.startTimer "Updating synchronizer state" in
@@ -1760,6 +1765,7 @@ in
   actionBar#insert_space ();
   grAdd grDiff (actionBar#insert_button ~text:"Diff" ~callback:diffCmd ());
 
+(*
   let mergeCmd () =
     match !current with
       Some i ->
@@ -1787,7 +1793,7 @@ in
 
   actionBar#insert_space ();
   grAdd grDiff (actionBar#insert_button ~text:"Merge" ~callback:mergeCmd ());
-
+*)
   (*********************************************************************
     Keyboard commands
    *********************************************************************)
