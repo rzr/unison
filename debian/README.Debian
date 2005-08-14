@@ -48,7 +48,7 @@ future stable release of debian. The package unison will then
 hold the latest release of Unison ( ie 2.11.0 ).
 
 By this way, you should always be able to synchronise 
-stable/testing/unstable  system using unison ( the good version 
+stable/testing/unstable system using unison ( the good version 
 of unison ).
 
  -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon, 25 Apr 2005 23:06:44 +0200  

@@ -19,9 +19,11 @@ PRIORITY=20
 UNISON=unison-$(VERSION)
 UNISON_MAJ=UNISON-$(VERSION)
 UNISON_PACKAGE=unison$(PACKAGE_VERSION)
+UNISON_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_PACKAGE),unison-latest-stable)
 
 UNISON_GTK=unison-$(VERSION)-gtk
 UNISON_GTK_PACKAGE=$(UNISON_PACKAGE)-gtk
+UNISON_GTK_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_GTK_PACKAGE),unison-latest-stable-gtk)
 
 # End of variable to be replaced
 
@@ -35,10 +37,12 @@ RENAME += debian/unison.doc-base.in
 RENAME += debian/unison.docs.in
 RENAME += debian/unison.postinst.in
 RENAME += debian/unison.prerm.in
+RENAME += debian/unison.preinst.in
 RENAME += debian/unison-gtk.dirs.in
 RENAME += debian/unison-gtk.menu.in
 RENAME += debian/unison-gtk.postinst.in
 RENAME += debian/unison-gtk.prerm.in
+RENAME += debian/unison-gtk.preinst.in
 
 build: build-stamp
 build-stamp: patch-stamp
@@ -51,14 +55,16 @@ build-stamp: patch-stamp
 	  DST=$${DST/unison/$(UNISON_PACKAGE)}; \
 	  DST=$${DST%%.in}; \
 	  sed -e "\
-	    s/@VERSION@/$(VERSION)/g;                       \
-	    s/@PACKAGE_VERSION@/$(PACKAGE_VERSION)/g;       \
-	    s/@PRIORITY@/$(PRIORITY)/g;                     \
-	    s/@UNISON@/$(UNISON)/g;                         \
-	    s/@UNISON_MAJ@/$(UNISON_MAJ)/g;                 \
-	    s/@UNISON_PACKAGE@/$(UNISON_PACKAGE)/g;         \
-	    s/@UNISON_GTK@/$(UNISON_GTK)/g;                 \
-	    s/@UNISON_GTK_PACKAGE@/$(UNISON_GTK_PACKAGE)/g; \
+	    s/@VERSION@/$(VERSION)/g;                               \
+	    s/@PACKAGE_VERSION@/$(PACKAGE_VERSION)/g;               \
+	    s/@PRIORITY@/$(PRIORITY)/g;                             \
+	    s/@UNISON@/$(UNISON)/g;                                 \
+	    s/@UNISON_MAJ@/$(UNISON_MAJ)/g;                         \
+	    s/@UNISON_PACKAGE@/$(UNISON_PACKAGE)/g;                 \
+	    s/@UNISON_ALTERNATIVE@/$(UNISON_ALTERNATIVE)/g;         \
+	    s/@UNISON_GTK@/$(UNISON_GTK)/g;                         \
+	    s/@UNISON_GTK_PACKAGE@/$(UNISON_GTK_PACKAGE)/g;         \
+	    s/@UNISON_GTK_ALTERNATIVE@/$(UNISON_GTK_ALTERNATIVE)/g; \
 	    " $$i > \
 	  $$DST; \
 	done
@@ -106,6 +112,21 @@ install: build
 	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/share/doc/$(UNISON_GTK_PACKAGE)
 	ln -s $(UNISON).1.gz \
 	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/share/man/man1/$(UNISON_GTK).1.gz
+	# Creating symlink from binary to $(UNISON_ALTERNATIVE) and $(UNISON_GTK_ALTERNATIVE)
+	for i in \
+	  $(CURDIR)/debian/$(UNISON_PACKAGE)/usr/bin/$(UNISON_ALTERNATIVE) \
+	  $(CURDIR)/debian/$(UNISON_PACKAGE)/usr/share/man/man1/$(UNISON_ALTERNATIVE).1.gz \
+	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/bin/$(UNISON_GTK_ALTERNATIVE) \
+	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/share/man/man1/$(UNISON_GTK_ALTERNATIVE).1.gz \
+	  ; do \
+	  FILENAME=$${i##*/}; \
+	  FILENAME=$${FILENAME/$(UNISON_ALTERNATIVE)/$(UNISON)}; \
+	  FILENAME=$${FILENAME/$(UNISON_GTK_ALTERNATIVE)/$(UNISON_GTK)}; \
+	  if ! [ -e $$i ]; then \
+	    ln -s $$FILENAME \
+	      $$i; \
+	  fi \
+	done
 
 binary-indep: build install
 
