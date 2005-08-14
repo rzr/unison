@@ -122,7 +122,7 @@ install: build
 	  FILENAME=$${i##*/}; \
 	  FILENAME=$${FILENAME/$(UNISON_ALTERNATIVE)/$(UNISON)}; \
 	  FILENAME=$${FILENAME/$(UNISON_GTK_ALTERNATIVE)/$(UNISON_GTK)}; \
-	  if ! [ -e $$i ]; then \
+	  if ! [ -e $$i ] && ! [ -L $$i ]; then \
 	    ln -s $$FILENAME \
 	      $$i; \
 	  fi \
