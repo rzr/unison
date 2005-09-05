@@ -14,7 +14,7 @@ VERSION=$(shell dpkg-parsechangelog | awk "/Version: .*/ { gsub(\"Version: \",\"
 # PRIORITY should be set to 10 for stable compatibility package 
 # and to 20 for unstable/testing package
 
-ifeq ($(PACKAGE),"unison")
+ifeq ($(PACKAGE),unison)
 PACKAGE_VERSION=
 PRIORITY=20
 else
