@@ -3,46 +3,54 @@
 # In order to use dpatch 
 include /usr/share/dpatch/dpatch.make
 
-PACKAGE=unison
+PACKAGE=$(shell dpkg-parsechangelog | awk "/Source: .*/ { gsub(\"Source: \",\"\"); print }")
 
 # Variable that will be replaced in files
 
 VERSION=$(shell dpkg-parsechangelog | awk "/Version: .*/ { gsub(\"Version: \",\"\"); gsub(\"-.*\",\"\"); print; }")
 # Package version should be set to the version you want to be appended to 
 # the package name
-PACKAGE_VERSION=
 
 # PRIORITY should be set to 10 for stable compatibility package 
 # and to 20 for unstable/testing package
+
+ifeq ($(PACKAGE),"unison")
+PACKAGE_VERSION=
 PRIORITY=20
+else
+PACKAGE_VERSION=$(VERSION)
+PRIORITY=10
+endif
 
 UNISON=unison-$(VERSION)
 UNISON_MAJ=UNISON-$(VERSION)
 UNISON_PACKAGE=unison$(PACKAGE_VERSION)
-UNISON_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_PACKAGE),unison-latest-stable)
+UNISON_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON),unison-latest-stable)
 
 UNISON_GTK=unison-$(VERSION)-gtk
 UNISON_GTK_PACKAGE=$(UNISON_PACKAGE)-gtk
-UNISON_GTK_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_GTK_PACKAGE),unison-latest-stable-gtk)
+UNISON_GTK_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_GTK),unison-latest-stable-gtk)
 
 # End of variable to be replaced
 
 # set $(NATIVE) to true if this arch has an optimising compiler
 NATIVE := $(shell test -x /usr/bin/ocamlopt -o -x /usr/bin/ocamlopt.opt && echo true || echo false)
+UISTYLE := $(shell dpkg --compare-versions 2.10 ge $(VERSION) && echo gtk || echo gtk2)
 
 # which file to rename for following the version
 RENAME := debian/unison.1.in 
 RENAME += debian/unison.dirs.in 
 RENAME += debian/unison.doc-base.in
-RENAME += debian/unison.docs.in
 RENAME += debian/unison.postinst.in
 RENAME += debian/unison.prerm.in
 RENAME += debian/unison.preinst.in
+RENAME += debian/unison.manpages.in
 RENAME += debian/unison-gtk.dirs.in
 RENAME += debian/unison-gtk.menu.in
 RENAME += debian/unison-gtk.postinst.in
 RENAME += debian/unison-gtk.prerm.in
 RENAME += debian/unison-gtk.preinst.in
+RENAME += debian/unison-gtk.manpages.in
 
 build: build-stamp
 build-stamp: patch-stamp
@@ -71,10 +79,14 @@ build-stamp: patch-stamp
 	
 	# We always need to rename the manual 
 	mv debian/$(UNISON_PACKAGE).1 debian/$(UNISON).1
+	# We copy unison.1 to unison-gtk.1
+	cp debian/$(UNISON).1 debian/$(UNISON_GTK).1
 
-	$(MAKE) UISTYLE=gtk2 NATIVE=$(NATIVE) NAME=$(UNISON_GTK)
+	$(MAKE) UISTYLE=$(UISTYLE) NATIVE=$(NATIVE) 
+	mv unison $(UNISON_GTK)
 	
-	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) NAME=$(UNISON)
+	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) 
+	mv unison $(UNISON)
 
 	env HOME=$(CURDIR) $(CURDIR)/$(UNISON) -doc all > $(CURDIR)/unison-manual.txt
 
@@ -95,7 +107,7 @@ clean: unpatch
 	  DST=$${DST%%.in}; \
 	  $(RM) $$DST; \
 	done
-	-$(RM) debian/$(UNISON).1 unison-manual.txt $(UNISON_GTK) $(UNISON)
+	-$(RM) debian/$(UNISON).1 debian/$(UNISON_GTK).1 unison-manual.txt $(UNISON_GTK) $(UNISON)
 	-$(MAKE) clean
 	dh_clean
 
@@ -108,10 +120,6 @@ install: build
 	  $(CURDIR)/debian/$(UNISON_PACKAGE)/usr/bin
 	install -o root -g root -m 755 $(UNISON_GTK) \
 	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/bin
-	ln -s $(UNISON_PACKAGE) \
-	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/share/doc/$(UNISON_GTK_PACKAGE)
-	ln -s $(UNISON).1.gz \
-	  $(CURDIR)/debian/$(UNISON_GTK_PACKAGE)/usr/share/man/man1/$(UNISON_GTK).1.gz
 	# Creating symlink from binary to $(UNISON_ALTERNATIVE) and $(UNISON_GTK_ALTERNATIVE)
 	for i in \
 	  $(CURDIR)/debian/$(UNISON_PACKAGE)/usr/bin/$(UNISON_ALTERNATIVE) \
@@ -135,11 +143,11 @@ binary-arch: build install
 	dh_testroot
 	# Move temporarly the doc-base.in because dh_installdocs will take it into consideration
 	mv debian/unison.doc-base.in debian/unison.doc-base-in
-	dh_installdocs 
+	dh_installdocs -A BUGS.txt TODO.txt unison-manual.txt
 	mv debian/unison.doc-base-in debian/unison.doc-base.in
 	dh_installmenu
-	dh_installman debian/$(UNISON).1
-	dh_installchangelogs NEWS
+	dh_installman 
+	dh_installchangelogs -A NEWS 
 	dh_compress
 	dh_fixperms
 	dh_installdeb
