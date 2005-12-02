@@ -2,6 +2,7 @@
 
 # In order to use dpatch 
 include /usr/share/dpatch/dpatch.make
+OCAMLABI=$(shell ocamlc -version)
 
 PACKAGE=$(shell dpkg-parsechangelog | awk "/Source: .*/ { gsub(\"Source: \",\"\"); print }")
 
@@ -51,6 +52,9 @@ RENAME += debian/unison-gtk.postinst.in
 RENAME += debian/unison-gtk.prerm.in
 RENAME += debian/unison-gtk.preinst.in
 RENAME += debian/unison-gtk.manpages.in
+
+debian/control: debian/control.in
+	sed -e 's%#OCamlABI#%$(OCAMLABI)%' $@.in >$@
 
 build: build-stamp
 build-stamp: patch-stamp
@@ -139,19 +143,19 @@ install: build
 binary-indep: build install
 
 binary-arch: build install
-	dh_testdir
-	dh_testroot
+	dh_testdir -a
+	dh_testroot -a
 	# Move temporarly the doc-base.in because dh_installdocs will take it into consideration
 	mv debian/unison.doc-base.in debian/unison.doc-base-in
-	dh_installdocs -A BUGS.txt TODO.txt unison-manual.txt
+	dh_installdocs -a -A BUGS.txt TODO.txt unison-manual.txt
 	mv debian/unison.doc-base-in debian/unison.doc-base.in
-	dh_installmenu
-	dh_installman 
-	dh_installchangelogs -A NEWS 
-	dh_compress
-	dh_fixperms
-	dh_installdeb
-	dh_shlibdeps
+	dh_installmenu -a
+	dh_installman -a
+	dh_installchangelogs -a -A NEWS 
+	dh_compress -a
+	dh_fixperms -a
+	dh_installdeb -a
+	dh_shlibdeps -a
 	if [ "x$(NATIVE)" = "xtrue" ]; then\
 	    for i in debian/*.substvars; do \
 	      echo "interpreter:Depends=" >> $$i;\
@@ -162,9 +166,9 @@ binary-arch: build install
 	      echo "interpreter:Depends=ocaml-base-3.08.3" >> $$i;\
 	    done;\
 	fi
-	dh_gencontrol
-	dh_md5sums
-	dh_builddeb
+	dh_gencontrol -a -- -VF:OCamlABI="$(OCAMLABI)"
+	dh_md5sums -a
+	dh_builddeb -a
 
 binary: binary-indep binary-arch
 .PHONY: build clean binary-indep binary-arch binary install configure
