@@ -163,7 +163,7 @@ binary-arch: build install
 	    dh_strip -a;\
 	  else\
 	    for i in debian/*.substvars; do \
-	      echo "interpreter:Depends=ocaml-base-3.08.3" >> $$i;\
+	      echo "interpreter:Depends=ocaml-base-$(OCAMLABI)" >> $$i;\
 	    done;\
 	fi
 	dh_gencontrol -a -- -VF:OCamlABI="$(OCAMLABI)"
