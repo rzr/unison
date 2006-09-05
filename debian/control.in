@@ -4,6 +4,7 @@ Priority: optional
 Maintainer: Sylvain Le Gall <sylvain.le-gall@polytechnique.org>
 Build-Depends: debhelper (>= 4.0.0), ocaml-nox (>= #OCamlABI#), liblablgtk2-ocaml-dev, dpatch, chrpath
 Standards-Version: 3.6.2.0
+XS-X-Vcs-Svn: svn://svn.debian.org/svn/pkg-ocaml-maint/trunk/packages/unison
 
 Package: unison
 Architecture: any
