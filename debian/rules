@@ -2,6 +2,7 @@
 
 # In order to use dpatch 
 include /usr/share/dpatch/dpatch.make
+
 OCAMLABI=$(shell ocamlc -version)
 
 PACKAGE=$(shell dpkg-parsechangelog | awk "/Source: .*/ { gsub(\"Source: \",\"\"); print }")
@@ -171,4 +172,4 @@ binary-arch: build install
 	dh_builddeb -a
 
 binary: binary-indep binary-arch
-.PHONY: build clean binary-indep binary-arch binary install configure
+.PHONY: build clean binary-indep binary-arch binary install configure debian/control

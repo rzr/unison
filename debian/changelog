@@ -1,3 +1,11 @@
+unison (2.13.16-6) unstable; urgency=low
+
+  * Change my email address to gildor@debian.org,
+  * Made debian/control a PHONY target,
+  * Upgrade standards version to 3.7.2 (no change),
+
+ -- Sylvain Le Gall <gildor@debian.org>  Wed, 14 Jun 2006 21:59:13 +0200
+
 unison (2.13.16-5) unstable; urgency=low
 
   * Rebuild for OCaml 3.09.1
