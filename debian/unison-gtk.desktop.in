@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Type=Application
+Name=MLDonkey
+Comment=Graphical frontend for MLDonkey
+Comment[fr]=Interface graphique pour MLDonkey
+TryExec=mlgui
+Exec=mlgui
+Icon=mlgui.xpm
+Categories=GTK;Application;Network;

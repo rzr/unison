@@ -1,3 +1,12 @@
+unison (2.13.16-7) UNRELEASED; urgency=low
+
+  * Upgrade debian/watch version to 3,
+  * Upgrade debhelper debian/compat to 5,
+  * Use CDBS for debian/rules,
+  * Add debian/unison-gtk.desktop.in (TO COMPLETE),
+
+ -- Sylvain Le Gall <gildor@debian.org>  Tue,  7 Nov 2006 00:00:19 +0100
+
 unison (2.13.16-6) unstable; urgency=low
 
   * Change my email address to gildor@debian.org,
