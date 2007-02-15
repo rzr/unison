@@ -1,13 +1,9 @@
-unison (2.13.16-6) UNRELEASED; urgency=low
+unison (2.13.16-6) unstable; urgency=low
 
-  * Upgrade debian/watch version to 3,
-  * Upgrade debhelper debian/compat to 5,
-  * Use CDBS for debian/rules,
-  * Add debian/unison-gtk.desktop.in (TO COMPLETE),
-  * Add a not in README.Debian about removable media
-  * Change my email address to gildor@debian.org,
+  * Add a note in README.Debian concerning the use of removable media
+  * Use ubuntu patch against bashism (Closes: #376362)
 
- -- Sylvain Le Gall <gildor@debian.org>  Wed, 14 Feb 2007 00:05:35 +0100
+ -- Sylvain Le Gall <gildor@debian.org>  Thu, 15 Feb 2007 22:36:17 +0100
 
 unison (2.13.16-5) unstable; urgency=low
 
