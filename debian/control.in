@@ -2,8 +2,9 @@ Source: unison
 Section: net
 Priority: optional
 Maintainer: Sylvain Le Gall <gildor@debian.org>
-Build-Depends: debhelper (>= 4.0.0), ocaml-nox (>= #OCamlABI#), liblablgtk2-ocaml-dev, dpatch, chrpath
-Standards-Version: 3.6.2.0
+Build-Depends: @cdbs@, liblablgtk2-ocaml-dev, chrpath
+Standards-Version: 3.7.2
+XS-X-Vcs-Svn: svn://svn.debian.org/svn/pkg-ocaml-maint/trunk/packages/unison
 
 Package: unison
 Architecture: any
