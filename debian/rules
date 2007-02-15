@@ -25,12 +25,6 @@ include /usr/share/cdbs/1/rules/dpatch.mk
 include /usr/share/cdbs/1/class/makefile.mk
 include /usr/share/cdbs/1/class/ocaml.mk
 
-PACKAGE := unison
-DESTDIR := $(CURDIR)/debian/$(PACKAGE)
-
-PACKAGE_DEV := unison-dev
-DESTDIR_DEV := $(CURDIR)/debian/$(PACKAGE_DEV)
-
 DEB_MAKE_CLEAN_TARGET    := clean
 DEB_MAKE_BUILD_TARGET    := all 
 ifeq ($(OCAML_HAVE_OCAMLOPT),yes)
@@ -52,6 +46,44 @@ install/libunison-ocaml-dev::
 	mv $(DESTDIR_DEV)/$(OCAML_STDLIB_DIR)/gsl/*.so \
 	 $(DESTDIR)/$(OCAML_STDLIB_DIR)/stublibs/
 	chrpath -d $(DESTDIR)/$(OCAML_STDLIB_DIR)/stublibs/*.so
+
+# Variable replacement in .in file
+
+VERSION=$(patsubst -%,,$(DEBIAN_VERSION))
+
+ifeq ($(DEB_SOURCE_PACKAGE),unison)
+# latest package
+PACKAGE_VERSION=
+PRIORITY=20
+else
+# compatibility package
+PACKAGE_VERSION=$(VERSION)
+PRIORITY=10
+endif
+
+UNISON=unison-$(VERSION)
+UNISON_MAJ=UNISON-$(VERSION)
+UNISON_PACKAGE=unison$(PACKAGE_VERSION)
+UNISON_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON),unison-latest-stable)
+
+UNISON_GTK=unison-$(VERSION)-gtk
+UNISON_GTK_PACKAGE=$(UNISON_PACKAGE)-gtk
+UNISON_GTK_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_GTK),unison-latest-stable-gtk)
+
+RENAME := debian/unison.1.in 
+RENAME += debian/unison.dirs.in 
+RENAME += debian/unison.doc-base.in
+RENAME += debian/unison.postinst.in
+RENAME += debian/unison.prerm.in
+RENAME += debian/unison.preinst.in
+RENAME += debian/unison.manpages.in
+RENAME += debian/unison-gtk.dirs.in
+RENAME += debian/unison-gtk.menu.in
+RENAME += debian/unison-gtk.postinst.in
+RENAME += debian/unison-gtk.prerm.in
+RENAME += debian/unison-gtk.preinst.in
+RENAME += debian/unison-gtk.manpages.in
+
 ##!/usr/bin/make -f
 #
 ## In order to use dpatch 
