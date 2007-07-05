@@ -16,7 +16,7 @@ unison (2.13.16-1) unstable; urgency=low
  --auto unison && update-alternatives --auto unison-gtk" to restore the
  good behavior.
 
- -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Sat, 13 Aug 2005 20:17:11 +0200
+ -- Sylvain Le Gall <gildor@debian.org>  Sat, 13 Aug 2005 20:17:11 +0200
 
 unison (2.10.2-2) unstable; urgency=low
 
@@ -33,7 +33,7 @@ unison (2.10.2-2) unstable; urgency=low
  you need to synchronise two computers, you will need to have unison
  2.10.2 on both).
 
- -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon, 25 Apr 2005 23:06:44 +0200  
+ -- Sylvain Le Gall <gildor@debian.org>  Mon, 25 Apr 2005 23:06:44 +0200  
  
 unison (2.10.2-1) unstable; urgency=medium
 
@@ -42,4 +42,4 @@ unison (2.10.2-1) unstable; urgency=medium
   If you need to use the former stable release, you will need to install
   unison2.9.1, which is a new debian package. 
 
- -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Tue, 19 Apr 2005 00:08:05 +0200
+ -- Sylvain Le Gall <gildor@debian.org>  Tue, 19 Apr 2005 00:08:05 +0200

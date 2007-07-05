@@ -6,8 +6,9 @@ unison (2.13.16-7) UNRELEASED; urgency=low
   * Add debian/unison-gtk.desktop.in (TO COMPLETE),
   * Add a not in README.Debian about removable media
   * Change my email address to gildor@debian.org,
+  * Change email address to gildor@debian.org everywhere
 
- -- Sylvain Le Gall <gildor@debian.org>  Wed, 14 Feb 2007 00:05:35 +0100
+ -- Sylvain Le Gall <gildor@debian.org>  Thu, 21 Jun 2007 23:13:03 +0100
 
 unison (2.13.16-6) unstable; urgency=low
 
@@ -94,7 +95,8 @@ unison (2.10.2-2) unstable; urgency=low
   * unison-gtk now recommends ssh-askpass, put a note in README.Debian
     concerning the fact that ssh-askpass is required for using a password
     protected SSH connection (Closes: #238854)
-  * State the changes of archive format from 2.9.1 to 2.10.2 in NEWS.Debian (Closes: #308126)
+  * State the changes of archive format from 2.9.1 to 2.10.2 in NEWS.Debian
+    (Closes: #308126)
 
  -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon,  9 May 2005 00:47:47 +0200
 
@@ -113,7 +115,8 @@ unison (2.10.2-1) unstable; urgency=medium
   * Use a "Provide: unison" to manage the oldest package ( which provides
     also unison, but with a slightly different protocol ).
   * Remove the patch 01_ocaml_3_08 since it is applied upstream
-  * Use a GTK2 interface, since GTK1 interface doesn't even build ( Closes: #252617 )
+  * Use a GTK2 interface, since GTK1 interface doesn't even build 
+    (Closes: #252617)
   * No more HTML/PS documentation, only text documentation, because it is the
     only one i can produce without doing severe licence violation ( the former
     HTML version comes from a strange unison-manual.tex, which cannot be
