@@ -2,14 +2,14 @@ Source: unison
 Section: net
 Priority: optional
 Maintainer: Sylvain Le Gall <gildor@debian.org>
-Build-Depends: @cdbs@, liblablgtk2-ocaml-dev, chrpath
+Build-Depends: @cdbs@, liblablgtk2-ocaml-dev, chrpath, librsvg2-bin, imagemagick
 Standards-Version: 3.7.2
 XS-Vcs-Svn: svn://svn.debian.org/svn/pkg-ocaml-maint/trunk/packages/unison
 XS-Vcs-Browser: http://svn.debian.org/wsvn/pkg-ocaml-maint/trunk/packages/unison/trunk/
 
 Package: unison
 Architecture: any
-Depends: ${shlibs:Depends}, ${interpreter:Depends}
+Depends: ${shlibs:Depends}, ${F:OCamlInterpreter}
 Recommends: ssh-client | openssh-client
 Conflicts: unison (<< 2.9.1-3)
 Description: A file-synchronization tool for Unix and Windows
@@ -34,7 +34,7 @@ Description: A file-synchronization tool for Unix and Windows
 
 Package: unison-gtk
 Architecture: any
-Depends: ${shlibs:Depends}, ${interpreter:Depends}
+Depends: ${shlibs:Depends}, ${F:OCamlInterpreter}
 Conflicts: unison-gtk (<< 2.9.1-3)
 Recommends: ssh-askpass, ssh-client | openssh-client
 Description: A file-synchronization tool for Unix and Windows - GTK interface

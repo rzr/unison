@@ -1,11 +1,13 @@
 [Desktop Entry]
-Version=1.0
 Encoding=UTF-8
+Name=Unison
+Comment=GTK interface for the unison file synchronization tool @VERSION@
+GenericName=File synchronization tool
+Exec=@UNISON_GTK@
+Terminal=false
+X-MultipleArgs=false
 Type=Application
-Name=MLDonkey
-Comment=Graphical frontend for MLDonkey
-Comment[fr]=Interface graphique pour MLDonkey
-TryExec=mlgui
-Exec=mlgui
-Icon=mlgui.xpm
-Categories=GTK;Application;Network;
+Icon=@UNISON_GTK_PACKAGE@.svg
+Categories=Utility;FileTools;GTK;
+StartupWMClass=Unison-gtk
+StartupNotify=true

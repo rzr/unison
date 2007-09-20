@@ -1,14 +1,27 @@
-unison (2.13.16-7) UNRELEASED; urgency=low
+unison (2.13.16-7) unstable; urgency=low
 
   * Upgrade debian/watch version to 3,
   * Upgrade debhelper debian/compat to 5,
   * Use CDBS for debian/rules,
-  * Add debian/unison-gtk.desktop.in (TO COMPLETE),
-  * Add a not in README.Debian about removable media
+  * Add debian/unison-gtk.desktop.in (Closes: #387666, #422495),
+  * Add a note in README.Debian about removable media
   * Change my email address to gildor@debian.org,
   * Change email address to gildor@debian.org everywhere
+  * Rebuild for ocaml 3.10.0
+  * Add icons for unison-gtk
+  * Use ocamlopt.opt when possible
+  * Provide a link from unison to unison-2.13 to work with
+    "addversionno = true" (Closes: #368418, #392099)
+  * Apply patche 01gtkfont to stop trying to use deprecated
+    font setting, thanks to Norman Ramsey (Closes: #372545)
+  * Add a note on what unison-latest-stable is supposed to do in
+    README.Debian (Closes: #361900), in the same time explain failure 
+    when trying to upgrade with update-alternatives (Closes: #335413)
+  * unison-gtk is now an alternative to unison (Closes: #411297)
+  * change stable release codename to Etch in README.Debian 
+    (Closes: #394738)
 
- -- Sylvain Le Gall <gildor@debian.org>  Thu, 21 Jun 2007 23:13:03 +0100
+ -- Sylvain Le Gall <gildor@debian.org>  Thu, 20 Sep 2007 15:58:53 +0200
 
 unison (2.13.16-6) unstable; urgency=low
 

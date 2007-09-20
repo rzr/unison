@@ -29,27 +29,29 @@ the unison-gtk package.
 This package has been split when Unison 2.10.2 was released. 
 There now exist now versions of the package : 
 - unison, unison-gtk ( version 2.10.2 )
-- unison2.9.1, unison2.9.1-gtk ( version 2.9.1 )
+- unison2.9.1, unison2.9.1-gtk (version 2.9.1)
 
-The reason for this split is to preserve protocol 
-compatibility with actual stable release of debian (ie Woody). 
-By this way, you can install unison and synchronise 
-testing/unstable systems or install unison2.9.1 and 
-synchronise testing/unstable with stable systems.
+The reason for this split is to preserve protocol compatibility with actual
+stable release of debian (e.g. Woody or Sarge or Etch).  By this way, you can
+install unison and synchronise testing/unstable systems or install unison2.9.1
+and synchronise testing/unstable with stable systems.
 
-You can install both unison and unison2.9.1, an alternative 
-system is used ( see "man update-alternatives" ). 
+You can install both unison and unison2.9.1, an alternative system is used (see
+"man update-alternatives"). 
 
-When the stable release will contain unison 2.10.2, 
-unison2.9.1 will be removed. When a new stable release of 
-unison will come ( for example unison 2.11.0 ) a package 
-unison2.10.2 will be created to be able to synchronise with the 
-future stable release of debian. The package unison will then 
-hold the latest release of Unison ( ie 2.11.0 ).
+When the stable release will contain unison 2.10.2, unison2.9.1 will be
+removed. When a new stable release of unison will come (for example unison
+2.11.0) a package unison2.10.2 will be created to be able to synchronise with
+the future stable release of debian. The package unison will then hold the
+latest release of Unison (e.g. 2.11.0).
 
-By this way, you should always be able to synchronise 
-stable/testing/unstable system using unison ( the good version 
-of unison ).
+By this way, you should always be able to synchronise stable/testing/unstable
+system using unison (the good version of unison).
+
+This scheme continue to apply further (unison 2.13.16 was released in unison
+package and unison2.9.1 was keep in Etch/Sid while Sarge was stable). 
+
+Etch is now released with unison 2.13.16, so unison2.9.1 will be removed.
 
  -- Sylvain Le Gall <gildor@debian.org>  Mon, 25 Apr 2005 23:06:44 +0200  
 
@@ -89,3 +91,23 @@ As usual: keep an eye of what is proposed by unison! This is one of the reason
 why unison keep asking you what you really want to do.
 
  -- Sylvain Le Gall <gildor@debian.org>  Thu, 15 Feb 2007 22:12:48 +0100
+
+#----------------------#
+# unison-latest-stable #
+#----------------------#
+
+The package unison provide a link to the latest stable version of unison. This
+link is here to help people not asking themselves what is the latest stable 
+version of unison.
+
+In package provided for compatibility reason (unison2.9.1 for example) such a link
+doesn't exists. 
+
+If you use unison-latest-stable, you are sure to use the most up-to-date stable 
+version of unison.
+
+Moreover, using a constant name help "update-alternatives" not to get lost when
+upgrading the package from major version to major version (when the version 
+of unison change).
+
+ -- Sylvain Le Gall <gildor@debian.org>  Thu, 20 Sep 2007 15:58:53 +0200
