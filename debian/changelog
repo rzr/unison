@@ -1,6 +1,8 @@
-unison (2.13.16-8) UNRELEASED; urgency=low
+unison (2.13.16-8) unstable; urgency=low
 
-  * NOT RELEASED YET
+  * Change section from net to utils 
+  * Tighten build-dependency on lablgtk2 and librsvg2
+  * Rework description of the package
 
  -- Sylvain Le Gall <gildor@debian.org>  Thu, 20 Sep 2007 16:53:23 +0200
 
