@@ -72,7 +72,7 @@ RENAME += debian/unison-gtk.links.in
 RENAME += debian/unison.links.in
 RENAME += debian/unison-gtk.desktop.in
 
-MY_MAKE_FLAGS += $(shell test -x /usr/bin/ocamlopt.opt && echo "OCAMLOPT=ocamlopt.opt")
+MY_MAKE_FLAGS += $(shell if test -x /usr/bin/ocamlopt.opt; then echo "OCAMLOPT=ocamlopt.opt"; fi )
 
 ifeq ($(OCAML_HAVE_OCAMLOPT),yes)
   NATIVE := true
@@ -106,7 +106,7 @@ build/$(UNISON_PACKAGE)::
 build/$(UNISON_GTK_PACKAGE):: debian/$(UNISON_GTK_PACKAGE).xpm
 	$(MAKE) UISTYLE=$(UISTYLE) NATIVE=$(NATIVE) $(MY_MAKE_FLAGS)
 	mv '$(CURDIR)/unison' '$(CURDIR)/$(UNISON_GTK)'
-	test 'x$(OCAML_HAVE_OCAMLOPT)' = 'xyes' && /usr/bin/chrpath -d '$(CURDIR)/$(UNISON_GTK)'
+	if test 'x$(OCAML_HAVE_OCAMLOPT)' = 'xyes'; then /usr/bin/chrpath -d '$(CURDIR)/$(UNISON_GTK)'; fi
 
 clean::
 	-$(RM) '$(CURDIR)/unison-manual.txt'
