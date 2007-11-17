@@ -4,8 +4,9 @@ Priority: optional
 Maintainer: Sylvain Le Gall <gildor@debian.org>
 Build-Depends: @cdbs@, liblablgtk2-ocaml-dev (>= 2.6.0-13), chrpath, librsvg2-bin (>= 2.18.2-1), imagemagick
 Standards-Version: 3.7.2
-XS-Vcs-Svn: svn://svn.debian.org/svn/pkg-ocaml-maint/trunk/packages/unison
-XS-Vcs-Browser: http://svn.debian.org/wsvn/pkg-ocaml-maint/trunk/packages/unison/trunk/
+Vcs-Svn: svn://svn.debian.org/svn/pkg-ocaml-maint/trunk/packages/unison
+Vcs-Browser: http://svn.debian.org/wsvn/pkg-ocaml-maint/trunk/packages/unison/trunk/
+Homepage: http://www.cis.upenn.edu/~bcpierce/unison/
 
 Package: unison
 Architecture: any
@@ -31,8 +32,6 @@ Description: A file-synchronization tool for Unix and Windows
  making it ideal for slower links. Unison has a clear and precise 
  specification, and is resilient to failure due to its careful 
  handling of the replicas and its private structures.
- .
- Homepage: http://www.cis.upenn.edu/~bcpierce/unison/
 
 Package: unison-gtk
 Architecture: any
@@ -60,5 +59,3 @@ Description: A file-synchronization tool for Unix and Windows with GTK interface
  handling of the replicas and its private structures.
  .
  This package adds the optional GTK interface.
- .
- Homepage: http://www.cis.upenn.edu/~bcpierce/unison/
