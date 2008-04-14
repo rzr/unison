@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/ubase/uarg.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 24 Mar 2002 11:24:03 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/ubase/uarg.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* by Xavier Leroy, projet Cristal, INRIA Rocquencourt *)
 (* Slightly modified by BCP, July 1999 *)
@@ -37,7 +36,8 @@ let usage speclist errmsg =
   printf "%s\n" errmsg;
   Safelist.iter (function (key, _, doc) ->
                if String.length doc > 0 && doc.[0] <> '*'
-                 then printf "  %s %s\n" key doc) speclist
+                 then printf "  %s %s\n" key doc)
+                (Safelist.rev speclist)
 ;;
 
 let current = ref 0;;

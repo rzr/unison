@@ -5,22 +5,20 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>Unison</string>
-	<key>CFBundleIconFile</key>
-	<string>Unison.icns</string>
+	<string>Growl</string>
 	<key>CFBundleIdentifier</key>
-	<string>edu.upenn.cis.Unison</string>
+	<string>com.growl.growlframework</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>
-	<string>APPL</string>
+	<string>FMWK</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.7.3</string>
 	<key>CFBundleSignature</key>
-	<string>????</string>
+	<string>GRRR</string>
 	<key>CFBundleVersion</key>
-	<string>0.1</string>
-	<key>NSMainNibFile</key>
-	<string>MainMenu</string>
+	<string>0.7.3</string>
 	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
+	<string>GrowlApplicationBridge</string>
 </dict>
 </plist>

@@ -1,11 +1,12 @@
 (* Program for printing project info into a Makefile.  Documentation below. *)
 
+(* FIX: When the time comes for the next alpha-release, remember to
+   increment the archive version number first. See update.ml. *)
+
 let projectName = "unison"
 let majorVersion = 2
-let minorVersion = 13
-let pointVersionOrigin = 59 (* Revision that corresponds to point version 0 *)
-
-(* You shouldn't need to edit below. *)
+let minorVersion = 27
+let pointVersionOrigin = 207 (* Revision that corresponds to point version 0 *)
 
 (* Documentation:
    This is a program to construct a version of the form Major.Minor.Point,
@@ -38,13 +39,30 @@ let pointVersionOrigin = 59 (* Revision that corresponds to point version 0 *)
    will be at 28 after the commit and this will be Unison version 3.0.0.
 *)
 
-let revisionString = "$Rev: 75 $";;
+(* ---------------------------------------------------------------------- *)
+(* You shouldn't need to edit below. *)
+
+let revisionString = "$Rev: 264 $";;
 let revision = Scanf.sscanf revisionString "$Rev: %d " (fun x -> x);;
 let pointVersion = revision - pointVersionOrigin;;
 
 Printf.printf "MAJORVERSION=%d.%d\n" majorVersion minorVersion;;
 Printf.printf "VERSION=%d.%d.%d\n" majorVersion minorVersion pointVersion;;
 Printf.printf "NAME=%s\n" projectName;;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

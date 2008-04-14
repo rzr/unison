@@ -1,12 +1,11 @@
-(* $I1: Unison file synchronizer: src/uitext.ml $ *)
-(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/uitext.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 open Common
 open Lwt
 
 module Body : Uicommon.UI = struct
-
+  
 let debug = Trace.debug "ui"
 
 let dumbtty =
@@ -30,7 +29,7 @@ let dumbtty =
      ^ "recognizes keystrokes as soon as they are typed.)\n\n"
      ^ "This preference has no effect on the graphical user "
      ^ "interface.")
-
+    
 let silent =
   Prefs.createBool "silent" false "print nothing (except error messages)"
     ("When this preference is set to {\\tt true}, the textual user "
@@ -186,7 +185,7 @@ type proceed = ConfirmBeforeProceeding | ProceedImmediately
 let interact rilist =
   let (r1,r2) = Globals.roots() in
   let (host1, host2) = root2hostname r1, root2hostname r2 in
-  display ("\n" ^ Uicommon.roots2string() ^ "\n");
+  if not (Prefs.read Globals.batch) then display ("\n" ^ Uicommon.roots2string() ^ "\n");
   let rec loop prev =
     function
       [] -> (ConfirmBeforeProceeding, Safelist.rev prev)
@@ -222,8 +221,11 @@ let interact rilist =
                   "from "^host1^" to "^host2,
                   "from "^host2^" to "^host1
               in
-              if Prefs.read Globals.batch && not (Prefs.read Trace.terse) then
-                (display "\n"; displayDetails ri);
+              if Prefs.read Globals.batch then begin
+                display "\n";
+                if not (Prefs.read Trace.terse) then
+                  displayDetails ri
+              end;
               selectAction
                 (if Prefs.read Globals.batch then Some " " else None)
                 [((if !dir=Conflict && not (Prefs.read Globals.batch)
@@ -281,8 +283,16 @@ let interact rilist =
                  (["x"],
                   ("show details"),
                   (fun () -> display "\n"; displayDetails ri; repeat()));
+                 (["L"],
+                  ("list all suggested changes tersely"),
+                  (fun () -> display "\n";
+                     Safelist.iter
+                       (fun ri -> displayri ri; display "\n  ")
+                       ril;
+                     display "\n";
+                     repeat()));
                  (["l"],
-                  ("list all suggested changes"),
+                  ("list all suggested changes with details"),
                   (fun () -> display "\n";
                      Safelist.iter
                        (fun ri -> displayri ri; display "\n  ";
@@ -326,25 +336,28 @@ let interact rilist =
                 (fun () -> displayri ri)
   in
     loop [] rilist
-
+    
 let verifyMerge title text =
   Printf.printf "%s\n" text;
   if Prefs.read Globals.batch then
     true
   else begin
-    display "Commit results of merge? ";
-    selectAction
-      None   (* Maybe better: (Some "n") *)
-      [(["y";"g"],
-        "Yes: commit",
-        (fun() -> true));
-       (["n"],
-        "No: leave this file unchanged",
-        (fun () -> false));
-       ]
-      (fun () -> display "Commit results of merge? ")
+    if Prefs.read Uicommon.confirmmerge then begin
+      display "Commit results of merge? ";
+      selectAction
+        None   (* Maybe better: (Some "n") *)
+        [(["y";"g"],
+          "Yes: commit",
+          (fun() -> true));
+          (["n"],
+           "No: leave this file unchanged",
+           (fun () -> false));
+        ]
+        (fun () -> display "Commit results of merge? ")
+    end else
+      true
   end
-
+      
 let doTransport reconItemList =
   let totalBytesToTransfer =
     ref
@@ -373,7 +386,7 @@ let doTransport reconItemList =
   if not (Prefs.read Trace.terse) && (Prefs.read Trace.debugmods = []) then
     Uutil.setProgressPrinter showProgress;
 
-  Transport.start ();
+  Transport.logStart ();
   let fFailedPaths = ref [] in
   let uiWrapper ri f =
     catch f
@@ -386,6 +399,7 @@ let doTransport reconItemList =
             return ()
         | _ ->
             fail e) in
+  let counter = ref 0 in
   let rec loop ris actions pRiThisRound =
     match ris with
       [] ->
@@ -393,8 +407,11 @@ let doTransport reconItemList =
     | ri :: rest when pRiThisRound ri ->
         loop rest
           (uiWrapper ri
-             (fun () -> Transport.transportItem ri
-                          (Uutil.File.ofLine 0) verifyMerge)
+             (fun () -> (* We need different line numbers so that
+                           transport operations are aborted independently *)
+                        incr counter;
+                        Transport.transportItem ri
+                          (Uutil.File.ofLine !counter) verifyMerge)
            :: actions)
           pRiThisRound
     | _ :: rest ->
@@ -407,7 +424,7 @@ let doTransport reconItemList =
   Lwt_unix.run
     (let actions = loop reconItemList [] Common.isDeletion in
     Lwt_util.join actions);
-  Transport.finish ();
+  Transport.logFinish ();
 
   Uutil.setProgressPrinter (fun _ _ _ -> ());
   Util.set_infos "";
@@ -464,13 +481,13 @@ let rec interactAndPropagateChanges reconItemList
         else (howmany + 1, skipped))
       (0, 0) newReconItemList in
   let doit() =
-    newLine();
-    Trace.status "Propagating updates";
+    if not (Prefs.read Globals.batch || Prefs.read Trace.terse) then newLine();
+    if not (Prefs.read Trace.terse) then Trace.status "Propagating updates";
     let timer = Trace.startTimer "Transmitting all files" in
     let failedPaths = doTransport newReconItemList in
     let failures = Safelist.length failedPaths in
     Trace.showTimer timer;
-    Trace.status "Saving synchronizer state";
+    if not (Prefs.read Trace.terse) then Trace.status "Saving synchronizer state";
     Update.commitUpdates ();
     let trans = updatesToDo - failures in
     let summary =
@@ -512,7 +529,10 @@ let rec interactAndPropagateChanges reconItemList
         doit);
        (["n"],
         "No: go through selections again",
-        (fun () -> newLine(); interactAndPropagateChanges reconItemList));
+        (fun () ->
+           Prefs.set Uicommon.auto false;
+           newLine();
+           interactAndPropagateChanges reconItemList));
        (["q"],
         ("exit " ^ Uutil.myName ^ " without propagating any changes"),
         fun () -> raise Sys.Break)
@@ -521,25 +541,26 @@ let rec interactAndPropagateChanges reconItemList
   end
 
 let checkForDangerousPath dangerousPaths =
-  if dangerousPaths <> [] then begin
-    alwaysDisplayAndLog (Uicommon.dangerousPathMsg dangerousPaths);
-    if Prefs.read Globals.batch then begin
-      (* FIX: there should probably be an option to force proceeding *)
-      alwaysDisplay "Aborting...\n"; restoreTerminal ();
-      exit Uicommon.fatalExit
-    end else begin
-      displayWhenInteractive "Do you really want to proceed? ";
-      selectAction
-        None
-        [(["y"],
-          "Continue",
-          (fun() -> ()));
-         (["n"; "q"; "x"; ""],
-          "Exit",
-          (fun () -> alwaysDisplay "\n"; restoreTerminal ();
-                     exit Uicommon.fatalExit))]
-        (fun () -> display "Do you really want to proceed? ")
-    end
+  if Prefs.read Globals.confirmBigDeletes then begin
+    if dangerousPaths <> [] then begin
+      alwaysDisplayAndLog (Uicommon.dangerousPathMsg dangerousPaths);
+      if Prefs.read Globals.batch then begin
+          alwaysDisplay "Aborting...\n"; restoreTerminal ();
+          exit Uicommon.fatalExit
+      end else begin
+        displayWhenInteractive "Do you really want to proceed? ";
+        selectAction
+          None
+          [(["y"],
+            "Continue",
+            (fun() -> ()));
+           (["n"; "q"; "x"; ""],
+            "Exit",
+            (fun () -> alwaysDisplay "\n"; restoreTerminal ();
+                       exit Uicommon.fatalExit))]
+          (fun () -> display "Do you really want to proceed? ")
+      end
+    end 
   end
 
 let synchronizeOnce() =
@@ -596,7 +617,7 @@ let start _ =
       (fun s -> Util.msg "%s\n%s\n" Uicommon.shortUsageMsg s; exit 1)
       (fun s -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)
       (fun () -> if not (Prefs.read silent)
-                 then Util.msg "Contacting server...\n")
+                 then Util.msg "%s\n" (Uicommon.contactingServerMsg())) 
       (fun () -> Some "default")
       (fun () -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)
       (fun () -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)

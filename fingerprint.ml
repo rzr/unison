@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/fingerprint.ml $ *)
-(* $I2: Last modified by vouillon on Fri, 05 Nov 2004 10:12:27 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/fingerprint.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* NOTE: IF YOU CHANGE TYPE "FINGERPRINT", THE ARCHIVE FORMAT CHANGES;       *)
 (* INCREMENT "UPDATE.ARCHIVEFORMAT"                                          *)
@@ -9,10 +8,10 @@ type t = string
 (* Assumes that (fspath, path) is a file and gives its ``digest '', that is  *)
 (* a short string of cryptographic quality representing it.                  *)
 let file fspath path =
+  let f = Fspath.toString (Fspath.concat fspath path) in
   Util.convertUnixErrorsToTransient
-  "digesting file"
-    (fun () ->
-       Digest.file (Fspath.toString (Fspath.concat fspath path)))
+    ("digesting " ^ f)
+    (fun () -> Digest.file f)
 
 let maxLength = Uutil.Filesize.ofInt max_int
 let subfile path offset len =

@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/path.ml $ *)
-(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/path.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* Defines an abstract type of relative pathnames *)
 
@@ -132,7 +131,7 @@ let is_absolute s =
      loop "c:/foo" -> ["c:"; "foo"]
 *)
 let fromString str =
-  let str = if Util.osType = `Win32 then Fileutil.bs2fs str else str in
+  let str = if Util.osType = `Win32 then Fileutil.backslashes2forwardslashes str else str in
   if is_absolute str then
     raise (Util.Transient
              (Printf.sprintf "The path '%s' is not a relative path" str));

@@ -1,8 +1,7 @@
-(* $I1: Unison file synchronizer: src/fileinfo.ml $ *)
-(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/fileinfo.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
-let debug = Util.debug "fileinfo"
+let debugV = Util.debug "fileinfo+"
 
 type typ = [ `ABSENT | `FILE | `DIRECTORY | `SYMLINK ]
 
@@ -19,12 +18,15 @@ type t = { typ : typ; inode : int; ctime : float;
 let statFn fromRoot fspath path =
   let fullpath = Fspath.concat fspath path in
   let stats = Fspath.lstat fullpath in
-  if
-    stats.Unix.LargeFile.st_kind = Unix.S_LNK &&
-    fromRoot &&
-    Path.followLink path
-  then
-    Fspath.stat fullpath
+  if stats.Unix.LargeFile.st_kind = Unix.S_LNK 
+     && fromRoot 
+     && Path.followLink path
+  then 
+    try Fspath.stat fullpath 
+    with Unix.Unix_error((Unix.ENOENT | Unix.ENOTDIR),_,_) ->
+      raise (Util.Transient (Printf.sprintf
+        "Path %s is marked 'follow' but its target is missing"
+        (Fspath.toString fullpath)))
   else
     stats
 
@@ -34,6 +36,9 @@ let get fromRoot fspath path =
     (fun () ->
        try
          let stats = statFn fromRoot fspath path in
+debugV (fun () ->
+  Util.msg "%s: %b %f %f\n" (Fspath.concatToString fspath path)
+  fromRoot stats.Unix.LargeFile.st_ctime stats.Unix.LargeFile.st_mtime);
          let typ =
            match stats.Unix.LargeFile.st_kind with
              Unix.S_REG -> `FILE
@@ -47,7 +52,9 @@ let get fromRoot fspath path =
          in
          let osxInfos = Osx.getFileInfos fspath path typ in
          { typ = typ;
-           inode    = stats.Unix.LargeFile.st_ino;
+           inode    = (* The inode number is truncated so that
+                         it fits in a 31 bit ocaml integer *)
+                      stats.Unix.LargeFile.st_ino land 0x3FFFFFFF;
            ctime    = stats.Unix.LargeFile.st_ctime;
            desc     = Props.get stats osxInfos;
            osX      = osxInfos }
@@ -84,6 +91,13 @@ let set fspath path action newDesc =
 type stamp =
     InodeStamp of int         (* inode number, for Unix systems *)
   | CtimeStamp of float       (* creation time, for windows systems *)
+    (* FIX [BCP, 3/07]: The Ctimestamp variant is actually bogus.
+      For file transfers, it appears that using the ctime to detect a
+      file change is completely ineffective as, when a file is deleted (or
+      renamed) and then replaced by another file, the new file inherits the
+      ctime of the old file.  It is slightly harmful performancewise, as
+      fastcheck expects ctime to be preserved by renaming.  Thus, we should
+      probably not use any stamp under Windows. *)
 
 let pretendLocalOSIsWin32 =
   Prefs.createBool "pretendwin" false
@@ -97,10 +111,12 @@ let pretendLocalOSIsWin32 =
   ^ "systems.  The {\\tt fastcheck} option should also be set to true.")
 
 let stamp info =
-  if Prefs.read pretendLocalOSIsWin32 then CtimeStamp info.ctime else
+       (* Was "CtimeStamp info.ctime", but this is bogus: Windows
+          ctimes are not reliable. *)
+  if Prefs.read pretendLocalOSIsWin32 then CtimeStamp 0.0 else
   match Util.osType with
     `Unix  -> InodeStamp info.inode
-  | `Win32 -> CtimeStamp info.ctime
+  | `Win32 -> CtimeStamp 0.0
 
 let ressStamp info = Osx.stamp info.osX
 

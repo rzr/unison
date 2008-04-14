@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/pred.ml $ *)
-(* $I2: Last modified by bcpierce on Fri, 18 Jun 2004 20:30:54 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/pred.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 let debug = Util.debug "pred"
 
@@ -120,6 +119,10 @@ let recompile_if_needed p =
 let intern p regexpStringList = Prefs.set p.pref regexpStringList
 
 let extern p = Prefs.read p.pref
+
+let extern_associated_strings p =
+  recompile_if_needed p;
+  Safelist.map snd p.associated_strings
 
 (********************************************************************)
 (*                             TESTING                              *)

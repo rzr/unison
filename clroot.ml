@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/clroot.ml $ *)
-(* $I2: Last modified by tjim on Wed, 15 Jan 2003 16:46:16 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/clroot.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (*
   This file parses the unison command-line arguments that
@@ -33,11 +32,11 @@ type clroot =
           string        (* shell = "rsh" or "ssh" *)
         * string        (* name of host *)
         * string option (* user name to log in as *)
-        * int option    (* port *)
+        * string option (* port *)
         * string option (* root of replica in host fs *)
   | ConnectBySocket of
           string        (* name of host *)
-        * int           (* port where server should be listening *)
+        * string        (* port where server should be listening *)
         * string option (* root of replica in host fs *)
 
 (* Internal datatypes used in parsing command-line roots *)
@@ -80,9 +79,9 @@ let getProtocolSlashSlash s =
     let matched = Str.matched_string s in
     match matched with
       "file:" | "ssh:" | "rsh:" | "socket:" ->
-        raise(Invalid_argument
+        raise(Util.Fatal
                 (Printf.sprintf
-                   "ill-formed replica %s (%s must be followed by //)"
+                   "ill-formed root specification %s (%s must be followed by //)"
                    s matched))
     | _ -> None
   else None
@@ -107,13 +106,13 @@ let getHost s =
     (Some host,s')
   else (None,s)
 
-let colonPortRegexp = Str.regexp ":[0-9]+"
+let colonPortRegexp = Str.regexp ":[^/]+"
 let getPort s =
   if Str.string_match colonPortRegexp s 0
   then
     let colonPort = Str.matched_string s in
     let len = String.length colonPort in
-    let port = int_of_string(String.sub colonPort 1 (len-1)) in
+    let port = String.sub colonPort 1 (len-1) in
     let s' = Str.string_after s len in
     (Some port,s')
   else (None,s)
@@ -143,8 +142,8 @@ let parseUri s =
           if len=1 then None
           else Some(String.sub s3 1 (len-1))
         else
-          raise(Invalid_argument
-                  (Printf.sprintf "ill-formed replica %s" s)) in
+          raise(Util.Fatal
+                  (Printf.sprintf "ill-formed root specification %s" s)) in
       (protocol,userOpt,hostOpt,portOpt,pathOpt)
 
 (* These should succeed *)
@@ -178,11 +177,11 @@ let clroot2string = function
     else Printf.sprintf "file:///%s" s
     else s
 | ConnectBySocket(h,p,s) ->
-    Printf.sprintf "socket://%s:%d/%s" h p
+    Printf.sprintf "socket://%s:%s/%s" h p
       (match s with None -> "" | Some x -> x)
 | ConnectByShell(sh,h,u,p,s) ->
     let user = match u with None -> "" | Some x -> x^"@" in
-    let port = match p with None -> "" | Some x -> ":"^(string_of_int x) in
+    let port = match p with None -> "" | Some x -> ":"^x in
     let path = match s with None -> "" | Some x -> x in
     Printf.sprintf "%s://%s%s%s/%s" sh user h port path
 
@@ -197,7 +196,6 @@ let sshversion = Prefs.createString "sshversion" ""
 
 (* Main external function *)
 let parseRoot string =
-  let illegal s = raise(Prefs.IllegalValue s) in
   let illegal2 s = raise(Prefs.IllegalValue
                            (Printf.sprintf
                               "%s: %s" string s)) in

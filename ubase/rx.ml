@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/ubase/rx.ml $ *)
-(* $I2: Last modified by vouillon on Fri, 28 May 2004 16:07:27 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/ubase/rx.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 (*
   Inspired by some code and algorithms from Mark William Hopkins
   (regexp.tar.gz, available in the comp.compilers file archive)
@@ -722,7 +721,7 @@ let glob_parse init s =
   let test c = not (eos ()) && s.[!i] = c in
   let accept c = let r = test c in if r then incr i; r in
   let get () = let r = s.[!i] in incr i; r in
-  let unget () = decr i in
+  (* let unget () = decr i in *)
 
   let rec expr () = expr' init (Sequence [])
   and expr' beg left =
@@ -746,7 +745,7 @@ let glob_parse init s =
        end,
        Mid)
     else if accept '[' then begin
-      let mask = if beg <> Mid then notdot else gany in
+      (* let mask = if beg <> Mid then notdot else gany in *)
       let set =
         if accept '^' || accept '!' then
           cnegate 0 255 (bracket [])

@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/recon.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/recon.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 open Common
 
@@ -80,6 +79,23 @@ let forceRoot: string Prefs.t =
      ^ "to force Unison to choose the file with the later (earlier) "
      ^ "modtime.  In this case, the \\verb|-times| preference must also "
      ^ "be enabled.\n\n"
+     ^ "This preference is overridden by the \\verb|forcepartial| preference.\n\n"
+     ^ "This preference should be used only if you are {\\em sure} you "
+     ^ "know what you are doing!")
+
+let forceRootPartial: Pred.t =
+  Pred.create "forcepartial"
+    ("Including the preference \\texttt{forcepartial \\ARG{PATHSPEC} -> \\ARG{root}} causes Unison to "
+     ^ "resolve all differences (even non-conflicting changes) in favor of "
+     ^ "\\ARG{root} for the files in \\ARG{PATHSPEC} (see \\sectionref{pathspec}{Path Specification} "
+     ^ "for more information).  "
+     ^ "This effectively changes Unison from a synchronizer into a mirroring "
+     ^ "utility.  \n\n"
+     ^ "You can also specify \\verb|forcepartial PATHSPEC -> newer| "
+     ^ "(or \\verb|forcepartial PATHSPEC older|) "
+     ^ "to force Unison to choose the file with the later (earlier) "
+     ^ "modtime.  In this case, the \\verb|-times| preference must also "
+     ^ "be enabled.\n\n"
      ^ "This preference should be used only if you are {\\em sure} you "
      ^ "know what you are doing!")
 
@@ -91,6 +107,20 @@ let preferRoot: string Prefs.t =
      ^ "guidance from the user.  (The syntax of \\ARG{root} is the same as "
      ^ "for the \\verb|root| preference, plus the special values "
      ^ "\\verb|newer| and \\verb|older|.)  \n\n"
+     ^ "This preference is overridden by the \\verb|preferpartial| preference.\n\n"
+     ^ "This preference should be used only if you are {\\em sure} you "
+     ^ "know what you are doing!")
+
+let preferRootPartial: Pred.t =
+  Pred.create "preferpartial"
+    ("Including the preference \\texttt{preferpartial \\ARG{PATHSPEC} -> \\ARG{root}} "
+     ^ "causes Unison always to "
+     ^ "resolve conflicts in favor of \\ARG{root}, rather than asking for "
+     ^ "guidance from the user, for the files in \\ARG{PATHSPEC} (see "
+     ^ "\\sectionref{pathspec}{Path Specification} "
+     ^ "for more information).  (The syntax of \\ARG{root} is the same as "
+     ^ "for the \\verb|root| preference, plus the special values "
+     ^ "\\verb|newer| and \\verb|older|.)  \n\n"
      ^ "This preference should be used only if you are {\\em sure} you "
      ^ "know what you are doing!")
 
@@ -98,16 +128,20 @@ let preferRoot: string Prefs.t =
 (* preferences "force"/"preference", returns a pair (root, force)            *)
 let lookupPreferredRoot () =
   if Prefs.read forceRoot <> "" then
-    if not (Prefs.read Props.syncModtimes)
-       && (   (Prefs.read forceRoot = "newer")
-           || (Prefs.read forceRoot = "older"))
-    then
-      raise (Util.Transient (Printf.sprintf
-       "The 'force=%s' preference can only be used with 'times=true'"
-       (Prefs.read forceRoot))) else
     (Prefs.read forceRoot, `Force)
   else if Prefs.read preferRoot <> "" then
     (Prefs.read preferRoot, `Prefer)
+  else
+    ("",`Prefer)
+
+(* [lookupPreferredRootPartial: Path.t -> string * [`Force | `Prefer]] checks validity of  *)
+(* preferences "forcepartial", returns a pair (root, force)                                *)
+let lookupPreferredRootPartial p =
+  let s = Path.toString p in
+  if Pred.test forceRootPartial s then
+    (Pred.assoc forceRootPartial s, `Force)
+  else if Pred.test preferRootPartial s then
+    (Pred.assoc preferRootPartial s, `Prefer)
   else
     ("",`Prefer)
 
@@ -118,14 +152,32 @@ let overrideReconcilerChoices ris =
   if root<>"" then begin
     let dir = root2direction root in
     Safelist.iter (fun ri -> setDirection ri dir force) ris
-  end
+  end;
+  Safelist.iter (fun ri ->
+                   let (rootp,forcep) = lookupPreferredRootPartial ri.path in
+                   if rootp<>"" then begin
+                     let dir = root2direction rootp in
+                       setDirection ri dir forcep
+                   end) ris
 
 (* Look up the preferred root and verify that it is OK (this is called at    *)
 (* the beginning of the run, so that we don't have to wait to hear about     *)
 (* errors                                                                    *)
+(* This should also check for the partial version, but this needs a way to   *)
+(* extract the associated values from a Pred.t                               *)
 let checkThatPreferredRootIsValid () =
-  let (root,_) = lookupPreferredRoot() in
-  if root<>"" then ignore(root2direction root)
+  let test_root predname = function
+    | "" -> ()
+    | ("newer" | "older") as r -> 
+        if not (Prefs.read Props.syncModtimes) then
+          raise (Util.Transient (Printf.sprintf
+                                   "The '%s=%s' preference can only be used with 'times=true'"
+                                   predname r))
+    | r -> ignore (root2direction r) in
+  let (root,pred) = lookupPreferredRoot() in
+  if root<>"" then test_root (match pred with `Force -> "force" | `Prefer -> "prefer") root;
+  Safelist.iter (test_root "forcepartial") (Pred.extern_associated_strings forceRootPartial);
+  Safelist.iter (test_root "preferpartial") (Pred.extern_associated_strings preferRootPartial)
 
 (* ------------------------------------------------------------------------- *)
 (*                    Main Reconciliation stuff                              *)
@@ -445,10 +497,10 @@ let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
   overrideReconcilerChoices sorted;
   (sorted, not (Tree.is_empty equals), dangerous)
 
-(* This is the main function: it takes a list of updateItem lists and,       *)
-(* according to the roots and paths of synchronization, builds the           *)
-(* corresponding reconItem list.  A second component indicates whether there *)
-(* is any file updated in the same way on both sides                         *)
+(* This is the main function: it takes a list of updateItem lists and,       
+   according to the roots and paths of synchronization, builds the           
+   corresponding reconItem list.  A second component indicates whether there 
+   is any file updated in the same way on both sides. *)
 let reconcileAll (ONEPERPATH(updatesListList)) =
   Trace.status "Reconciling changes";
   debug (fun() -> Util.msg "reconcileAll\n");

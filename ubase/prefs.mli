@@ -1,5 +1,4 @@
-(* $I1: Unison file synchronizer: src/ubase/prefs.mli $ *)
-(* $I2: Last modified by bcpierce on Sun, 24 Mar 2002 11:24:03 -0500 $ *)
+(* Unison file synchronizer: src/ubase/prefs.mli *)
 (* $I3: Copyright 1999-2002 (see COPYING for details) $ *)
 
 type 'a t
@@ -98,6 +97,9 @@ val readAFile : string -> (string * int * string * string) list
 
 (* Parse the preferences file, raising Fatal if there are any problems       *)
 val loadTheFile : unit -> unit
+
+(* Parse the given strings as if they were part of the preferences file      *)
+val loadStrings : string list -> unit
 
 (* ------------------------------------------------------------------------- *)
 

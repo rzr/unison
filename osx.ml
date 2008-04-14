@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/osx.ml $ *)
-(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/osx.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 external isMacOSXPred : unit -> bool = "isMacOSX"
 
@@ -235,11 +234,16 @@ let getFileInfos fspath path typ =
                 AppleDoubleRess
                   (begin match Util.osType with
                      `Win32 -> 0
-                   | `Unix  -> stats.Unix.LargeFile.st_ino
+                   | `Unix  -> (* The inode number is truncated so that
+                                  it fits in a 31 bit ocaml integer *)
+                               stats.Unix.LargeFile.st_ino land 0x3FFFFFFF
                    end,
                    stats.Unix.LargeFile.st_mtime,
                    begin match Util.osType with
-                     `Win32 -> stats.Unix.LargeFile.st_ctime
+                     `Win32 -> (* Was "stats.Unix.LargeFile.st_ctime", but 
+                                  this was bogus: Windows ctimes are
+                                  not reliable.  [BCP, Apr 07] *)
+                       0.
                    | `Unix  -> 0.
                    end,
                    Uutil.Filesize.ofInt64 rsrcLength,
@@ -273,7 +277,7 @@ let setFileInfos fspath path finfo =
       setFileInfosInternal (Fspath.concatToString fspath path)
         (insertInfo fullFinfo finfo)
     with Unix.Unix_error ((Unix.EOPNOTSUPP | Unix.ENOSYS), _, _) ->
-      (* Not a HFS volume.  Look for an AppleDouble file *)
+      (* Not an HFS volume.  Look for an AppleDouble file *)
       let (fspath, path) = Fspath.findWorkingDir fspath path in
       begin try
         let (doublePath, inch, entries) = openDouble fspath path in
@@ -388,7 +392,7 @@ let openRessIn fspath path =
         (Unix.openfile
            (Fspath.concatToString fspath (ressPath path))
            [Unix.O_RDONLY] 0o444)
-    with Unix.Unix_error (Unix.ENOTDIR, _, _) ->
+    with Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) ->
       let (doublePath, inch, entries) = openDouble fspath path in
       try
         let (rsrcOffset, rsrcLength) = Safelist.assoc `RSRC entries in
@@ -406,7 +410,7 @@ let openRessOut fspath path length =
         (Unix.openfile
            (Fspath.concatToString fspath (ressPath path))
            [Unix.O_WRONLY;Unix.O_TRUNC] 0o600)
-    with Unix.Unix_error (Unix.ENOTDIR, _, _) ->
+    with Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) ->
       let path = appleDoubleFile fspath path in
       let outch =
         open_out_gen

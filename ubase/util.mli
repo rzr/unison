@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/ubase/util.mli $ *)
-(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/ubase/util.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* Miscellaneous utility functions and datatypes *)
 
@@ -32,6 +31,8 @@ type confirmation =
 
 val printException : exn -> string
 
+val process_status_to_string : Unix.process_status -> string
+
 (* ---------------------------------------------------------------------- *)
 (* Strings *)
 
@@ -49,7 +50,7 @@ val truncateString : string -> int -> string
 val startswith : string -> string -> bool
 val endswith : string -> string -> bool
 val findsubstring : string -> string -> int option
-val replacesubstring : string -> string -> string -> string
+val replacesubstring : string -> string -> string -> string (* IN,FROM,TO *)
 val replacesubstrings : string -> (string * string) list -> string
 val concatmap : string -> ('a -> string) -> 'a list -> string
 val trimWhitespace : string -> string
@@ -74,6 +75,7 @@ val percentageOfTotal :
   int ->     (* current value *)
   int ->     (* total value *)
   int        (* percentage of total *)
+val monthname : int -> string
 val percent2string : float -> string
 val fileInHomeDir : string -> string
 
@@ -97,6 +99,18 @@ val warn : string -> unit
 val supplyFileInUnisonDirFn : (string -> string) -> unit
 (* Use it like this: *)
 val fileInUnisonDir : string -> string
+
+(* Printing and formatting functions *)
+
+val format : ('a, Format.formatter, unit) format -> 'a
+(** Format some text on the current formatting channel.
+    This is the only formatting function that should be called anywhere in the program! *)
+
+val flush : unit -> unit
+
+val format_to_string : (unit -> unit) -> string 
+(** [format_to_string f] runs [f] in a context where the Format functions are redirected to
+    a string, which it returns. *)
 
 (* Format and print messages on the standard error stream, being careful to
    flush the stream after each one *)

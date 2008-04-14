@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/ubase/safelist.mli $ *)
-(* $I2: Last modified by bcpierce on Mon, 09 Sep 2002 21:59:33 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/ubase/safelist.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* All functions here are tail recursive and will work for arbitrary
    sized lists (unlike some of the standard ones).  The intention is that

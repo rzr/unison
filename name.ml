@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/name.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 17 Apr 2002 12:03:26 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/name.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* NOTE: IF YOU CHANGE TYPE "NAME", THE ARCHIVE FORMAT CHANGES;
    INCREMENT "UPDATE.ARCHIVEFORMAT" *)
@@ -22,8 +21,7 @@ let fromString s =
   (* Make sure there are no slashes in the s *)
   begin try
     ignore(String.index s '/');
-    raise(Invalid_argument (Printf.sprintf
-      "Name.fromString('%s' contains a '/')" s))
+    raise (Util.Transient (Printf.sprintf "Filename '%s' contains a '/'" s))
   with Not_found -> () end;
   (* We ought to consider further checks, e.g., in Windows, no colons *)
   s

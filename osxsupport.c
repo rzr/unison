@@ -1,11 +1,12 @@
-/* $I1: Unison file synchronizer: src/osxsupport.c $ */
-/* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ */
-/* $I3: Copyright 1999-2004 (see COPYING for details) $ */
+/* Unison file synchronizer: src/osxsupport.c */
+/* Copyright 1999-2007 (see COPYING for details) */
 
 #include <caml/mlvalues.h>
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #ifdef __APPLE__
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/attr.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -55,6 +56,14 @@ CAMLprim value getFileInfos (value path, value need_size) {
 
   if (retcode == -1) uerror("getattrlist", path);
 
+  if (Bool_val (need_size)) {
+    if (attrBuf.length != sizeof attrBuf)
+      unix_error (EOPNOTSUPP, "getattrlist", path);
+  } else {
+    if (attrBuf.length < sizeof (unsigned long) + 32)
+      unix_error (EOPNOTSUPP, "getattrlist", path);
+  }
+
   fInfo = alloc_string (32);
   memcpy (String_val (fInfo), attrBuf.finderInfo, 32);
   if (Bool_val (need_size))
@@ -99,6 +108,21 @@ CAMLprim value setFileInfos (value path, value fInfo) {
 
   retcode = setattrlist(String_val (path), &attrList, attrBuf.finderInfo,
                         sizeof attrBuf.finderInfo, options);
+
+  if (retcode == -1 && errno == EACCES) {
+    /* Unlike with normal Unix attributes, we cannot set OS X attributes 
+       if file is read-only.  Try making it writable temporarily. */
+    struct stat st;
+    int r = stat(String_val(path), &st);
+    if (r == -1) uerror("setattrlist", path);
+    r = chmod(String_val(path), st.st_mode | S_IWUSR);
+    if (r == -1) uerror("setattrlist", path);
+    /* Try again */
+    retcode = setattrlist(String_val (path), &attrList, attrBuf.finderInfo,
+                          sizeof attrBuf.finderInfo, options);
+    /* Whether or not that worked, we should try to set the mode back. */
+    chmod(String_val(path), st.st_mode);
+  }
 
   if (retcode == -1) uerror("setattrlist", path);
 

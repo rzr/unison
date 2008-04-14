@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/common.mli $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/common.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (***************************************************************************)
 (*               COMMON TYPES USED BY ALL MODULES                          *)
@@ -116,6 +115,7 @@ type reconItem =
 val ucLength : updateContent -> Uutil.Filesize.t
 val uiLength : updateItem -> Uutil.Filesize.t
 val riLength : reconItem -> Uutil.Filesize.t
+val riFileType : reconItem -> string
 val fileInfos :
   updateItem -> updateItem ->
   Props.t * Os.fullfingerprint * Osx.ressStamp *

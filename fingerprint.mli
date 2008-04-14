@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/fingerprint.mli $ *)
-(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/fingerprint.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 type t
 

@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/main.ml $ *)
-(* $I2: Last modified by vouillon on Tue, 31 Aug 2004 11:33:38 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/main.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* ---------------------------------------------------------------------- *)
 
@@ -183,15 +182,7 @@ let init() = begin
 
   (* Start a socket server if requested *)
   begin try
-    let i =
-      match Util.StringMap.find socketPrefName argv with
-        [] ->
-          assert false
-      | i::_ ->
-          try int_of_string i with Failure _ ->
-            Util.msg "-socket must be followed by a number\n";
-            exit 1
-    in
+    let i = List.hd (Util.StringMap.find socketPrefName argv) in
     catch_all (fun () ->
       Os.createUnisonDir();
       Remote.waitOnPort

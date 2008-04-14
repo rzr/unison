@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/copy.ml $ *)
-(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/copy.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 let (>>=) = Lwt.bind
 
@@ -60,46 +59,51 @@ let lwt_protect f g =
 (****)
 
 let localFile
-     fspathFrom pathFrom fspathTo pathTo realPathTo update desc ressLength id =
+     fspathFrom pathFrom fspathTo pathTo realPathTo update desc ressLength ido =
+
+  let use_id f = match ido with Some id -> f id | None -> () in
+  
   Util.convertUnixErrorsToTransient
     "copying locally"
     (fun () ->
-       Uutil.showProgress id Uutil.Filesize.zero "l";
-       debug (fun () ->
-         Util.msg "copylocal (%s,%s) to (%s, %s)\n"
-           (Fspath.toString fspathFrom) (Path.toString pathFrom)
-           (Fspath.toString fspathTo) (Path.toString pathTo));
-       let inFd = openFileIn fspathFrom pathFrom `DATA in
-       protect (fun () ->
-         let outFd = openFileOut fspathTo pathTo `DATA in
-         protect (fun () ->
-           Uutil.readWrite inFd outFd
-             (fun l ->
-                Abort.check id;
-                Uutil.showProgress id (Uutil.Filesize.ofInt l) "l");
-           close_in inFd;
-           close_out outFd)
-           (fun () -> close_out_noerr outFd))
-         (fun () -> close_in_noerr inFd);
-       if ressLength > Uutil.Filesize.zero then begin
-         let inFd = openFileIn fspathFrom pathFrom (`RESS ressLength) in
-         protect (fun () ->
-           let outFd = openFileOut fspathTo pathTo (`RESS ressLength) in
-           protect (fun () ->
-             Uutil.readWriteBounded inFd outFd ressLength
-               (fun l ->
+      use_id (fun id -> Uutil.showProgress id Uutil.Filesize.zero "l");
+      debug (fun () ->
+        Util.msg "Copy.localFile %s / %s to %s / %s\n"
+          (Fspath.toString fspathFrom) (Path.toString pathFrom)
+          (Fspath.toString fspathTo) (Path.toString pathTo));
+      let inFd = openFileIn fspathFrom pathFrom `DATA in
+      protect (fun () ->
+        let outFd = openFileOut fspathTo pathTo `DATA in
+        protect (fun () ->
+          Uutil.readWrite inFd outFd
+            (fun l ->
+              use_id ( fun id ->
+		Abort.check id;
+		Uutil.showProgress id (Uutil.Filesize.ofInt l) "l"));
+          close_in inFd;
+          close_out outFd)
+          (fun () -> close_out_noerr outFd))
+        (fun () -> close_in_noerr inFd);
+      if ressLength > Uutil.Filesize.zero then begin
+        let inFd = openFileIn fspathFrom pathFrom (`RESS ressLength) in
+        protect (fun () ->
+          let outFd = openFileOut fspathTo pathTo (`RESS ressLength) in
+          protect (fun () ->
+            Uutil.readWriteBounded inFd outFd ressLength
+              (fun l ->
+		use_id (fun id ->
                   Abort.check id;
-                  Uutil.showProgress id (Uutil.Filesize.ofInt l) "l");
-             close_in inFd;
-             close_out outFd)
-             (fun () -> close_out_noerr outFd))
-           (fun () -> close_in_noerr inFd);
-       end;
-       match update with
-         `Update _ ->
-           Fileinfo.set fspathTo pathTo (`Copy realPathTo) desc
-       | `Copy ->
-           Fileinfo.set fspathTo pathTo (`Set Props.fileDefault) desc)
+                  Uutil.showProgress id (Uutil.Filesize.ofInt l) "l"));
+            close_in inFd;
+            close_out outFd)
+            (fun () -> close_out_noerr outFd))
+          (fun () -> close_in_noerr inFd);
+      end;
+      match update with
+        `Update _ ->
+          Fileinfo.set fspathTo pathTo (`Copy realPathTo) desc
+      | `Copy ->
+          Fileinfo.set fspathTo pathTo (`Set Props.fileDefault) desc)
 
 (****)
 
@@ -108,7 +112,6 @@ let localFile
    algorithm for optimizing the file transfer in the case where a
    similar file already exists on the target. *)
 
-(* BCPFIX: This preference is probably not needed any more. *)
 let rsyncActivated =
   Prefs.createBool "rsync" true
     "activate the rsync transfer mode"
@@ -380,41 +383,66 @@ let tryCopyMovedFile fspathTo pathTo realPathTo update desc fp ress id =
   Prefs.read Xferhint.xferbycopying
     &&
   begin
-    debug (fun () -> Util.msg "tryCopyMovedFile: -> %s /%s/\n"
-      (Path.toString pathTo) (Os.fullfingerprint_to_string fp));
-    match Xferhint.lookup fp with
-      None ->
-        false
-    | Some (candidateFspath, candidatePath) ->
-        debug (fun () ->
-          Util.msg
-            "tryCopyMovedFile: found match at %s,%s. Try local copying\n"
-            (Fspath.toString candidateFspath)
+    Util.convertUnixErrorsToTransient "tryCopyMovedFile" (fun() ->
+      debug (fun () -> Util.msg "tryCopyMovedFile: -> %s /%s/\n"
+        (Path.toString pathTo) (Os.fullfingerprint_to_string fp));
+      (* BCP '06: This is a hack to work around a bug on the Windows platform
+         that causes lightweight threads on the server to hang.  I conjecture that
+         the problem has to do with the RPC mechanism, which was used here to
+         make a call *back* from the server to the client inside Trace.log so that
+         the log message would be appended to the log file on the client. *)
+      let loggit = if Prefs.read Globals.someHostIsRunningWindows then Util.msg "%s" else Trace.log in
+      match Xferhint.lookup fp with
+        None ->
+          false
+      | Some (candidateFspath, candidatePath) ->
+          loggit (Printf.sprintf
+            "Shortcut: copying %s from local file %s\n"
+            (Path.toString realPathTo)
             (Path.toString candidatePath));
-        try
-          localFile
-            candidateFspath candidatePath fspathTo pathTo realPathTo
-            update desc (Osx.ressLength ress) id;
-          let info = Fileinfo.get false fspathTo pathTo in
-          let fp' = Os.fingerprint fspathTo pathTo info in
-          if fp' = fp then begin
-            debug (fun () -> Util.msg "tryCopyMoveFile: success.\n");
-            Xferhint.insertEntry (fspathTo, pathTo) fp;
-            true
-          end else begin
-            debug (fun () ->
-              Util.msg "tryCopyMoveFile: candidate file modified!");
-            Xferhint.deleteEntry (candidateFspath, candidatePath);
-            Os.delete fspathTo pathTo;
-            false
-          end
-        with
-          Util.Transient s ->
-            debug (fun () ->
-              Util.msg "tryCopyMovedFile: failed local copy [%s]" s);
-            Xferhint.deleteEntry (candidateFspath, candidatePath);
-            Os.delete fspathTo pathTo;
-            false
+          debug (fun () ->
+            Util.msg
+              "tryCopyMovedFile: found match at %s,%s. Try local copying\n"
+              (Fspath.toString candidateFspath)
+              (Path.toString candidatePath));
+          try
+            if Os.exists candidateFspath candidatePath then begin
+              localFile
+                candidateFspath candidatePath fspathTo pathTo realPathTo
+                update desc (Osx.ressLength ress) (Some id);
+              let info = Fileinfo.get false fspathTo pathTo in
+              let fp' = Os.fingerprint fspathTo pathTo info in
+              if fp' = fp then begin
+                debug (fun () -> Util.msg "tryCopyMoveFile: success.\n");
+                Xferhint.insertEntry (fspathTo, pathTo) fp;
+                true
+              end else begin
+                debug (fun () ->
+                  Util.msg "tryCopyMoveFile: candidate file modified!");
+                Xferhint.deleteEntry (candidateFspath, candidatePath);
+                Os.delete fspathTo pathTo;
+                loggit (Printf.sprintf
+                  "Shortcut didn't work because %s was modified\n"
+                  (Path.toString candidatePath));
+                false
+              end
+            end else begin
+              loggit (Printf.sprintf
+                "Shortcut didn't work because %s disappeared!\n"
+                (Path.toString candidatePath));
+              Xferhint.deleteEntry (candidateFspath, candidatePath);
+              false
+            end 
+          with
+            Util.Transient s ->
+              debug (fun () ->
+                Util.msg "tryCopyMovedFile: local copy didn't work [%s]" s);
+              Xferhint.deleteEntry (candidateFspath, candidatePath);
+              Os.delete fspathTo pathTo;
+              loggit (Printf.sprintf
+                "Local copy of %s failed\n"
+                (Path.toString candidatePath));
+              false)
   end
 
 let transmitFileLocal
@@ -461,7 +489,7 @@ let file
     (Common.Local, fspathFrom), (Common.Local, realFspathTo) ->
       localFile
         fspathFrom pathFrom fspathTo pathTo realPathTo
-        update desc (Osx.ressLength ress) id;
+        update desc (Osx.ressLength ress) (Some id);
       Lwt.return ()
   | _ ->
       transmitFile
@@ -470,3 +498,4 @@ let file
   end >>= (fun () ->
   Trace.showTimer timer;
   Lwt.return ())
+

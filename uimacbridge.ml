@@ -52,6 +52,7 @@ let unisonGetVersion() = Uutil.myVersion
 Callback.register "unisonGetVersion" unisonGetVersion;;
 
 (* snippets from Uicommon, duplicated for now *)
+(* BCP: Duplicating this is a bad idea!!! *)
 (* First initialization sequence *)
 (* Returns a string option: command line profile, if any *)
 let unisonInit0() =
@@ -151,7 +152,6 @@ let unisonInit1 profileName =
   Trace.debug "" (fun() -> Prefs.dumpPrefsToStderr() );
 
   (* FIX: if no roots, ask the user *)
-
   let localRoots,remoteRoots =
     Safelist.partition
       (function Clroot.ConnectLocal _ -> true | _ -> false)
@@ -212,6 +212,12 @@ let unisonInit2 () =
     (Uicommon.checkCaseSensitivity () >>=
      Globals.propagatePrefs);
 
+  (* Initializes some backups stuff according to the preferences just loaded from the profile.
+     Important to do it here, after prefs are propagated, because the function will also be
+     run on the server, if any. Also, this should be done each time a profile is reloaded
+     on this side, that's why it's here. *) 
+  Stasher.initBackups ();
+  
   (* Turn on GC messages, if the '-debug gc' flag was provided *)
   if Trace.enabled "gc" then Gc.set {(Gc.get ()) with Gc.verbose = 0x3F};
 
@@ -220,19 +226,16 @@ let unisonInit2 () =
 
   (* from Uigtk2 *)
   (* detect updates and reconcile *)
-  let (r1,r2) = Globals.roots () in
+  let _ = Globals.roots () in
   let t = Trace.startTimer "Checking for updates" in
   let findUpdates () =
     Trace.status "Looking for changes";
     let updates = Update.findUpdates () in
     Trace.showTimer t;
     updates in
-  let reconcile updates =
-    let t = Trace.startTimer "Reconciling" in
-    Recon.reconcileAll updates in
+  let reconcile updates = Recon.reconcileAll updates in
   let (reconItemList, thereAreEqualUpdates, dangerousPaths) =
     reconcile (findUpdates ()) in
-  Trace.showTimer t;
   if reconItemList = [] then
     if thereAreEqualUpdates then
       Trace.status "Replicas have been changed only in identical ways since last sync"
@@ -256,7 +259,9 @@ let unisonInit2 () =
 Callback.register "unisonInit2" unisonInit2;;
 
 let unisonRiToDetails ri =
-  (Path.toString ri.ri.path) ^ "\n" ^ (Uicommon.details2string ri.ri "  ");;
+  match ri.whatHappened with
+    Some (Util.Failed s) -> (Path.toString ri.ri.path) ^ "\n" ^ s
+  | _ -> (Path.toString ri.ri.path) ^ "\n" ^ (Uicommon.details2string ri.ri "  ");;
 Callback.register "unisonRiToDetails" unisonRiToDetails;;
 
 let unisonRiToPath ri = Path.toString ri.ri.path;;
@@ -333,7 +338,7 @@ let unisonSynchronize () =
     Trace.status "Nothing to synchronize"
   else begin
     Trace.status "Propagating changes";
-    Transport.start ();
+    Transport.logStart ();
     let t = Trace.startTimer "Propagating changes" in
     let im = Array.length !theState in
     let rec loop i actions pRiThisRound =
@@ -348,7 +353,8 @@ let unisonSynchronize () =
                 catch (fun () ->
                          Transport.transportItem
                            theSI.ri (Uutil.File.ofLine i)
-                           (fun title text -> Trace.status (Printf.sprintf "MERGE %s: %s" title text); true)
+                           (fun title text -> 
+			     Trace.status (Printf.sprintf "MERGE %s: %s" title text); true)
                          >>= (fun () ->
                          return Util.Succeeded))
                       (fun e ->
@@ -373,7 +379,7 @@ let unisonSynchronize () =
     Lwt_unix.run
       (loop 0 [] Common.isDeletion >>= (fun actions ->
         Lwt_util.join actions));
-    Transport.finish ();
+    Transport.logFinish ();
     Trace.showTimer t;
     Trace.status "Updating synchronizer state";
     let t = Trace.startTimer "Updating synchronizer state" in
@@ -449,10 +455,10 @@ let roots2niceStrings length = function
     (Util.truncateString host length, Util.truncateString "local" length)
  | _ -> assert false  (* BOGUS? *);;
 let unisonFirstRootString() =
-  let replica1, replica2 = roots2niceStrings 12 (Globals.roots()) in
+  let replica1, replica2 = roots2niceStrings 32 (Globals.roots()) in
   replica1;;
 let unisonSecondRootString() =
-  let replica1, replica2 = roots2niceStrings 12 (Globals.roots()) in
+  let replica1, replica2 = roots2niceStrings 32 (Globals.roots()) in
   replica2;;
 Callback.register "unisonFirstRootString" unisonFirstRootString;;
 Callback.register "unisonSecondRootString" unisonSecondRootString;;
