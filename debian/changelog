@@ -1,4 +1,4 @@
-unison (2.27.57-1) UNRELEASED; urgency=low
+unison (2.27.57-1) unstable; urgency=low
 
   [ Sylvain Le Gall]
   * New upstream release (Closes: #462598):
