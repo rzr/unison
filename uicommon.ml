@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/uicommon.ml $ *)
-(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/uicommon.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 open Common
 open Lwt
@@ -67,7 +66,7 @@ let profileLabel =
 
 let profileKey =
   Prefs.createString "key" ""
-    "define a keyboard shortcut for this profile"
+    "define a keyboard shortcut for this profile (in some UIs)"
     ("Used in a profile to define a numeric key (0-9) that can be used in "
      ^ "the graphical user interface to switch immediately to this profile.")
 (* This preference is not actually referred to in the code anywhere, since
@@ -79,8 +78,11 @@ let contactquietly =
   Prefs.createBool "contactquietly" false
     "Suppress the 'contacting server' message during startup"
     ("If this flag is set, Unison will skip displaying the "
-     ^ "`Contacting server' window (which some users find annoying) "
+     ^ "`Contacting server' message (which some users find annoying) "
      ^ "during startup.")
+
+let contactingServerMsg () =
+  Printf.sprintf "Contacting server..." 
 
 let repeat =
   Prefs.createString "repeat" ""
@@ -88,7 +90,9 @@ let repeat =
     ("Setting this preference causes the text-mode interface to synchronize "
      ^ "repeatedly, rather than doing it just once and stopping.  If the "
      ^ "argument is a number, Unison will pause for that many seconds before "
-     ^ "beginning again.  If the argument is a path, Unison will wait for the "
+     ^ "beginning again.")
+
+(*   ^ "If the argument is a path, Unison will wait for the "
      ^ "file at this path---called a {\\em changelog}---to "
      ^ "be modified (on either the client or the server "
      ^ "machine), read the contents of the changelog (which should be a newline-"
@@ -100,14 +104,45 @@ let repeat =
      ^ "changed, write the changed pathname to its local changelog where Unison "
      ^ "will find it the next time it looks.  If the changelogs have not been "
      ^ "modified, Unison will wait, checking them again every few seconds."
-    )
+*)
 
 let retry =
   Prefs.createInt "retry" 0
     "re-try failed synchronizations N times (text interface only)"
-    ("Setting this preference causes the text-mode interface to try again to synchronize "
-     ^ "updated paths where synchronization fails.  Each such path will be tried N times."
+    ("Setting this preference causes the text-mode interface to try again "
+     ^ "to synchronize "
+     ^ "updated paths where synchronization fails.  Each such path will be "
+     ^ "tried N times."
     )
+
+let confirmmerge =
+  Prefs.createBool "confirmmerge" false
+    "ask for confirmation before commiting results of a merge"
+    ("Setting this preference causes both the text and graphical interfaces"
+     ^ " to ask the user if the results of a merge command may be commited "
+     ^ " to the replica or not. Since the merge command works on temporary files,"
+     ^ " the user can then cancel all the effects of applying the merge if it"
+     ^ " turns out that the result is not satisfactory.  In "
+     ^ " batch-mode, this preference has no effect.")
+    
+let runTestsPrefName = "selftest"
+let runtests =
+  Prefs.createBool runTestsPrefName false "run internal tests and exit"
+   ("Run internal tests and exit.  This option is mostly for developers and must be used "
+  ^ "carefully: in particular, "
+  ^ "it will delete the contents of both roots, so that it can install its own files "
+  ^ "for testing.  This flag only makes sense on the command line.  When it is "
+  ^ "provided, no preference file is read: all preferences must be specified on the"
+  ^ "command line.  Also, since the self-test procedure involves overwriting the roots "
+  ^ "and backup directory, the names of the roots and of the backupdir preference "
+  ^ "must include the string "
+  ^ "\"test\" or else the tests will be aborted.  (If these are not given "
+  ^ "on the command line, dummy "
+  ^ "subdirectories in the current directory will be created automatically.)")
+
+(* This ref is set to Test.test during initialization, avoiding a circular
+   dependency *)
+let testFunction = ref (fun () -> assert false)
 
 (**********************************************************************
                          Formatting functions
@@ -117,9 +152,28 @@ let retry =
    *all* files would be marked new and this won't make sense to the user. *)
 let choose s1 s2 = if !Update.foundArchives then s1 else s2
 
+let showprev =
+  Prefs.createBool "showprev" false
+    "*Show previous properties, if they differ from current"
+    ""
+
+(* The next function produces nothing unless the "showprev" 
+   preference is set.  This is because it tends to make the 
+   output trace too long and annoying. *)
+let prevProps newprops ui =
+  if not (Prefs.read showprev) then ""
+  else match ui with
+    NoUpdates | Error _
+      -> ""
+  | Updates (_, New) ->
+      " (new)"
+  | Updates (_, Previous(_,oldprops,_,_)) ->
+      (* || Props.similar newprops oldprops *)
+      " (was: "^(Props.toString oldprops)^")"
+
 let replicaContent2string rc sep = 
-  let (typ, status, desc, _) = rc in
-  let d s = s ^ sep ^ Props.toString desc in
+  let (typ, status, desc, ui) = rc in
+  let d s = s ^ sep ^ Props.toString desc ^ prevProps desc ui in
   match typ, status with
     `ABSENT, `Unchanged ->
       "absent"
@@ -145,6 +199,7 @@ let replicaContent2string rc sep =
      d "changed dir      "
   | `DIRECTORY, `PropsChanged ->
      d "dir props changed" 
+
   (* Some cases that can't happen... *)
   | `ABSENT, (`Created | `Modified | `PropsChanged)
   | `SYMLINK, `PropsChanged
@@ -318,8 +373,7 @@ let ignoreExt path =
 let addIgnorePattern theRegExp =
   if theRegExp = "Path " then
     raise (Util.Transient "Can't ignore the root path!");
-  let theRegExps = theRegExp::(Pred.extern Globals.ignore) in
-  Pred.intern Globals.ignore theRegExps;
+  Globals.addRegexpToIgnore theRegExp;
   let r = Prefs.add "ignore" theRegExp in
   Trace.status r;
   (* Make sure the server has the same ignored paths (in case, for
@@ -376,8 +430,8 @@ let checkCaseSensitivity () =
   Case.init someHostIsCaseInsensitive;
   Props.init someHostIsRunningWindows;
   Osx.init someHostRunningOsX;
-  Prefs.set Update.someHostIsRunningWindows someHostIsRunningWindows;
-  Prefs.set Update.allHostsAreRunningWindows allHostsAreRunningWindows;
+  Prefs.set Globals.someHostIsRunningWindows someHostIsRunningWindows;
+  Prefs.set Globals.allHostsAreRunningWindows allHostsAreRunningWindows;
   return ())
 
 (* ---- *)
@@ -400,29 +454,50 @@ let promptForRoots getFirstRoot getSecondRoot =
    we ignore the command line *)
 let firstTime = ref(true)
 
+(* BCP: WARNING: Some of the code from here is duplicated in uimacbridge...! *)
 let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
-    ~termInteract =
+              ~termInteract =
   (* Restore prefs to their default values, if necessary *)
   if not !firstTime then Prefs.resetToDefaults();
 
   (* Tell the preferences module the name of the profile *)
   Prefs.profileName := Some(profileName);
   
-  (* If the profile does not exist, create an empty one (this should only
-     happen if the profile is 'default', since otherwise we will already
-     have checked that the named one exists). *)
-   if not(Sys.file_exists (Prefs.profilePathname profileName)) then
-     Prefs.addComment "Unison preferences file";
+  (* Check whether the -selftest flag is present on the command line *)
+  let testFlagPresent =
+    Util.StringMap.mem runTestsPrefName (Prefs.scanCmdLine usageMsg) in
+  
+  (* If the -selftest flag is present, then we skip loading the preference file.
+     (This is prevents possible confusions where settings from a preference
+     file could cause unit tests to fail.) *)
+  if not testFlagPresent then begin
+    (* If the profile does not exist, create an empty one (this should only
+       happen if the profile is 'default', since otherwise we will already
+       have checked that the named one exists). *)
+    if not(Sys.file_exists (Prefs.profilePathname profileName)) then
+      Prefs.addComment "Unison preferences file";
 
-  (* Load the profile *)
-  (debug (fun() -> Util.msg "about to load prefs");
-  Prefs.loadTheFile());
+    (* Load the profile *)
+    (debug (fun() -> Util.msg "about to load prefs");
+     Prefs.loadTheFile());
 
-  (* Parse the command line.  This will temporarily override
-     settings from the profile. *)
+    (* Now check again that the -selftest flag has not been set, and barf otherwise *)
+    if Prefs.read runtests then raise (Util.Fatal
+      "The 'test' flag should only be given on the command line")
+  end;
+
+  (* Parse the command line.  This will override settings from the profile. *)
   if !firstTime then begin
     debug (fun() -> Util.msg "about to parse command line");
     Prefs.parseCmdLine usageMsg;
+  end;
+
+  (* Install dummy roots and backup directory if we are running self-tests *)
+  if Prefs.read runtests then begin
+    if Globals.rawRoots() = [] then 
+      Prefs.loadStrings ["root = test-a.tmp"; "root = test-b.tmp"];
+    if (Prefs.read Stasher.backupdir) = "" then
+      Prefs.loadStrings ["backupdir = test-backup.tmp"];
   end;
 
   (* Print the preference settings *)
@@ -436,7 +511,7 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
 
   (* The following step contacts the server, so warn the user it could take
      some time *)
-  if !firstTime && (not (Prefs.read contactquietly)) then 
+  if !firstTime && (not (Prefs.read contactquietly || Prefs.read Trace.terse)) then 
     displayWaitMessage();
 
   (* Canonize the names of the roots, sort them (with local roots first),
@@ -453,12 +528,11 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
   (* Check to be sure that there is at most one remote root *)
   let numRemote =
     Safelist.fold_left
-      (fun n (w,_) ->
-        match w with Local -> n | Remote _ -> n+1)
+      (fun n (w,_) -> match w with Local -> n | Remote _ -> n+1)
       0
       (Globals.rootsList()) in
-  if numRemote > 1 then
-    raise(Util.Fatal "cannot synchronize more than one remote root");
+      if numRemote > 1 then
+        raise(Util.Fatal "cannot synchronize more than one remote root");
 
   (* If no paths were specified, then synchronize the whole replicas *)
   if Prefs.read Globals.paths = [] then Prefs.set Globals.paths [Path.empty];
@@ -468,28 +542,36 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
 
   Update.storeRootsName ();
 
-  debug
-    (fun() ->
+  if not (Prefs.read contactquietly || Prefs.read Trace.terse) then
+    Util.msg "Connected [%s]\n"
+      (Util.replacesubstring (Update.getRootsName()) ", " " -> ");
+
+  debug (fun() ->
        Printf.eprintf "Roots: \n";
        Safelist.iter (fun clr -> Printf.eprintf "        %s\n" clr)
          (Globals.rawRoots ());
        Printf.eprintf "  i.e. \n";
        Safelist.iter (fun clr -> Printf.eprintf "        %s\n"
-                    (Clroot.clroot2string (Clroot.parseRoot clr)))
+                        (Clroot.clroot2string (Clroot.parseRoot clr)))
          (Globals.rawRoots ());
        Printf.eprintf "  i.e. (in canonical order)\n";
        Safelist.iter (fun r -> 
-         Printf.eprintf "       %s\n" (root2string r))
+                        Printf.eprintf "       %s\n" (root2string r))
          (Globals.rootsInCanonicalOrder());
-       Printf.eprintf "\n"
-    );
+       Printf.eprintf "\n");
 
   Recon.checkThatPreferredRootIsValid();
-
+  
   Lwt_unix.run
     (checkCaseSensitivity () >>=
      Globals.propagatePrefs);
 
+  (* Initializes some backups stuff according to the preferences just loaded from the profile.
+     Important to do it here, after prefs are propagated, because the function will also be
+     run on the server, if any. Also, this should be done each time a profile is reloaded
+     on this side, that's why it's here. *) 
+  Stasher.initBackups ();
+  
   firstTime := false
 
 (**********************************************************************
@@ -592,13 +674,20 @@ let uiInit
   (* Load the profile and command-line arguments *)
   initPrefs
     profileName displayWaitMessage getFirstRoot getSecondRoot termInteract;
-
+  
   (* Turn on GC messages, if the '-debug gc' flag was provided *)
   if Trace.enabled "gc" then Gc.set {(Gc.get ()) with Gc.verbose = 0x3F};
 
   if Prefs.read testServer then exit 0;
+
   (* BCPFIX: Should/can this be done earlier?? *)
-  Files.processCommitLogs()
+  Files.processCommitLogs();
+
+  (* Run unit tests if requested *)
+  if Prefs.read runtests then begin
+    (!testFunction)();
+    exit 0
+  end
 
 (* Exit codes *)
 let perfectExit = 0   (* when everything's okay *)

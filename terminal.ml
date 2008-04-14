@@ -32,10 +32,13 @@ Host key verification failed." (to stderr)
 *)
 
 let passwordRx =
-  Rx.rx ".*assword: "
+  Rx.rx ".*assword:[ ]*"
+let passphraseRx =
+  Rx.rx "Enter passphrase for key.*"
 let authenticityRx =
   Rx.rx "The authenticity of host .* continue connecting \\(yes/no\\)\\? "
 let password s = Rx.match_string passwordRx s
+let passphrase s = Rx.match_string passphraseRx s
 let authenticity s = Rx.match_string authenticityRx s
 
 (* Create a new process with a new controlling terminal, useful for
@@ -181,8 +184,7 @@ let create_session cmd args new_stdin new_stdout new_stderr =
             tio.Unix.c_echo <- false;
             Unix.tcsetattr slaveFd Unix.TCSANOW tio;
             perform_redirections new_stdin new_stdout new_stderr;
-            Unix.execvp cmd args; (* never returns *)
-            assert false          (* to satisfy type checker *)
+            Unix.execvp cmd args (* never returns *)
           with _ ->
             Printf.eprintf "Some error in create_session child\n";
             flush stderr;

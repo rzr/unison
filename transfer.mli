@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/transfer.mli $ *)
-(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/transfer.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (*
    Rsync : general algorithm description

@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/uigtk2.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/uigtk2.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 open Common
 open Lwt
@@ -8,6 +7,8 @@ open Lwt
 module Private = struct
 
 let debug = Trace.debug "ui"
+
+let myNameCapitalized = String.capitalize Uutil.myName
 
 (**********************************************************************
                            LOW-LEVEL STUFF
@@ -24,7 +25,7 @@ let tryAgainMessage =
 or with a remote directory.
 
 Please enter the first (local) directory that you want to synchronize."
-Uutil.myName
+myNameCapitalized
 
 (* ---- *)
 
@@ -56,7 +57,7 @@ specify here.  (Use \"%s -socket xxx\" on the remote machine to
 start the %s server.)  You must enter the host, port, and the directory
 on the remote machine (relative to the working directory of the
 %s server running on that machine)."
-Uutil.myName Uutil.myName Uutil.myName Uutil.myName Uutil.myName Uutil.myName Uutil.myName
+myNameCapitalized myNameCapitalized myNameCapitalized myNameCapitalized myNameCapitalized myNameCapitalized myNameCapitalized
 
 (**********************************************************************
  Font preferences
@@ -91,7 +92,7 @@ let icon =
 
 type stateItem = { mutable ri : reconItem;
                    mutable bytesTransferred : Uutil.Filesize.t;
-                   mutable whatHappened : Util.confirmation option }
+                   mutable whatHappened : (Util.confirmation * string option) option}
 let theState = ref [||]
 
 let current = ref None
@@ -514,7 +515,11 @@ let statistics () =
   ignore (lst#append ["Data received"]);
   ignore (lst#append ["File data written"]);
   let style = lst#misc#style#copy in
-  style#set_font (Lazy.force fontMonospaceMedium);
+  (* BCP: Removed this on 6/13/2006 as a workaround for a bug reported
+     by Norman Ramsey.  Apparently, lablgtl2 uses Gdk.Font, which is
+     deprecated; its associated operations don't work in recent versions
+     of gtk2. *)
+  (* style#set_font (Lazy.force fontMonospaceMedium); *)
   for r = 0 to 2 do
     lst#set_row ~selectable:false r;
     for c = 1 to 3 do
@@ -765,25 +770,22 @@ let getSecondRoot () =
     let file = fileE#text in
     let user = userE#text in
     let host = hostE#text in
+    let port = portE#text in
     match !varLocalRemote with
       `Local ->
         Clroot.clroot2string(Clroot.ConnectLocal(Some file))
     | `SSH | `RSH ->
-        let portOpt =
-          (* FIX: report an error if the port entry is not well formed *)
-          try Some(int_of_string(portE#text))
-          with _ -> None in
         Clroot.clroot2string(
         Clroot.ConnectByShell((if !varLocalRemote=`SSH then "ssh" else "rsh"),
                               host,
                               (if user="" then None else Some user),
-                              portOpt,
+                              (if port="" then None else Some port),
                               Some file))
     | `SOCKET ->
         Clroot.clroot2string(
         (* FIX: report an error if the port entry is not well formed *)
         Clroot.ConnectBySocket(host,
-                               int_of_string(portE#text),
+                               portE#text,
                                Some file)) in
   let contCommand() =
     try
@@ -823,7 +825,8 @@ let getPassword rootName msg =
 
   t#vbox#set_spacing 12;
 
-  let header = primaryText (Format.sprintf "Connecting to '%s'..." rootName) in
+  let header =
+    primaryText (Format.sprintf "Connecting to '%s'..." (protect rootName)) in
 
   let h1 = GPack.hbox ~border_width:6 ~spacing:12 ~packing:t#vbox#pack () in
   (* FIX: DIALOG_AUTHENTICATION is way better but is not available
@@ -831,7 +834,7 @@ let getPassword rootName msg =
   ignore (GMisc.image ~stock:(*`DIALOG_AUTHENTICATION*)`DIALOG_QUESTION ~icon_size:`DIALOG
             ~yalign:0. ~packing:h1#pack ());
   let v1 = GPack.vbox ~spacing:12 ~packing:h1#pack () in
-  ignore(GMisc.label ~markup:(header ^ "\n\n" ^ escapeMarkup msg)
+  ignore(GMisc.label ~markup:(header ^ "\n\n" ^ escapeMarkup (protect msg))
            ~selectable:true ~yalign:0. ~packing:v1#pack ());
 
   let passwordE = GEdit.entry ~packing:v1#pack ~visibility:false () in
@@ -908,7 +911,8 @@ let scanProfiles () =
              provideProfileKey filename k f info
            with Not_found -> ());
           (f, info))
-       (Safelist.filter (fun name -> not (Util.startswith name ".#"))
+       (Safelist.filter (fun name -> not (   Util.startswith name ".#"
+                                          || Util.startswith name Os.tempFilePrefix))
           (Files.ls (Fspath.toString Os.unisonDir)
              "*.prf")))
 
@@ -1045,7 +1049,7 @@ let getProfile () =
       let (profile, info) = lst#get_row_data i in
       result := Some profile;
       begin match info.roots with
-        [r1; r2] -> root1#set_text r1; root2#set_text r2;
+        [r1; r2] -> root1#set_text (protect r1); root2#set_text (protect r2);
                     tbl#misc#set_sensitive true
       | _        -> root1#set_text ""; root2#set_text "";
                     tbl#misc#set_sensitive false
@@ -1117,8 +1121,7 @@ let documentation sect =
 
 (* ------ *)
 
-let messageBox ~title ?(action = fun t -> t#destroy)
-    ?(modal = false) message =
+let messageBox ~title ?(action = fun t -> t#destroy) ?(modal = false) message =
   let utitle = transcode title in
   let t = GWindow.dialog ~title:utitle ~modal ~position:`CENTER () in
   let t_dismiss = GButton.button ~stock:`CLOSE ~packing:t#action_area#add () in
@@ -1136,6 +1139,44 @@ let messageBox ~title ?(action = fun t -> t#destroy)
     GMain.Main.main ();
     releaseFocus ()
   end
+
+(* twoBoxAdvanced: Display a message in a window and wait for the user
+   to hit one of two buttons.  Return true if the first button is
+   chosen, false if the second button is chosen. Also has a button for 
+   showing more details to the user in a messageBox dialog *)
+let twoBoxAdvanced ~title ~message ~longtext ~advLabel ~astock ~bstock =
+  let t =
+    GWindow.dialog ~border_width:6 ~modal:false ~no_separator:true
+      ~allow_grow:false () in
+  t#vbox#set_spacing 12;
+  let h1 = GPack.hbox ~border_width:6 ~spacing:12 ~packing:t#vbox#pack () in
+  ignore (GMisc.image ~stock:`DIALOG_WARNING ~icon_size:`DIALOG
+            ~yalign:0. ~packing:h1#pack ());
+  let v1 = GPack.vbox ~spacing:12 ~packing:h1#pack () in
+  ignore (GMisc.label
+            ~markup:(primaryText title ^ "\n\n" ^ escapeMarkup message)
+            ~selectable:true ~yalign:0. ~packing:v1#add ());
+  t#add_button_stock `CANCEL `NO;
+  let cmd () =
+    messageBox ~title:"Details" ~modal:false longtext
+  in
+  t#add_button advLabel `HELP;
+  t#add_button_stock `APPLY `YES;
+  t#set_default_response `NO;
+  let res = ref false in
+  let setRes signal =
+    match signal with
+      `YES -> res := true; t#destroy ()
+    | `NO -> res := false; t#destroy ()
+    | `HELP -> cmd ()
+    | _ -> ()
+  in
+  ignore (t#connect#response ~callback:setRes);
+  ignore (t#connect#destroy ~callback:GMain.Main.quit);
+  grabFocus t; t#show();
+  GMain.Main.main();
+  releaseFocus ();
+  !res
 
 
 (**********************************************************************
@@ -1156,7 +1197,7 @@ let getMyWindow () =
           | None ->
               (* Used to be ~position:`CENTER -- maybe that was better... *)
               GWindow.window ~kind:`TOPLEVEL ~position:`CENTER
-                ~title:Uutil.myName () in
+                ~title:myNameCapitalized () in
   myWindow := Some(w);
   w#set_allow_grow true;
   w
@@ -1177,7 +1218,7 @@ let displayWaitMessage () =
     ignore (GMisc.image ~stock:`DIALOG_INFO ~icon_size:`DIALOG
               ~yalign:0. ~packing:h1#pack ());
     let m =
-      GMisc.label ~markup:(primaryText "Contacting server...")
+      GMisc.label ~markup:(primaryText (Uicommon.contactingServerMsg()))
         ~yalign:0. ~selectable:true ~packing:h1#add () in
     m#misc#set_can_focus false;
     let quit = GButton.button ~stock:`QUIT ~packing:bb#pack () in
@@ -1238,8 +1279,8 @@ let rec createToplevelWindow () =
       else if label="" then p
       else p ^ " (" ^ label ^ ")" in
     toplevelWindow#set_title
-      (if s = "" then Uutil.myName else
-       Format.sprintf "%s [%s]" Uutil.myName s);
+      (if s = "" then myNameCapitalized else
+       Format.sprintf "%s [%s]" myNameCapitalized s);
     let s = if s="" then "" else "Profile: " ^ s in
     profileLabel#set_text (transcodeFilename s)
   in
@@ -1294,13 +1335,13 @@ let rec createToplevelWindow () =
       ~headers_clickable:false () in
   let s = Uicommon.roots2string () in
   ignore (lst#append_column
-    (GTree.view_column ~title:(" " ^ String.sub s  0 12 ^ " ")
+    (GTree.view_column ~title:(" " ^ protect (String.sub s  0 12) ^ " ")
        ~renderer:(GTree.cell_renderer_text [], ["text", c_replica1]) ()));
   ignore (lst#append_column
     (GTree.view_column ~title:"  Action  "
        ~renderer:(GTree.cell_renderer_pixbuf [], ["pixbuf", c_action]) ()));
   ignore (lst#append_column
-    (GTree.view_column ~title:(" " ^ String.sub s  15 12 ^ " ")
+    (GTree.view_column ~title:(" " ^ protect (String.sub s  15 12) ^ " ")
        ~renderer:(GTree.cell_renderer_text [], ["text", c_replica2]) ()));
   ignore (lst#append_column
     (GTree.view_column ~title:"  Status  " ()));
@@ -1328,8 +1369,8 @@ let rec createToplevelWindow () =
       (fun i data ->
          mainWindow#set_column
            ~title_active:false ~auto_resize:true ~title:data i)
-      [| " " ^ String.sub s  0 12 ^ " "; "  Action  ";
-         " " ^ String.sub s 15 12 ^ " "; "  Status  "; " Path" |]
+      [| " " ^ protect (String.sub s  0 12) ^ " "; "  Action  ";
+         " " ^ protect (String.sub s 15 12) ^ " "; "  Status  "; " Path" |]
   in
   setMainWindowColumnHeaders();
 
@@ -1337,40 +1378,68 @@ let rec createToplevelWindow () =
     Create the details window
    *********************************************************************)
 
-  let detailsWindow =
+  let (showDetailsButton, detailsWindow) =
     let sw =
       GBin.frame ~packing:(toplevelVBox#pack ~expand:false)
         ~shadow_type:`IN (*~hpolicy:`AUTOMATIC ~vpolicy:`NEVER*) () in
-    GText.view ~editable:false
-      ~wrap_mode:`NONE ~packing:sw#add () in
-  detailsWindow#misc#modify_font (Lazy.force fontMonospaceMediumPango);
-  detailsWindow#misc#set_size_chars ~height:3 ~width:104 ();
-  detailsWindow#misc#set_can_focus false;
+    let hb =GPack.hbox ~packing:sw#add () in
+    (GButton.button ~label:"View details..."
+         ~show:false ~packing:(hb#pack ~expand:false) (),
+     GText.view ~editable:false ~wrap_mode:`NONE ~packing:hb#add ())
 
+  in
+  detailsWindow#misc#modify_font (Lazy.force fontMonospaceMediumPango);
+  detailsWindow#misc#set_size_chars ~height:3 ~width:112 ();
+  detailsWindow#misc#set_can_focus false;
+  let showDetCommand () = 
+    let details =
+      match !current with
+	None -> "[No details available]"
+      | Some row -> 
+	  (match !theState.(row).whatHappened with
+	    Some (Util.Failed _, Some det) -> det
+	  |  _ -> "[No details available]") in
+    messageBox ~title:"Merge execution details" details
+  in
+  ignore (showDetailsButton#connect#clicked ~callback:showDetCommand);
+  
   let updateButtons () =
     match !current with
       None ->
         grSet grAction false;
-        grSet grDiff false
+        grSet grDiff false;
+	showDetailsButton#misc#hide ()
     | Some row ->
-        let (activate1, activate2) =
+        let (details, activate1, activate2) =
           match !theState.(row).whatHappened, !theState.(row).ri.replicas with
           | None,   Different((`FILE, _, _, _),(`FILE, _, _, _), _, _) ->
-              (true, true)
-          | Some _,   Different((`FILE, _, _, _),(`FILE, _, _, _), _, _) ->
-              (false, true)
-          | Some _, _ ->
-              (false, false)
+              (false, true, true)
+          | Some res,   Different((`FILE, _, _, _),(`FILE, _, _, _), _, _) ->
+	      (match res with 
+		Util.Succeeded, _ -> (false, false, true)
+	      |	Util.Failed s, None -> (false, false, true)
+	      |	Util.Failed s, Some dText -> (true, false, false)
+		    )
+          | Some res, _ ->
+	      (match res with 
+		Util.Succeeded, _ -> (false, false, false)
+	      |	Util.Failed s, None -> (false, false, false)
+	      |	Util.Failed s, Some dText -> (true, false, false)
+		    )
           | None,   _ ->
-              (true, false) in
+              (false, true, false) in
         grSet grAction activate1;
-        grSet grDiff activate2 in
+        grSet grDiff activate2;
+        if details then
+          showDetailsButton#misc#show ()
+        else
+          showDetailsButton#misc#hide ()
+  in
 
   let makeRowVisible row =
     if mainWindow#row_is_visible row <> `FULL then begin
       let adj = mainWindow#vadjustment in
-      let current = adj#value
-      and upper = adj#upper and lower = adj#lower in
+      let upper = adj#upper and lower = adj#lower in
       let v =
         float row /. float (mainWindow#rows + 1) *. (upper-.lower) +. lower
       in
@@ -1396,8 +1465,9 @@ let rec createToplevelWindow () =
         let details =
           match !theState.(row).whatHappened with
             None -> Uicommon.details2string !theState.(row).ri "  "
-          | Some(Util.Succeeded) -> Uicommon.details2string !theState.(row).ri "  "
-          | Some(Util.Failed(s)) -> s in
+          | Some(Util.Succeeded, _) -> Uicommon.details2string !theState.(row).ri "  "
+          | Some(Util.Failed(s), None) -> s
+	  | Some(Util.Failed(s), Some resultLog) -> s in 
 	let path = Path.toString !theState.(row).ri.path in
         detailsWindow#buffer#set_text
           (transcodeFilename path ^ "\n" ^ transcode details);
@@ -1475,8 +1545,8 @@ let rec createToplevelWindow () =
               "      "
           | _ ->
               match conf with
-                Util.Succeeded -> "done  "
-              | Util.Failed _  -> "failed" in
+                Util.Succeeded, _ -> "done  "
+              | Util.Failed _, _  -> "failed" in
     let s = Uicommon.reconItem2string oldPath !theState.(i).ri status in
     (* FIX: This is ugly *)
     (String.sub s  0 8,
@@ -1688,21 +1758,24 @@ lst_store#set ~row ~column:c_path path;
     grSet grGo false;
     grSet grRestart false;
 
+    mainWindow#clear();
+    detailsWindow#buffer#set_text "";
+
     progressBarPulse := true;
     sync_action := Some (fun () -> progressBar#pulse ());
-    let (r1,r2) = Globals.roots () in
-    let t = Trace.startTimer "Checking for updates" in
     let findUpdates () =
+      let t = Trace.startTimer "Checking for updates" in
       Trace.status "Looking for changes";
       let updates = Update.findUpdates () in
       Trace.showTimer t;
       updates in
     let reconcile updates =
       let t = Trace.startTimer "Reconciling" in
-      Recon.reconcileAll updates in
+      let reconRes = Recon.reconcileAll updates in
+      Trace.showTimer t;
+      reconRes in
     let (reconItemList, thereAreEqualUpdates, dangerousPaths) =
       reconcile (findUpdates ()) in
-    Trace.showTimer t;
     if reconItemList = [] then
       if thereAreEqualUpdates then
         Trace.status "Replicas have been changed only in identical ways since last sync"
@@ -1721,9 +1794,11 @@ lst_store#set ~row ~column:c_path path;
     progressBarPulse := false; sync_action := None; displayGlobalProgress 0.;
     grSet grGo (Array.length !theState > 0);
     grSet grRestart true;
-    if dangerousPaths <> [] then begin
-      Prefs.set Globals.batch false;
-      Util.warn (Uicommon.dangerousPathMsg dangerousPaths)
+    if Prefs.read Globals.confirmBigDeletes then begin
+      if dangerousPaths <> [] then begin
+        Prefs.set Globals.batch false;
+        Util.warn (Uicommon.dangerousPathMsg dangerousPaths)
+      end;
     end;
   in
 
@@ -1810,7 +1885,7 @@ lst_store#set ~row ~column:c_path path;
       grSet grRestart false;
 
       Trace.status "Propagating changes";
-      Transport.start ();
+      Transport.logStart ();
       let totalLength =
         Array.fold_left
           (fun l si -> Uutil.Filesize.add l (Common.riLength si.ri))
@@ -1822,6 +1897,7 @@ lst_store#set ~row ~column:c_path path;
       let rec loop i actions pRiThisRound =
         if i < im then begin
           let theSI = !theState.(i) in
+	  let textDetailed = ref None in
           let action =
             match theSI.whatHappened with
               None ->
@@ -1831,17 +1907,29 @@ lst_store#set ~row ~column:c_path path;
                   catch (fun () ->
                            Transport.transportItem
                              theSI.ri (Uutil.File.ofLine i)
-                             (fun title text -> Trace.status (Printf.sprintf "\n%s\n\n%s\n\n" title text); true)
+                             (fun title text -> 
+			       textDetailed := (Some text);
+                               if Prefs.read Uicommon.confirmmerge then
+				 twoBoxAdvanced
+				   ~title:title
+				   ~message:("Do you want to commit the changes to"
+					     ^ " the replicas ?")
+				   ~longtext:text
+				   ~advLabel:"View details..."
+				   ~astock:`YES
+				   ~bstock:`NO
+                               else 
+				 true)
                            >>= (fun () ->
-                           return Util.Succeeded))
-                        (fun e ->
+                             return Util.Succeeded))
+                         (fun e ->
                            match e with
                              Util.Transient s ->
                                return (Util.Failed s)
                            | _ ->
                                fail e)
                     >>= (fun res ->
-                  theSI.whatHappened <- Some res;
+                      theSI.whatHappened <- Some (res, !textDetailed);
                   redisplay i;
                   makeFirstUnfinishedVisible pRiThisRound;
                   gtk_sync ();
@@ -1859,7 +1947,7 @@ lst_store#set ~row ~column:c_path path;
       Lwt_unix.run
         (loop 0 [] Common.isDeletion >>= (fun actions ->
           Lwt_util.join actions));
-      Transport.finish ();
+      Transport.logFinish ();
       Trace.showTimer t;
       Trace.status "Updating synchronizer state";
       let t = Trace.startTimer "Updating synchronizer state" in
@@ -1870,7 +1958,7 @@ lst_store#set ~row ~column:c_path path;
         let count =
           Array.fold_left
             (fun l si ->
-               l + (match si.whatHappened with Some(Util.Failed(_)) -> 1 | _ -> 0))
+               l + (match si.whatHappened with Some(Util.Failed(_), _) -> 1 | _ -> 0))
             0 !theState in
         if count = 0 then "" else
           Printf.sprintf "%d failure%s" count (if count=1 then "" else "s") in
@@ -1926,7 +2014,7 @@ lst_store#set ~row ~column:c_path path;
     (actionBar#insert_button ~text:detectCmdName
        ~icon:((GMisc.image ~stock:`REFRESH ())#coerce)
        ~tooltip:"Check for updates"
-       ~callback:detectCmd ());
+       ~callback: detectCmd ());
 
   (*********************************************************************
     Buttons for <--, M, -->, Skip
@@ -2048,7 +2136,7 @@ lst_store#set ~row ~column:c_path path;
 
   let descl =
     if loc1 = loc2 then "right to left" else
-    Printf.sprintf "from %s to %s" loc2 loc1 in
+    Printf.sprintf "from %s to %s" (protect loc2) (protect loc1) in
   let right =
     actionsMenu#add_image_item ~key:GdkKeysyms._less ~callback:leftAction
       ~image:((GMisc.image ~stock:`GO_BACK ~icon_size:`MENU ())#coerce)
@@ -2208,8 +2296,8 @@ lst_store#set ~row ~column:c_path path;
              let notok =
                (match !theState.(i).whatHappened with
                    None-> true
-                 | Some(Util.Failed _) -> true
-                 | Some(Util.Succeeded) -> false)
+                 | Some(Util.Failed _, _) -> true
+                 | Some(Util.Succeeded, _) -> false)
               || match !theState.(i).ri.replicas with
                    Problem _ -> true
                  | Different(rc1,rc2,dir,_) ->
@@ -2225,7 +2313,10 @@ lst_store#set ~row ~column:c_path path;
                     (String.concat ", " (Safelist.map
                                            (fun p -> "'"^(Path.toString p)^"'")
                                            failedpaths)));
-           Prefs.set Globals.paths failedpaths; detectCmd())
+           Prefs.set Globals.paths failedpaths;
+           Prefs.set Globals.confirmBigDeletes false;
+           detectCmd();
+           reloadProfile())
        "Recheck unsynchronized items");
 
   ignore (fileMenu#add_separator ());

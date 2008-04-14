@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/uutil.ml $ *)
-(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/uutil.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (*****************************************************************************)
 (*                      Unison name and version                              *)
@@ -11,6 +10,8 @@ let myName = ProjectInfo.myName
 let myVersion = ProjectInfo.myVersion
 
 let myMajorVersion = ProjectInfo.myMajorVersion
+
+let myNameAndVersion = myName ^ " " ^ myVersion
 
 (*****************************************************************************)
 (*                             HASHING                                       *)
@@ -70,6 +71,7 @@ module File =
     let dummy = -1
     let ofLine l = l
     let toLine l = assert (l <> dummy); l
+    let toString l = if l=dummy then "<dummy>" else string_of_int l
   end
 
 let progressPrinter = ref (fun _ _ _ -> ())
@@ -111,7 +113,7 @@ let readWriteBounded source target len notify =
           (if len > bufsizeFS then bufsize else Filesize.toInt len)
       in
       if n > 0 then begin
-        let w = output target buf 0 n in
+        let _ = output target buf 0 n in
         l := !l + n;
         if !l > 100 * 1024 then begin
           notify !l;
@@ -123,4 +125,4 @@ let readWriteBounded source target len notify =
     end else if !l > 0 then
       notify !l
   in
-  Util.convertUnixErrorsToTransient "readWrite" (fun () -> read len)
+  Util.convertUnixErrorsToTransient "readWriteBounded" (fun () -> read len)

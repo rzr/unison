@@ -11,7 +11,24 @@ See the file BUGS.txt for a list of currently open bugs.
 SOON
 ====
 
-**** Fix backup subsystem.
+**** Document: root, fspath, path (local/not)
+
+**** Nice code cleanup trick: Add a phantom type param to Pref (and Pred?)
+     that prevents mutation from outside the module where the preference is
+     defined (by exposing it with a weak type).
+
+**** The third assertion in Remote.fill_buffer failed for me (BCP) during a transfer!
+
+**** Remaining problem with merging code: 
+       - create two directories, each containing a .txt file
+       - sync so they are equal
+       - change the file so that one region is in conflict and another
+         region has changes that can be propagated correctly
+       - sync
+       - now we should be able to change the second region in just one file, 
+         sync again, and see the change propagate; instead, it conflicts
+       - diagnosis: the merge stuff is not correctly updating the archive in
+         the event of a partial reconciliation
 
 **** When deleting a directory, we should *not* skip over Unison temp files
      in the process of listing children
@@ -20,8 +37,6 @@ SOON
     moment
 
 *** Fix the pred module to understand negation and delete XXXnot predicates
-
-*** Display and verify results of merge -- add this to uigtk2
 
 *** Web
     - Add a "supported platforms" page mentioning system-specific stuff
@@ -107,6 +122,11 @@ SOON
   big warning that permissions may not be properly synchronized if
   neither value is there.
 
+** add '<meta http-equiv="expires" content="0">'
+   to the head section of all the unison web pages.
+
+** Peter Selinger has built an SHA256 implementation that should be usable
+   as a drop-in replacement for MD5, if we ever need to do that
 
 BUILDING AND INSTALLING
 =======================
@@ -119,14 +139,9 @@ BUILDING AND INSTALLING
    ~/bin/, especially considering that ~/bin is the wrong place to do the 
    install under OSX (it should be ~/Apps or ~/Apps/bin)
 
-** document the dynamic linked version, as some user already reported
+** document the dynamically linked version, as some user already reported
   that it works fine.  Also, try to make the statistics window work with
   this version.  [This is "under windows," I think.]
-
-* if unison is dynamically linked, can we check from the -version
-  that all the libraries are present and working?  can we check the
-  status of threading?  mention in the manual what happens if one side
-  is threaded and the other is not.
 
 should strip symbols from binary files in 'make exportnative'
 
@@ -188,9 +203,12 @@ SMALL FUNCTIONALITY IMPROVEMENTS
 *** there's an HFS+ aware version of rsync called rsyncx. It should be
     relatively easy to import that functionality into unison.
 
-*** Put in a call to Gc.compact in the memory stats command.  Consider
-    putting it in the normal "do it again" command loop.
-    ===> Is this still an issue ?
+*** Consider altering the socket method, so the server accepts connections
+    only on a particular address? This would be very useful, because many people
+    tunnel unison over an OpenVPN Link, and this software works with virtual
+    devices and additional IP addresses on it. If unison would accept
+    connections only on the virtual device, the security would be enhanced,
+    because the OpenVPN key should be unavailable for the black hats.
 
 *** unison -help doesn't go to stdout so it's hard to pipe it into less
     ===> Probably *all* output should go to stdout, not stderr (but maybe
@@ -444,8 +462,8 @@ It would be nice if Unison could have the "power" to copy write-protected
 Update checking over NFS might be *much* faster if we use only relative
   pathnames (absolute paths may require an RPC per level!?)
 
-On Saul, Unison seems to use HUGE amounts of memory (250Mb resident),
-  while on my laptop it's much less.  WTF?
+On one server (Saul), Unison seems to use HUGE amounts of memory (250Mb
+  resident), while on my laptop it's much less.  WTF?
 
 [Ben Wong, Aug 2002] Why not make unison fall back to addversionno if it
   would otherwise bomb out with an incorrect version number? That way I
@@ -871,15 +889,8 @@ It would be nice to be able to STOP the GUI in the middle of propagating
 TIDYING
 =======
 
-** remove ourlablgtk from the distribution
-
-* Tidying
-    - divide files into subdirs
-
 * Go through the sources and make all fatal and transient error messages
   as informative as possible 
-
-Make the sources available by anonymous CVS (maybe from SourceForge)
 
 More documentation (especially in the interface files) is always nice.
   In particular, there isn't enough documentation of the big picture.

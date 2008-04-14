@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/checksum.ml $ *)
-(* $I2: Last modified by zheyang on Wed, 12 Dec 2001 02:26:21 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/checksum.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* The checksum (or fast fingerprinting) algorithm must be fast and has to   *)
 (* be called in a rolling fashion (i.e. we must be able to calculate a new   *)

@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/ubase/util.ml $ *)
-(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/ubase/util.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (*****************************************************************************)
 (*                        CASE INSENSITIVE COMPARISON                        *)
@@ -61,6 +60,23 @@ let msg f =
 
 let msg : ('a, out_channel, unit) format -> 'a = msg
 
+(* ------------- Formatting stuff --------------- *)
+
+let curr_formatter = ref Format.std_formatter
+
+let format f = Format.fprintf (!curr_formatter) f
+let format : ('a, Format.formatter, unit) format -> 'a = format
+
+let format_to_string f =
+  let old_formatter = !curr_formatter in
+  curr_formatter := Format.str_formatter;
+  f ();
+  let s = Format.flush_str_formatter () in
+  curr_formatter := old_formatter;
+  s
+    
+let flush () = Format.pp_print_flush (!curr_formatter) ()
+
 (*****************************************************************************)
 (*                  GLOBAL DEBUGGING SWITCH                                  *)
 (*****************************************************************************)
@@ -119,6 +135,12 @@ let encodeException m kind e =
               ^ " (this indicates a bug!)" in
       debug "exn"
         (fun() -> msg "Converting a Not_found to %s:\n%s\n" kindStr s);
+      reraise s
+  | Invalid_argument a ->
+      let s = "Invalid_argument("^a^") raised in " ^ m
+              ^ " (this indicates a bug!)" in
+      debug "exn"
+        (fun() -> msg "Converting an Invalid_argument to %s:\n%s\n" kindStr s);
       reraise s
   | Sys_error(s) ->
       let s = "Error in " ^ m ^ ":\n" ^ s in
@@ -224,6 +246,11 @@ let safeGetenv var =
        with Not_found ->
          raise (Fatal ("Environment variable " ^ var ^ " not found")))
 
+let process_status_to_string = function
+    Unix.WEXITED i   -> Printf.sprintf "Exited with status %d" i
+  | Unix.WSIGNALED i -> Printf.sprintf "Killed by signal %d" i
+  | Unix.WSTOPPED i  -> Printf.sprintf "Stopped by signal %d" i
+
 (*****************************************************************************)
 (*                         OS TYPE                                           *)
 (*****************************************************************************)
@@ -232,7 +259,7 @@ let osType =
   match Sys.os_type with
     "Win32" | "Cygwin" -> `Win32
   | "Unix"             -> `Unix
-  | other              -> raise (Fatal ("Unkown OS: " ^ other))
+  | other              -> raise (Fatal ("Unknown OS: " ^ other))
 
 let isCygwin = (Sys.os_type = "Cygwin")
 

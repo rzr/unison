@@ -1,8 +1,9 @@
-(* $I1: Unison file synchronizer: src/pred.mli $ *)
-(* $I2: Last modified by bcpierce on Fri, 18 Jun 2004 10:01:38 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/pred.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
-(* General description:                                                  
+(* Predicates over paths.
+   
+   General description:                                                  
 
    A predicate is determined by a list of default patterns and a list of 
    current patterns.  These patterns can be modified by                  
@@ -48,8 +49,11 @@ val intern : t -> string list -> unit
 (* Return the current list of patterns *)
 val extern : t -> string list
 
-(* Create an alternate name for a predicate (the new name will not appear   *)
-(* in usage messages or generated documentation)                             *)
+(* Return the current list of associated strings *)
+val extern_associated_strings : t -> string list
+
+(* Create an alternate name for a predicate (the new name will not appear 
+   in usage messages or generated documentation) *)
 val alias : t                 (* existing predicate *)
          -> string            (* new name *)
          -> unit

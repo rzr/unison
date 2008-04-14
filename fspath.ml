@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/fspath.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 26 May 2004 09:43:22 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/fspath.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* Defines an abstract type of absolute filenames (fspaths).  Keeping the    *)
 (* type abstract lets us enforce some invariants which are important for     *)
@@ -15,7 +14,7 @@
 (*                                                                         - *)
 
 let debug = Util.debug "fspath"
-let debugverbose = Util.debug "verbose"
+let debugverbose = Util.debug "fspath+"
 
 type t = Fspath of string
 
@@ -191,7 +190,7 @@ let localString2fspath s =
   (* Windows network names                                                   *)
   let s =
     if Util.osType = `Win32
-    then winRootFix (Fileutil.bs2fs s)
+    then winRootFix (Fileutil.backslashes2forwardslashes s)
     else s in
   (* Note: s may still contain backslashes under Unix *)
   if isRootDir s then Fspath s
@@ -233,7 +232,7 @@ let canonizeFspath p0 =
 	  (* fails, we just quit.  This works nicely for most cases of (1),  *)
 	  (* it works for (2), and on (3) it may leave a mess for someone    *)
 	  (* else to pick up.                                                *)
-          let p = if Util.osType = `Win32 then Fileutil.bs2fs p else p in
+          let p = if Util.osType = `Win32 then Fileutil.backslashes2forwardslashes p else p in
           if isRootDir p then raise
             (Util.Fatal (Printf.sprintf
                "Cannot find canonical name of root directory %s\n(%s)" p why));

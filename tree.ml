@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/tree.ml $ *)
-(* $I2: Last modified by vouillon on Wed, 26 May 2004 17:01:49 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/tree.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 type ('a, 'b) t =
     Node of ('a * ('a, 'b) t) list * 'b option
@@ -84,7 +83,7 @@ let rec size_rec s t =
   match t with
     Node (l, v) ->
       let s' = if v = None then s else s + 1 in
-      Safelist.fold_left (fun s (_, t') -> size_rec s t') s l
+      Safelist.fold_left (fun s (_, t') -> size_rec s t') s' l
   | Leaf v ->
       s + 1
 

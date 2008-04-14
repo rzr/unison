@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/uicommon.mli $ *)
-(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/uicommon.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* Kinds of UI *)
 type interface =
@@ -10,8 +9,8 @@ type interface =
 (* The interface of a concrete UI implementation *)
 module type UI =
 sig
- val start : interface -> unit
- val defaultUi : interface
+  val start : interface -> unit
+  val defaultUi : interface
 end
 
 (* User preference: when true, ask fewer questions *)
@@ -29,6 +28,9 @@ val expert : bool Prefs.t
 (* User preference: Whether to display 'contacting server' message *)
 val contactquietly : bool Prefs.t
 
+(* User preference: The 'contacting server' message itself *)
+val contactingServerMsg : unit -> string
+
 (* User preference: Descriptive label for this profile *)
 val profileLabel : string Prefs.t
 
@@ -37,6 +39,9 @@ val repeat : string Prefs.t
 
 (* User preference: Try failing paths N times *)
 val retry : int Prefs.t
+
+(* User preference: confirmation before commiting merge results *)
+val confirmmerge : bool Prefs.t
 
 (* Format the information about current contents of a path in one replica (the second argument
    is used as a separator) *)
@@ -104,3 +109,6 @@ val failedExit: int    (* when there's some non-fatal failure *)
 val fatalExit: int     (* when fatal failure occurred *)
 val exitCode: bool * bool -> int
 (* (anySkipped?, anyFailure?) -> exit code *)
+
+(* Initialization *)
+val testFunction : (unit->unit) ref

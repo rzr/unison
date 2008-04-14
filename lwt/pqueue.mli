@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/lwt/pqueue.mli $ *)
-(* $I2: Last modified by vouillon on Fri, 14 Sep 2001 12:35:32 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/lwt/pqueue.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 module type OrderedType =
   sig

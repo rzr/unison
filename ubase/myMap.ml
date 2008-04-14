@@ -1,6 +1,6 @@
 (*
 This file is taken from the Objective Caml standard library.
-Some functions has been added to suite Unison needs.
+Some functions have been added to suite Unison needs.
 *)
 (***********************************************************************)
 (*                                                                     *)
@@ -14,8 +14,6 @@ Some functions has been added to suite Unison needs.
 (*  the special exception on linking described in file ../LICENSE.     *)
 (*                                                                     *)
 (***********************************************************************)
-
-(* $Id: myMap.ml 1.1 Wed, 26 May 2004 09:43:22 -0400 vouillon $ *)
 
 module type OrderedType =
   sig
@@ -97,7 +95,7 @@ module Make(Ord: OrderedType) = struct
     let rec add x data = function
         Empty ->
           Node(Empty, x, data, Empty, 1)
-      | Node(l, v, d, r, h) as t ->
+      | Node(l, v, d, r, h) ->
           let c = Ord.compare x v in
           if c = 0 then
             Node(l, x, data, r, h)
@@ -150,7 +148,7 @@ module Make(Ord: OrderedType) = struct
     let rec remove x = function
         Empty ->
           Empty
-      | Node(l, v, d, r, h) as t ->
+      | Node(l, v, d, r, h) ->
           let c = Ord.compare x v in
           if c = 0 then
             merge l r

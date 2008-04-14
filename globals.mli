@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/globals.mli $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/globals.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* Global variables and functions needed by top-level modules and user       *)
 (* interfaces                                                                *)
@@ -67,11 +66,20 @@ val propagatePrefs : unit -> unit Lwt.t
 (* User preference: when true, don't ask any questions *)
 val batch : bool Prefs.t
 
+(* User preference: ask for confirmation when propagating a deletion of a whole replica or top-level path *)
+val confirmBigDeletes : bool Prefs.t
+
 (* Predicates on paths *)
-val ignore : Pred.t
 val shouldIgnore : 'a Path.path -> bool
 val shouldMerge : 'a Path.path -> bool
-val shouldBackup : 'a Path.path -> bool  
+
+(* Be careful calling this to add new patterns to be ignored: Its value does NOT persist
+   when a new profile is loaded, so it has to be called again whenever this happens. *)
+val addRegexpToIgnore : string -> unit
 
 (* Merging commands *)  
 val mergeCmdForPath : Path.t -> string
+
+(* Internal prefs, needed to know whether to do filenames checks *)
+val someHostIsRunningWindows : bool Prefs.t
+val allHostsAreRunningWindows : bool Prefs.t

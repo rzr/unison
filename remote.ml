@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/remote.ml $ *)
-(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/remote.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (*
 XXX
@@ -12,9 +11,15 @@ XXX
 let (>>=) = Lwt.bind
 
 let debug = Trace.debug "remote"
-let debugV = Trace.debug "verbose"
-let debugE = Trace.debug "remote_emit"
-let debugT = Trace.debug "thread"
+let debugV = Trace.debug "remote+"
+let debugE = Trace.debug "remote+"
+let debugT = Trace.debug "remote+"
+
+(* BCP: The previous definitions of the last two were like this:
+     let debugE = Trace.debug "remote_emit"
+     let debugT = Trace.debug "thread"
+   But that resulted in huge amounts of output from '-debug all'.
+*)
 
 let windowsHack = Sys.os_type <> "Unix"
 
@@ -341,6 +346,8 @@ let rec first_chars len msg =
 let safeMarshal marshalPayload tag data rem =
   let (rem', length) = marshalPayload data rem in
   let l = String.length tag in
+  assert (length > 0);   (* tracking down an assert failure in receivePacket... *)
+  assert (l > 0);   
   debugE (fun() ->
             let start = first_chars (min length 10) rem' in
             let start = if length > 10 then start ^ "..." else start in
@@ -555,7 +562,8 @@ let ((marshalHeader, unmarshalHeader) : header marshalingFunctions) =
 
 let processRequest conn id cmdName buf =
   let cmd =
-    try Util.StringMap.find cmdName !serverCmds with Not_found -> assert false
+    try Util.StringMap.find cmdName !serverCmds
+    with Not_found -> raise (Util.Fatal (cmdName ^ " not registered!"))
   in
   Lwt.try_bind (fun () -> cmd conn buf)
     (fun marshal ->
@@ -657,7 +665,8 @@ let registerSpecialServerCmd
     (serverSide : connection -> 'a -> 'b Lwt.t)
     =
   (* Check that this command name has not already been bound *)
-  assert (not (Util.StringMap.mem cmdName !serverCmds));
+  if (Util.StringMap.mem cmdName !serverCmds) then
+    raise (Util.Fatal (cmdName ^ " already registered!"));
   (* Create marshaling and unmarshaling functions *)
   let ((marshalArgs,unmarshalArgs) : 'a marshalingFunctions) =
     makeMarshalingFunctions marshalingFunctionsArgs (cmdName ^ "-args") in
@@ -673,6 +682,7 @@ let registerSpecialServerCmd
   (* Create a client function and return it *)
   let client conn serverArgs =
     let id = newMsgId () in (* Message ID *)
+    assert (id >= 0); (* tracking down an assert failure in receivePacket... *)
     let request =
       (encodeInt id, 0, 4) ::
       marshalHeader (Request cmdName) (marshalArgs serverArgs [])
@@ -811,25 +821,27 @@ let inetAddr host =
 
 let buildSocketConnection host port =
   Util.convertUnixErrorsToFatal "canonizeRoot" (fun () ->
-    let targetInetAddr =
-      try
-        inetAddr host
-      with Not_found ->
+    let rec loop = function
+      [] ->
         raise (Util.Fatal
                  (Printf.sprintf
-                    "Can't find the IP address of the server (%s)" host))
-    in
-    (* create a socket to talk to the remote host *)
-    let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    begin try
-      Unix.connect socket (Unix.ADDR_INET(targetInetAddr,port))
-    with
-      Unix.Unix_error (_, _, reason) ->
-        raise (Util.Fatal
-                 (Printf.sprintf
-                    "Can't connect to server (%s): %s" host reason))
-    end;
-    initConnection socket socket)
+                    "Can't find the IP address of the server (%s:%s)" host
+		    port))
+    | ai::r ->
+      (* create a socket to talk to the remote host *)
+      let socket = Unix.socket ai.Unix.ai_family ai.Unix.ai_socktype ai.Unix.ai_protocol in
+      begin try
+        Unix.connect socket ai.Unix.ai_addr;
+        initConnection socket socket
+      with
+        Unix.Unix_error (error, _, reason) ->
+          (if error != Unix.EAFNOSUPPORT then
+            Util.warn
+              (Printf.sprintf
+                    "Can't connect to server (%s:%s): %s" host port reason);
+           loop r)
+    end
+    in loop (Unix.getaddrinfo host port [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]))
 
 let buildShellConnection shell host userOpt portOpt rootName termInteract =
   let remoteCmd =
@@ -844,7 +856,7 @@ let buildShellConnection shell host userOpt portOpt rootName termInteract =
   let portArgs =
     match portOpt with
       None -> []
-    | Some port -> ["-p"; string_of_int port] in
+    | Some port -> ["-p"; port] in
   let shellCmd =
     (if shell = "ssh" then
       Prefs.read sshCmd
@@ -980,7 +992,7 @@ let openConnectionStart clroot =
         let portArgs =
           match portOpt with
             None -> []
-          | Some port -> ["-p"; string_of_int port] in
+          | Some port -> ["-p"; port] in
         let shellCmd =
           (if shell = "ssh" then
             Prefs.read sshCmd
@@ -1090,8 +1102,8 @@ let commandLoop in_ch out_ch =
        Trace.messageForwarder :=
          Some (fun str -> Lwt_unix.run (forwardMsgToClient conn str));
        receive conn >>=
-       Lwt.wait));
-    debug (fun () -> Util.msg "Should never happen\n")
+       Lwt.wait))
+(*    debug (fun () -> Util.msg "Should never happen\n") *)
   with Util.Fatal "Lost connection with the server" ->
     debug (fun () -> Util.msg "Connection closed by the client\n")
 
@@ -1113,30 +1125,45 @@ let _ = Prefs.alias killServer "killServer"
 (* Used by the socket mechanism: Create a socket on portNum and wait
    for a request. Each request is processed by commandLoop. When a
    session finishes, the server waits for another request. *)
-let waitOnPort hostOpt portnum =
+let waitOnPort hostOpt port =
   Util.convertUnixErrorsToFatal
     "waiting on port"
     (fun () ->
-      (* Open a socket to listen for queries *)
-      let listening = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-      (* Allow reuse of local addresses for bind *)
-      Unix.setsockopt listening Unix.SO_REUSEADDR true;
-      (* Bind the socket to portnum on the local host *)
-      let addr =
-        match hostOpt with
-          Some host ->
-            begin try inetAddr host with Not_found ->
-              raise (Util.Fatal
-                       (Printf.sprintf
-                          "Can't find the IP address of the host (%s)" host))
-            end
-        | None ->
-            Unix.inet_addr_any
-      in
-      Unix.bind listening
-        (Unix.ADDR_INET (addr, portnum));
-      (* Start listening, allow up to 1 pending request *)
-      Unix.listen listening 1;
+      let host = match hostOpt with
+        Some host -> host
+      | None -> "" in
+      let rec loop = function
+        [] -> raise (Util.Fatal
+		       (if host = "" then
+                        Printf.sprintf "Can't bind socket to port %s" port
+                        else
+                        Printf.sprintf "Can't bind socket to port %s on host %s" port host))
+      | ai::r ->
+        (* Open a socket to listen for queries *)
+        let socket = Unix.socket ai.Unix.ai_family ai.Unix.ai_socktype
+	  ai.Unix.ai_protocol in
+	begin try
+          (* Allow reuse of local addresses for bind *)
+          Unix.setsockopt socket Unix.SO_REUSEADDR true;
+          (* Bind the socket to portnum on the local host *)
+	  Unix.bind socket ai.Unix.ai_addr;
+          (* Start listening, allow up to 1 pending request *)
+          Unix.listen socket 1;
+	  socket
+	with
+	  Unix.Unix_error (error, _, reason) ->
+            (if error != Unix.EAFNOSUPPORT then
+               Util.msg
+                 "Can't bind socket to port %s at address [%s]: %s\n"
+                 port
+                 (match ai.Unix.ai_addr with
+                    Unix.ADDR_INET (addr, _) -> Unix.string_of_inet_addr addr
+                  | _                        -> assert false)
+                 (Unix.error_message error);
+	     loop r)
+	end in
+      let listening = loop (Unix.getaddrinfo host port [ Unix.AI_SOCKTYPE
+        Unix.SOCK_STREAM ; Unix.AI_PASSIVE ]) in
       Util.msg "server started\n";
       while
         (* Accept a connection *)

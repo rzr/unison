@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/props.ml $ *)
-(* $I2: Last modified by bcpierce on Sat, 27 Nov 2004 09:22:40 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/props.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 let debug = Util.debug "props"
 
@@ -164,7 +163,7 @@ let syncedPartsToString =
      bit 0o0001 "?" "-" "x"
 
 let set fspath path kind (fp, mask) =
-  if mask <> 0 || kind <> `Update then
+  if mask <> 0 then  (* BCP: removed "|| kind <> `Update"  10/2005 *)
     Util.convertUnixErrorsToTransient
     "setting permissions"
       (fun () ->
@@ -179,15 +178,20 @@ let set fspath path kind (fp, mask) =
 let get stats _ = (stats.Unix.LargeFile.st_perm, Prefs.read permMask)
 
 let check fspath path stats (fp, mask) =
-  if fp land mask <> stats.Unix.LargeFile.st_perm land mask then
+  let fp' = stats.Unix.LargeFile.st_perm in
+  if fp land mask <> fp' land mask then
     raise
       (Util.Transient
          (Format.sprintf
             "Failed to set permissions of file %s to %s: \
-             the permissions was set to %s instead"
+             the permissions was set to %s instead. \
+             The filesystem probably does not support all permission bits. \
+             You should probably set the \"perms\" option to 0o%o \
+             (or to 0 if you don't need to synchronize permissions)."
             (Fspath.concatToString fspath path)
             (syncedPartsToString (fp, mask))
-            (syncedPartsToString (stats.Unix.LargeFile.st_perm, mask))))
+            (syncedPartsToString (fp', mask))
+            (mask land (lnot (fp lxor fp')))))
 
 let init someHostIsRunningWindows =
   let mask = if someHostIsRunningWindows then wind_mask else unix_mask in
@@ -280,7 +284,7 @@ let extern id =
         if id = 0 then
           raise (Util.Transient
                    (Printf.sprintf "Trying to map the non-root %s %s to %s 0"
-                      M.kind nm M.kind))
+                      M.kind nm M.kind));
         Hashtbl.add tbl nm id;
         id
 
@@ -413,9 +417,9 @@ let similar t t' =
 let possible_deltas =
   [ -3601L; 3601L; -3600L; 3600L; -3599L; 3599L; -1L; 1L; 0L ]
 
-(*FIX: this is the right similar function (date are approximated
-   on FAT filesystems upward under Windows, downward under Linux)
-  The hash function needs to be updated as well *)
+(* FIX: this is the right similar function (dates are approximated
+   on FAT filesystems upward under Windows, downward under Linux).
+   The hash function needs to be updated as well *)
 let similar_correct t t' =
   not (Prefs.read sync)
     ||
@@ -516,8 +520,13 @@ let check fspath path stats t =
             (syncedPartsToString t)
             (syncedPartsToString t')))
 
-
-let same p p' = extract p = extract p'
+(* When modification time are synchronized, we cannot update the
+   archive when they are changed due to daylight saving time.  Thus,
+   we have to compare then using "similar". *)
+let same p p' =
+  match p, p' with
+    Synced _, Synced _ -> similar p p'
+  | _                  -> extract p = extract p'
 
 let init _ = ()
 

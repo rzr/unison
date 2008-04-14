@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/common.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/common.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 type hostname = string
 
@@ -162,14 +161,20 @@ let fileInfos ui1 ui2 =
     (Updates (File (desc1, ContentsUpdated (fp1, _, ress1)),
               Previous (`FILE, desc2, fp2, ress2)),
      NoUpdates)
+  | (Updates (File (desc1, ContentsUpdated (fp1, _, ress1)),
+              Previous (`FILE, desc2, fp2, ress2)),
+     Updates (File (_, ContentsSame), _))
   | (NoUpdates,
+     Updates (File (desc2, ContentsUpdated (fp2, _, ress2)),
+              Previous (`FILE, desc1, fp1, ress1)))
+  | (Updates (File (_, ContentsSame), _),
      Updates (File (desc2, ContentsUpdated (fp2, _, ress2)),
               Previous (`FILE, desc1, fp1, ress1)))
   | (Updates (File (desc1, ContentsUpdated (fp1, _, ress1)), _),
      Updates (File (desc2, ContentsUpdated (fp2, _, ress2)), _)) ->
        (desc1, fp1, ress1, desc2, fp2, ress2)
   | _ ->
-      assert false
+      raise (Util.Transient "Can't diff")
 
 let problematic ri =
   match ri.replicas with
@@ -184,3 +189,15 @@ let isDeletion ri =
       | (Replica2ToReplica1, _, (`ABSENT, _, _, _)) -> true
       | _ -> false)
   | _ -> false
+
+let rcType ((fi, _, _, _) as rc) =
+  Fileinfo.type2string fi
+
+let riFileType ri =
+  match ri.replicas with
+    Different(rc1, rc2, dir, _) ->
+      begin match !dir with
+        Replica2ToReplica1 -> rcType rc2
+      | _		           -> rcType rc1
+      end
+  | _ -> "nonexistent"

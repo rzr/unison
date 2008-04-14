@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/globals.ml $ *)
-(* $I2: Last modified by bcpierce on Mon, 06 Sep 2004 14:48:05 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/globals.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 open Common
 
@@ -58,6 +57,7 @@ let installRoots termInteract =
 
 (* Alternate interface, should replace old interface eventually *)
 let installRoots2 () =
+  debug (fun () -> Util.msg "Installing roots...");
   let roots = rawRoots () in
   theroots :=
     Safelist.map Remote.canonize ((Safelist.map Clroot.parseRoot) roots);
@@ -181,7 +181,7 @@ let propagatePrefsTo =
   Remote.registerHostCmd
     "installPrefs"
     (fun prefs -> return (Prefs.load prefs))
-
+    
 let propagatePrefs () =
   let prefs = Prefs.dump() in
   let toHost root =
@@ -202,6 +202,14 @@ let batch =
      ^ "interface will ask no questions at all.  Non-conflicting changes "
      ^ "will be propagated; conflicts will be skipped.")
 
+let confirmBigDeletes =
+  Prefs.createBool "confirmbigdeletes" true "request confirmation for whole-replica deletes"
+    ("When this is set to {\\tt true}, Unison will request an extra confirmation if it appears "
+     ^ "that the entire replica has been deleted, before propagating the change.  If the {\\tt batch} "
+     ^ "flag is also set, synchronization will be aborted.  When the {\\tt path} preference is used, "
+     ^ "the same confirmation will be requested for top-level paths.  (At the moment, this flag only "
+     ^ "affects the text user interface.)  See also the {\\tt mountpoint} preference.")
+
 let ignore =
   Pred.create "ignore"
     ("Including the preference \\texttt{-ignore \\ARG{pathspec}} causes Unison to "
@@ -209,7 +217,8 @@ let ignore =
      ^ "children).  This is useful for avoiding synchronizing temporary "
      ^ "files, object files, etc. The syntax of \\ARG{pathspec} is "
      ^ "described in \\sectionref{pathspec}{Path Specification}, and further "
-     ^ "details on ignoring paths is found in \\sectionref{ignore}{Ignoring Paths}.")
+     ^ "details on ignoring paths is found in"
+     ^ " \\sectionref{ignore}{Ignoring Paths}.")
     
 let ignorenot =
   Pred.create "ignorenot"
@@ -235,6 +244,11 @@ let shouldIgnore p =
   let p = Path.toString p in
   (Pred.test ignore p) && not (Pred.test ignorenot p) 
 
+let addRegexpToIgnore re =
+  let oldRE = Pred.extern ignore in
+  let newRE = re::oldRE in
+  Pred.intern ignore newRE
+
 let merge = 
   Pred.create "merge"
     ("This preference can be used to run a merge program which will create "
@@ -247,56 +261,12 @@ let merge =
      ^ "details on Merging functions are present in "
      ^ "\\sectionref{merge}{Merging files}.")
         
-let mergebatch = 
-  Pred.create "mergebatch"
-    ("Normally, when Unison is run with the {\\tt batch} flag set to true, it does not "
-     ^ "invoke any external merge programs.  To tell it that a given file can be merged "
-     ^ "even when in batch mode, use the {\\tt mergebatch} preference instead of "
-     ^ "{\\tt merge}.  When running in non-batch mode, the {\\tt merge} preference is used "
-     ^ "instead of {\\tt mergebatch} if both are specified for a given path.")
-        
-let shouldMerge p =
-     Pred.test mergebatch (Path.toString p)
-  || (not (Prefs.read batch) && Pred.test merge (Path.toString p))
+let shouldMerge p = Pred.test merge (Path.toString p)
 
-let mergeCmdForPath p =
-  if Prefs.read batch then
-    Pred.assoc mergebatch (Path.toString p)
-  else
-    try Pred.assoc merge (Path.toString p)
-    with Not_found -> Pred.assoc mergebatch (Path.toString p)
+let mergeCmdForPath p = Pred.assoc merge (Path.toString p)
 
-let backup =
-   Pred.create "backup"
-   ("Including the preference \\texttt{-backup \\ARG{pathspec}} "
-   ^ "causes Unison to make back up for each path that matches "
-   ^ "\\ARG{pathspec}.  More precisely, for each path that "
-   ^ "matches this \\ARG{pathspec}, "
-   ^ "Unison will keep several old versions of a file as a backup whenever "
-   ^ "a change is propagated.  These backup files are left in the "
-   ^ "directory specified by the environment variable {\\tt UNISONBACKUPDIR}, "
-    ^ "if it is set; otherwise in the directory named by the {\\tt backupdir} "
-    ^ "preference, if it is non-null; otherwise in "
-   ^ " \\verb|.unison/backup/| by default.  The newest backed up copy will"
-   ^ "have the same name as the original; older versions will be named "
-   ^ "with extensions \\verb|.n.unibck|."
-   ^ " The number of versions that are kept is determined by the "
-   ^ "\\verb|maxbackups| preference."
-   ^ "\n\n The syntax of \\ARG{pathspec} is described in \\sectionref{pathspec}{Path Specification}.")
+let someHostIsRunningWindows =
+  Prefs.createBool "someHostIsRunningWindows" false "*" ""
 
-let _ = Pred.alias backup "mirror"
-
-let backupnot =
-   Pred.create "backupnot"
-   ("The values of this preference specify paths or individual files or"
-    ^ " regular expressions that should {\\em not} "
-    ^ "be backed up, even if the {\\tt backup} preference selects "
-    ^ "them---i.e., "
-    ^ "it selectively overrides {\\tt backup}.  The same caveats apply here "
-    ^ "as with {\\tt ignore} and {\tt ignorenot}.")
-
-let shouldBackup p =
-  let s = (Path.toString p) in
-  (Pred.test backup s && not (Pred.test backupnot s))
-
-    
+let allHostsAreRunningWindows =
+  Prefs.createBool "allHostsAreRunningWindows" false "*" ""

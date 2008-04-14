@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/transport.ml $ *)
-(* $I2: Last modified by vouillon on Fri, 05 Nov 2004 10:12:27 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/transport.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 open Common
 open Lwt
@@ -55,10 +54,21 @@ let logLwt (msgBegin: string)
 let rLogCounter = ref 0
 let logLwtNumbered (lwtDescription: string) (lwtShortDescription: string)
     (t: unit -> 'a Lwt.t): 'a Lwt.t =
-  let lwt_id = (rLogCounter := (!rLogCounter) + 1; !rLogCounter) in
+  let _ = (rLogCounter := (!rLogCounter) + 1; !rLogCounter) in
+  let lwtDescription = Util.replacesubstring lwtDescription "\n " "" in 
   logLwt (Printf.sprintf "[BGN] %s\n" lwtDescription) t
     (fun _ ->
       Printf.sprintf "[END] %s\n" lwtShortDescription)
+
+let stashCurrentVersionOnRoot: Common.root -> Path.t -> unit Lwt.t = 
+  Remote.registerRootCmd 
+    "stashCurrentVersion" 
+    (fun (fspath, path) -> 
+      Lwt.return (Stasher.stashCurrentVersion fspath (Update.translatePathLocal fspath path) None))
+    
+let stashCurrentVersions fromRoot toRoot path =
+  stashCurrentVersionOnRoot fromRoot path >>= (fun()->
+  stashCurrentVersionOnRoot toRoot path)
 
 let doAction (fromRoot,toRoot) path fromContents toContents id =
   Lwt_util.resize_region actionReg (Prefs.read maxthreads);
@@ -72,8 +82,7 @@ let doAction (fromRoot,toRoot) path fromContents toContents id =
                ("Deleting " ^ Path.toString path ^
                 "\n  from "^ root2string toRoot)
                ("Deleting " ^ Path.toString path)
-               (fun () -> Files.delete (Prefs.read Os.backups)
-                            fromRoot path toRoot path uiTo)
+               (fun () -> Files.delete fromRoot path toRoot path uiTo)
         (* No need to transfer the whole directory/file if there were only
            property modifications on one side.  (And actually, it would be
            incorrect to transfer a directory in this case.) *)
@@ -94,17 +103,19 @@ let doAction (fromRoot,toRoot) path fromContents toContents id =
                root2string toRoot)
               ("Updating file " ^ Path.toString path)
               (fun () ->
-                Files.copy (Prefs.read Os.backups)
-                  (`Update (fileSize uiFrom uiTo))
-                  fromRoot path uiFrom toRoot path uiTo id)
+                Files.copy (`Update (fileSize uiFrom uiTo))
+                  fromRoot path uiFrom toRoot path uiTo id >>= (fun()->
+                stashCurrentVersions fromRoot toRoot path))
         | (_, _, _, uiFrom), (_, _, _, uiTo) ->
             logLwtNumbered
               ("Copying " ^ Path.toString path ^ "\n  from " ^
                root2string fromRoot ^ "\n  to " ^
                root2string toRoot)
               ("Copying " ^ Path.toString path)
-              (fun () -> Files.copy (Prefs.read Os.backups) `Copy
-                  fromRoot path uiFrom toRoot path uiTo id))
+              (fun () ->
+                 Files.copy `Copy
+                   fromRoot path uiFrom toRoot path uiTo id >>= (fun()->
+               stashCurrentVersions fromRoot toRoot path)))
       (fun e -> Trace.log
           (Printf.sprintf
              "Failed: %s\n" (Util.printException e));
@@ -132,7 +143,7 @@ let propagate root1 root2 reconItem id showMergeFn =
             (`FILE, _, _, ui1), (`FILE, _, _, ui2) ->
               Files.merge root1 root2 path id ui1 ui2 showMergeFn;
               return ()
-          | _ -> assert false
+          | _ -> raise (Util.Transient "Can only merge two existing files")
           end 
 
 let transportItem reconItem id showMergeFn =
@@ -141,28 +152,27 @@ let transportItem reconItem id showMergeFn =
 
 (* ---------------------------------------------------------------------- *)
 
-let months = ["Jan"; "Feb"; "Mar"; "Apr"; "May"; "Jun"; "Jul"; "Aug"; "Sep";
-              "Oct"; "Nov"; "Dec"]
-
-let start () =
+let logStart () =
   Abort.reset ();
   let tm = Util.localtime (Util.time()) in
   let m =
     Printf.sprintf
-      "\n\n%s started propagating changes at %02d:%02d:%02d on %02d %s %04d\n"
-      (String.uppercase Uutil.myName)
+      "%s%s started propagating changes at %02d:%02d:%02d on %02d %s %04d\n"
+      (if Prefs.read Trace.terse || Prefs.read Globals.batch then "" else "\n\n")
+      (String.uppercase Uutil.myNameAndVersion)
       tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
-      tm.Unix.tm_mday (Safelist.nth months tm.Unix.tm_mon)
+      tm.Unix.tm_mday (Util.monthname tm.Unix.tm_mon)
       (tm.Unix.tm_year+1900) in
-  Trace.log m
+  Trace.logverbose m
 
-let finish () =
+let logFinish () =
   let tm = Util.localtime (Util.time()) in
   let m =
     Printf.sprintf
-      "%s finished propagating changes at %02d:%02d:%02d on %02d %s %04d\n\n\n"
-      (String.uppercase Uutil.myName)
+      "%s finished propagating changes at %02d:%02d:%02d on %02d %s %04d\n%s"
+      (String.uppercase Uutil.myNameAndVersion)
       tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
-      tm.Unix.tm_mday (Safelist.nth months tm.Unix.tm_mon)
-      (tm.Unix.tm_year+1900) in
-  Trace.log m
+      tm.Unix.tm_mday (Util.monthname tm.Unix.tm_mon)
+      (tm.Unix.tm_year+1900)
+      (if Prefs.read Trace.terse || Prefs.read Globals.batch then "" else "\n\n") in
+  Trace.logverbose m

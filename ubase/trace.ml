@@ -1,6 +1,14 @@
-(* $I1: Unison file synchronizer: src/ubase/trace.ml $ *)
-(* $I2: Last modified by bcpierce on Mon, 15 Sep 2003 11:46:03 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/ubase/trace.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
+
+(* ---------------------------------------------------------------------- *)
+(* Choosing where messages go *)
+
+type trace_printer_choices = [`Stdout | `Stderr | `FormatStdout]
+
+let traceprinter = ref (`Stderr : trace_printer_choices)
+
+let redirect x = (traceprinter := x)
 
 (* ---------------------------------------------------------------------- *)
 (* Debugging messages *)
@@ -32,12 +40,22 @@ let debugging() = (Prefs.read debugmods) <> []
 
 let enabled modname =
   let m = Prefs.read debugmods in
-  m <> [] && (   (modname = "")
-              || (Safelist.mem "verbose" m)
-              || ((Safelist.mem "all" m || Safelist.mem "-all" m)
-                    && modname <> "verbose")
-              || (Safelist.mem modname m))
-
+  let en = 
+    m <> [] && (   (* tracing labeled "" is enabled if anything is *)
+                   (modname = "")
+                || (* '-debug verbose' enables everything *)
+                   (Safelist.mem "verbose" m)
+                || (* '-debug all+' likewise *)
+                   (Safelist.mem "all+" m)
+                || (* '-debug all' enables all tracing not marked + *)
+                   (Safelist.mem "all" m && not (Util.endswith modname "+"))
+                || (* '-debug m' enables m and '-debug m+' enables m+ *)
+                   (Safelist.mem modname m)
+                || (* '-debug m+' also enables m *)
+                   (Safelist.mem (modname ^ "+") m)
+               ) in
+  en
+    
 let enable modname onoff =
   let m = Prefs.read debugmods in
   let m' = if onoff then (modname::m) else (Safelist.remove modname m) in
@@ -54,13 +72,16 @@ let debug modname thunk =
       else "" in
     if time<>"" || s<>"" || modname<>"" then begin
       let time = if time="" || (s=""&&modname="") then time else time^": " in
-      Printf.eprintf "[%s%s%s] " time s modname
+      match !traceprinter with
+      | `Stdout -> Printf.printf "[%s%s%s] " time s modname
+      | `Stderr -> Printf.eprintf "[%s%s%s] " time s modname
+      | `FormatStdout -> Format.printf "[%s%s%s] " time s modname
       end;
     thunk();
     flush stderr
   end
 
-(* Set the debugPrinter variable in the Util module so that other modules
+(* We set the debugPrinter variable in the Util module so that other modules
    lower down in the module dependency graph (so that they can't just
    import Trace) can also print debugging messages. *)
 let _ = Util.debugPrinter := Some(debug)
@@ -103,8 +124,16 @@ let rec getLogch() =
 let sendLogMsgsToStderr = ref true
 
 let writeLog s =
-  if !sendLogMsgsToStderr then Util.msg "%s" s
-  else debug "" (fun() -> Util.msg "%s" s);
+  if !sendLogMsgsToStderr then begin
+      match !traceprinter with
+      | `Stdout -> Printf.printf "%s" s
+      | `Stderr -> Util.msg "%s" s
+      | `FormatStdout -> Format.printf "%s " s
+  end else debug "" (fun() -> 
+      match !traceprinter with
+      | `Stdout -> Printf.printf "%s" s
+      | `Stderr -> Util.msg "%s" s
+      | `FormatStdout -> Format.printf "%s " s);
   if Prefs.read logging then begin
     let ch = getLogch() in
     output_string ch s;
@@ -170,6 +199,12 @@ let statusDetail s =
   displayMessage (StatusMinor, ss)
 
 let log s = displayMessage (Log, s)
+
+let logverbose s =
+  let temp = !sendLogMsgsToStderr in
+  sendLogMsgsToStderr := !sendLogMsgsToStderr && not (Prefs.read terse);
+  displayMessage (Log, s);
+  sendLogMsgsToStderr := temp 
 
 (* ---------------------------------------------------------------------- *)
 (* Timing *)

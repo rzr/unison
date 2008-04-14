@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/remote.mli $ *)
-(* $I2: Last modified by vouillon on Mon, 14 Jun 2004 16:38:56 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/remote.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 module Thread : sig
   val unwindProtect : (unit -> 'a Lwt.t) -> (exn -> unit Lwt.t) -> 'a Lwt.t
@@ -14,10 +13,10 @@ end
    requested by a remote client.) *)
 val registerHostCmd :
     string              (* command name *)
- -> ('a -> 'b Lwt.t) (* local command *)
+ -> ('a -> 'b Lwt.t)    (* local command *)
  -> (   string          (* -> host *)
      -> 'a              (*    arguments *)
-     -> 'b Lwt.t)      (*    -> (suspended) result *)
+     -> 'b Lwt.t)       (*    -> (suspended) result *)
 
 (* A variant of registerHostCmd, for constructing a remote command to be
    applied to a particular root (host + fspath).
@@ -36,7 +35,7 @@ val registerRootCmd :
 (* Enter "server mode", reading and processing commands from a remote
    client process until killed *)
 val beAServer : unit -> unit
-val waitOnPort : string option -> int -> unit
+val waitOnPort : string option -> string -> unit
 
 (* Whether the server should be killed when the client terminates *)
 val killServer : bool Prefs.t

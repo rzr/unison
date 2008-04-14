@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/uutil.mli $ *)
-(* $I2: Last modified by vouillon on Thu, 25 Nov 2004 16:01:48 -0500 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/uutil.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* This module collects a number of low-level, Unison-specific utility
    functions.  It is kept separate from the Util module so that that module
@@ -10,6 +9,7 @@
 val myMajorVersion : string
 val myVersion : string
 val myName : string
+val myNameAndVersion : string
 
 (* Hashing *)
 val hash2 : int -> int -> int
@@ -40,6 +40,7 @@ module File :
     type t
     val ofLine : int -> t
     val toLine : t -> int
+    val toString : t -> string
     val dummy : t
   end
 val setProgressPrinter :

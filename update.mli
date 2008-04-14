@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/update.mli $ *)
-(* $I2: Last modified by tjim on Tue, 14 Sep 2004 11:51:02 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/update.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 module NameMap : Map.S with type key = Name.t
 
@@ -16,12 +15,15 @@ type archive =
    roots, so the roots are re-sorted. *)
 val storeRootsName : unit -> unit
 
+(* Retrieve the actual names of the roots *)
+val getRootsName : unit -> string 
+
 val findOnRoot :
   Common.root -> Path.t list -> Common.updateItem list Lwt.t
 
+(* Structures describing dirty files/dirs (1 per path given in the -path preference) *)
 val findUpdates :
   unit -> Common.updateItem list Common.oneperpath
-          (* Structures describing dirty files/dirs (1 per given path) *)
 
 (* Take a tree of equal update contents and update the archive accordingly. *)
 val markEqual :
@@ -40,7 +42,7 @@ val updateArchive :
 (* Replace a part of an archive by another archive *)
 val replaceArchive :
   Common.root -> Path.t -> (Fspath.t * Path.local) option ->
-  archive -> transaction -> Path.local Lwt.t
+  archive -> transaction -> bool -> Path.local Lwt.t
 (* Update only some permissions *)
 val updateProps :
   Common.root -> Path.t -> Props.t option -> Common.updateItem ->
@@ -67,29 +69,9 @@ val unlockArchives : unit -> unit Lwt.t
 val translatePath : Common.root -> Path.t -> Path.local Lwt.t
 val translatePathLocal : Fspath.t -> Path.t -> Path.local
 
-(* Find the fspath for the backup file corresponding to a given path in the
-   local replica *)
-val findBackup : Path.local -> Fspath.t option
-
-(*
-(* Where is the backup directory *)
-(* FIX: This should not be exported *)
-val backupDirectory : unit -> Fspath.t
-*)
-
-(* Back up a file that is about to be overwritten *)
-val makeBackupFile :
-  Common.root ->
-  Fspath.t -> Path.local -> (* Which file we should mirror *)
-  Path.local ->             (* Its location with respect to the replica root *)
-  unit Lwt.t
-
 (* Are we checking fast, or carefully? *)
-val fastcheck : string Prefs.t
+val useFastChecking : unit -> bool
 
 (* Print the archive to the current formatter (see Format) *)
 val showArchive: archive -> unit
 
-(* Internal prefs, needed to know whether to do filenames checks *)
-val someHostIsRunningWindows : bool Prefs.t
-val allHostsAreRunningWindows : bool Prefs.t

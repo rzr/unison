@@ -655,21 +655,17 @@ let getSecondRoot () =
       `Local ->
         Clroot.clroot2string(Clroot.ConnectLocal(Some file))
     | `SSH | `RSH ->
-        let portOpt =
-          (* FIX: report an error if the port entry is not well formed *)
-          try Some(int_of_string(portE#text))
-          with _ -> None in
         Clroot.clroot2string(
         Clroot.ConnectByShell((if !varLocalRemote=`SSH then "ssh" else "rsh"),
                               host,
                               (if user="" then None else Some user),
-                              portOpt,
+                              Some portE#text,
                               Some file))
     | `SOCKET ->
         Clroot.clroot2string(
         (* FIX: report an error if the port entry is not well formed *)
         Clroot.ConnectBySocket(host,
-                               int_of_string(portE#text),
+                               portE#text,
                                Some file)) in
   let contCommand() =
     try
@@ -760,7 +756,8 @@ let scanProfiles () =
              provideProfileKey filename k f info
            with Not_found -> ());
           (f, info))
-       (Safelist.filter (fun name -> not (Util.startswith name ".#"))
+       (Safelist.filter (fun name -> not (   Util.startswith name ".#"
+                                          || Util.startswith name Os.tempFilePrefix))
           (Files.ls (Fspath.toString Os.unisonDir)
              "*.prf")))
 
@@ -1015,7 +1012,7 @@ let getMyWindow () =
 let displayWaitMessage () =
   if not (Prefs.read Uicommon.contactquietly) then begin
     let w = getMyWindow() in
-    ignore (GMisc.label ~text: "Contacting server..." ~packing:(w#add) ());
+    ignore (GMisc.label ~text: (Uicommon.contactingServerMsg()) ~packing:(w#add) ());
     w#set_border_width 20;
     w#show();
     ignore (w#event#connect#delete ~callback:(fun _ -> exit 0))
@@ -1590,7 +1587,7 @@ in
       grSet grRestart false;
 
       Trace.status "Propagating changes";
-      Transport.start ();
+      Transport.logStart ();
       let totalLength =
         Array.fold_left
           (fun l si -> Uutil.Filesize.add l (Common.riLength si.ri))
@@ -1611,7 +1608,8 @@ in
                   catch (fun () ->
                            Transport.transportItem
                              theSI.ri (Uutil.File.ofLine i)
-                             (fun title text -> Trace.status (Printf.sprintf "\n%s\n\n%s\n\n" title text); true)
+                             (fun title text -> 
+			       Trace.status (Printf.sprintf "\n%s\n\n%s\n\n" title text); true)
                            >>= (fun () ->
                            return Util.Succeeded))
                         (fun e ->
@@ -1639,7 +1637,7 @@ in
       Lwt_unix.run
         (loop 0 [] Common.isDeletion >>= (fun actions ->
           Lwt_util.join actions));
-      Transport.finish ();
+      Transport.logFinish ();
       Trace.showTimer t;
       Trace.status "Updating synchronizer state";
       let t = Trace.startTimer "Updating synchronizer state" in

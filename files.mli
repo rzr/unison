@@ -1,14 +1,12 @@
-(* $I1: Unison file synchronizer: src/files.mli $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/files.mli *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 (* As usual, these functions should only be called by the client (i.e., in   *)
 (* the same address space as the user interface).                            *)
 
 (* Delete the given subtree of the given replica                             *)
 val delete :
-     bool                        (* keep backup? *)
-  -> Common.root                 (* source root *)
+     Common.root                 (* source root *)
   -> Path.t                      (* deleted path *)
   -> Common.root                 (* root *)
   -> Path.t                      (* path to delete *)
@@ -19,8 +17,7 @@ val delete :
 (* is performed atomically (or as close to atomically as the os will         *)
 (* support) using temporary files.                                           *)
 val copy :
-     bool                       (* save old version? *)
-  -> [`Update of (Uutil.Filesize.t * Uutil.Filesize.t) | `Copy]
+     [`Update of (Uutil.Filesize.t * Uutil.Filesize.t) | `Copy]
                                 (* whether there was already a file *)
   -> Common.root                (* from what root *)
   -> Path.t                     (* from what path *)
@@ -69,13 +66,14 @@ val ls : string -> string -> string list
 val get_files_in_directory : string -> string list
 
 val merge :
-     Common.root                (* first root *)
-  -> Common.root                (* second root *)
-  -> Path.t                     (* path to merge *)
-  -> Uutil.File.t               (* id for showing progress of transfer *)
-  -> Common.updateItem          (* differences from the archive *)
-  -> Common.updateItem          (* ... *)
-  -> (string->string->bool)     (* function to display the (title and) result and ask user for confirmation
-                                   (when -batch is true, the function should not ask any questions and should
-                                   always return true) *)
+     Common.root                  (* first root *)
+  -> Common.root                  (* second root *)
+  -> Path.t                       (* path to merge *)
+  -> Uutil.File.t                 (* id for showing progress of transfer *)
+  -> Common.updateItem            (* differences from the archive *)
+  -> Common.updateItem            (* ... *)
+  -> (string->string->bool)       (* function to display the (title and) result 
+				     and ask user for confirmation (when -batch 
+				     is true, the function should not ask any 
+				     questions and should always return true) *)
   -> unit

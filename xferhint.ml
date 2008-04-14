@@ -1,6 +1,5 @@
-(* $I1: Unison file synchronizer: src/xferhint.ml $ *)
-(* $I2: Last modified by bcpierce on Sun, 22 Aug 2004 22:29:04 -0400 $ *)
-(* $I3: Copyright 1999-2004 (see COPYING for details) $ *)
+(* Unison file synchronizer: src/xferhint.ml *)
+(* Copyright 1999-2007 (see COPYING for details) *)
 
 let debug = Trace.debug "xferhint"
 
@@ -59,6 +58,7 @@ let insertEntry p fp =
       Util.msg "insertEntry: fspath=%s, path=%s, fp=%s\n"
         (Fspath.toString fspath)
         (Path.toString path) (Os.fullfingerprint_to_string fp));
+    (* Neither of these should be able to raise Not_found *)
     PathMap.replace path2fingerprintMap p fp;
     FPMap.replace fingerprint2pathMap fp p
   end
@@ -78,7 +78,7 @@ let deleteEntry p =
     with Not_found ->
       ()
   end
-
+      
 let renameEntry pOrig pNew =
   if Prefs.read xferbycopying then begin
     debug (fun () ->
@@ -95,3 +95,6 @@ let renameEntry pOrig pNew =
     with Not_found ->
       ()
   end
+
+let _ =
+  Os.initializeXferFunctions deleteEntry renameEntry
