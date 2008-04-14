@@ -17,9 +17,6 @@
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
 # MA 02110-1301, USA.
 
-# Generate debian/control using
-# fakeroot debian/rules debian/control DEB_AUTO_UPDATE_DEBIAN_CONTROL:=yes
-
 include /usr/share/cdbs/1/rules/debhelper.mk
 include /usr/share/cdbs/1/rules/dpatch.mk
 include /usr/share/cdbs/1/class/ocaml.mk
@@ -99,12 +96,12 @@ configure::
 	cp config/Makefile.unix config/Makefile
 
 build/$(UNISON_PACKAGE)::
-	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) $(MY_MAKE_FLAGS)
+	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) $(MY_MAKE_FLAGS) CFLAGS=
 	mv '$(CURDIR)/unison' '$(CURDIR)/$(UNISON)'
 	env HOME='$(CURDIR)' '$(CURDIR)/$(UNISON)' -doc all > '$(CURDIR)/unison-manual.txt'
 
 build/$(UNISON_GTK_PACKAGE):: debian/$(UNISON_GTK_PACKAGE).xpm
-	$(MAKE) UISTYLE=$(UISTYLE) NATIVE=$(NATIVE) $(MY_MAKE_FLAGS)
+	$(MAKE) UISTYLE=$(UISTYLE) NATIVE=$(NATIVE) $(MY_MAKE_FLAGS) CFLAGS=
 	mv '$(CURDIR)/unison' '$(CURDIR)/$(UNISON_GTK)'
 	if test 'x$(OCAML_HAVE_OCAMLOPT)' = 'xyes'; then /usr/bin/chrpath -d '$(CURDIR)/$(UNISON_GTK)'; fi
 

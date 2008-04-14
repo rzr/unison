@@ -7,7 +7,7 @@ Abstract: Unison is a file-synchronization tool for Unix and
  disks on the same host), modified separately, and then brought
  up to date by propagating the changes in each replica to the
  other. This manual describes how to install and use Unison.
-Section: Apps/Tools
+Section: File Management
 
 Format: text
 Files: /usr/share/doc/@UNISON_PACKAGE@/unison-manual.txt.gz
