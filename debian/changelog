@@ -1,8 +1,16 @@
-unison (2.27.57-2) UNRELEASED; urgency=low
+unison (2.27.57-2) unstable; urgency=low
 
   * Correct typo in documentation, thanks to Lucas B. Cohen 
     (Closes: #137960, #129478, #466173)
   * Switch packaging to git
+  * Set maintainer to Debian OCaml Maintainers
+  * Add dh-ocaml build-dependency (rules/ocaml.mk)
+  * Upgrade debian/compat to 7
+  * Upgrade Standards-Version to 3.8.0 (debian/README.source)
+  * Add ${misc:Depends} to dependencies
+  * Update debian/copyright file to use
+    http://wiki.debian.org/Proposals/CopyrightFormat
+  * Remove obsolete debian/control.in related variables and files
 
  -- Sylvain Le Gall <gildor@debian.org>  Thu, 05 Mar 2009 12:10:11 +0100
 
