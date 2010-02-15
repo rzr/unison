@@ -73,10 +73,8 @@ MY_MAKE_FLAGS += $(shell if test -x /usr/bin/ocamlopt.opt; then echo "OCAMLOPT=o
 
 ifeq ($(OCAML_HAVE_OCAMLOPT),yes)
   NATIVE := true
-  DEB_DH_GENCONTROL_ARGS += -VF:OCamlInterpreter=""
 else
   NATIVE := false
-  DEB_DH_GENCONTROL_ARGS += -VF:OCamlInterpreter="ocaml-base-$(OCAML_ABI)"
   DEB_STRIP_EXCLUDE := $(UNISON) $(UNISON_GTK)
 endif
 

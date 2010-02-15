@@ -4,5 +4,6 @@ unison2.27.57 (2.27.57-1) UNRELEASED; urgency=low
     the rest of the changelog can be found in unison package.
   * Update Standards-Version to 3.8.4 (no change)
   * Stop using dh_desktop
+  * Use dh_ocaml 0.9 features (auto dependencies)
 
  -- Sylvain Le Gall <gildor@debian.org>  Sun, 14 Feb 2010 22:53:16 +0000
