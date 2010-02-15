@@ -17,9 +17,9 @@
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
 # MA 02110-1301, USA.
 
+include /usr/share/cdbs/1/rules/ocaml.mk
 include /usr/share/cdbs/1/rules/debhelper.mk
 include /usr/share/cdbs/1/rules/dpatch.mk
-include /usr/share/cdbs/1/rules/ocaml.mk
 
 VERSION=$(DEB_UPSTREAM_VERSION)
 # version used with addversionno in unison
