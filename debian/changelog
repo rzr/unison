@@ -2,5 +2,6 @@ unison2.27.57 (2.27.57-1) unstable; urgency=low
 
   * Fork a unison2.27.57 package to maintain compatibility with lenny/squeeze,
     the rest of the changelog can be found in unison package.
+  * Update Standards-Version to 3.8.4 (no change)
 
  -- Sylvain Le Gall <gildor@debian.org>  Sun, 14 Feb 2010 22:53:16 +0000
