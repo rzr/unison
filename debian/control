@@ -1,4 +1,4 @@
-Source: unison2.27.57
+Source: unison
 Section: utils
 Priority: optional
 Maintainer: Debian OCaml Maintainers <debian-ocaml-maint@lists.debian.org>
@@ -17,7 +17,7 @@ Vcs-Git: git://git.debian.org/git/pkg-ocaml-maint/packages/unison.git
 Vcs-Browser: http://git.debian.org/?p=pkg-ocaml-maint/packages/unison.git
 Homepage: http://www.cis.upenn.edu/~bcpierce/unison/
 
-Package: unison2.27.57
+Package: unison
 Architecture: any
 Depends: ${shlibs:Depends}, ${ocaml:Depends}, ${misc:Depends}
 Recommends: ssh-client | openssh-client
@@ -42,7 +42,7 @@ Description: A file-synchronization tool for Unix and Windows
  specification, and is resilient to failure due to its careful 
  handling of the replicas and its private structures.
 
-Package: unison2.27.57-gtk
+Package: unison-gtk
 Architecture: any
 Depends: ${shlibs:Depends}, ${ocaml:Depends}, ${misc:Depends}
 Conflicts: unison-gtk (<< 2.9.1-3)
