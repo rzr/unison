@@ -6,6 +6,7 @@ unison (2.27.57-3) UNRELEASED; urgency=low
     * Use dh_ocaml 0.9 features (auto dependencies)
   * unison binaries are custom executables, so we can remove Depends on any
     ocaml-base* packages (Closes: #540481)
+  * Add bash_completion (Closes: #349782, #481070)
 
  -- Sylvain Le Gall <gildor@debian.org>  Tue, 16 Feb 2010 23:52:52 +0100
 
