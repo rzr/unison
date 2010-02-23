@@ -1,4 +1,4 @@
-unison (2.27.57-3) UNRELEASED; urgency=low
+unison (2.27.57-4) UNRELEASED; urgency=low
 
   * Merge changes from unison2.27.57:
     * Update Standards-Version to 3.8.4 (no change)
@@ -7,8 +7,9 @@ unison (2.27.57-3) UNRELEASED; urgency=low
   * unison binaries are custom executables, so we can remove Depends on any
     ocaml-base* packages (Closes: #540481)
   * Add bash_completion (Closes: #349782, #481070)
+  * Use the full path to access icon in .desktop (Closes: #541700)
 
- -- Sylvain Le Gall <gildor@debian.org>  Tue, 16 Feb 2010 23:52:52 +0100
+ -- Sylvain Le Gall <gildor@debian.org>  Tue, 23 Feb 2010 00:42:07 +0000
 
 unison (2.27.57-2) unstable; urgency=low
 
