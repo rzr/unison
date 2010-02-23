@@ -8,6 +8,8 @@ unison (2.27.57-4) UNRELEASED; urgency=low
     ocaml-base* packages (Closes: #540481)
   * Add bash_completion (Closes: #349782, #481070)
   * Use the full path to access icon in .desktop (Closes: #541700)
+  * Patch from unison trunk to remove 'Connected ...' message even when
+    -silent is set (Closes: #497729)
 
  -- Sylvain Le Gall <gildor@debian.org>  Tue, 23 Feb 2010 00:42:07 +0000
 
