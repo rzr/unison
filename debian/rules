@@ -73,6 +73,16 @@ RENAME += debian/unison-gtk.links.in
 RENAME += debian/unison.links.in
 RENAME += debian/unison-gtk.desktop.in
 
+ifeq ($(DEB_SOURCE_PACKAGE),unison)
+OTHER_UNISON_PACKAGE=unison$(VERSION)
+OTHER_UNISON_GTK_PACKAGE=unison$(VERSION)-gtk
+else
+OTHER_UNISON_PACKAGE=unison (<< $(VERSION)-999)
+OTHER_UNISON_GTK_PACKAGE=unison-gtk (<< $(VERSION)-999)
+endif
+DEB_DH_GENCONTROL_ARGS += -- "-VF:OtherUnisonGtk=$(OTHER_UNISON_GTK_PACKAGE)" "-VF:OtherUnison=$(OTHER_UNISON_PACKAGE)"
+
+
 MY_MAKE_FLAGS += $(shell if test -x /usr/bin/ocamlopt.opt; then echo "OCAMLOPT=ocamlopt.opt"; fi )
 
 ifeq ($(OCAML_HAVE_OCAMLOPT),yes)
@@ -184,11 +194,13 @@ unison-template-stamp: UNISON_SELF_VAR = $(UNISON_VAR)
 
 template: unison-template-stamp unison-gtk-template-stamp
 
+.PHONY: template
+
 #
 # Rename and substitute files
 #
 
-unison-rename: unison-rename-stamp
+unison-rename: template unison-rename-stamp 
 unison-rename-stamp:	
 	# Rename all the debhelper files needed and substitue the @XXX@
 	# string
