@@ -1,3 +1,9 @@
+unison2.27.57 (2.27.57-2) UNRELEASED; urgency=low
+
+  * Synchronize with unison package
+
+ -- Sylvain Le Gall <gildor@debian.org>  Thu, 25 Feb 2010 23:39:44 +0100
+
 unison2.27.57 (2.27.57-1) unstable; urgency=low
 
   * Fork a unison2.27.57 package to maintain compatibility with lenny/squeeze,
