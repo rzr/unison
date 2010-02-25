@@ -1,4 +1,4 @@
-unison2.27.57 (2.27.57-2) UNRELEASED; urgency=low
+unison2.27.57 (2.27.57-2) unstable; urgency=low
 
   * Synchronize with unison package
     * unison binaries are custom executables, so we can remove Depends on any
@@ -9,8 +9,10 @@ unison2.27.57 (2.27.57-2) UNRELEASED; urgency=low
       -silent is set
     * Auto generate conflicts with unisonX.Y.Z or unison (X.Y.Z) package
     * Enhance templating for unison and unison-gtk common files
+  * Move ${F:OtherUnison*} fields first due to a problem when merging
+    conflicts in dpkg-gencontrol
 
- -- Sylvain Le Gall <gildor@debian.org>  Thu, 25 Feb 2010 23:39:44 +0100
+ -- Sylvain Le Gall <gildor@debian.org>  Fri, 26 Feb 2010 00:52:11 +0100
 
 unison2.27.57 (2.27.57-1) unstable; urgency=low
 

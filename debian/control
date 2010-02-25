@@ -21,7 +21,7 @@ Package: unison2.27.57
 Architecture: any
 Depends: ${shlibs:Depends}, ${ocaml:Depends}, ${misc:Depends}
 Recommends: ssh-client | openssh-client
-Conflicts: unison (<< 2.9.1-3), ${F:OtherUnison}
+Conflicts: ${F:OtherUnison}, unison (<< 2.9.1-3)
 Description: A file-synchronization tool for Unix and Windows
  Unison is a file-synchronization tool for Unix and Windows, written
  in OCaml. It allows two replicas of a collection of files and
@@ -45,7 +45,7 @@ Description: A file-synchronization tool for Unix and Windows
 Package: unison2.27.57-gtk
 Architecture: any
 Depends: ${shlibs:Depends}, ${ocaml:Depends}, ${misc:Depends}
-Conflicts: unison-gtk (<< 2.9.1-3), ${F:OtherUnisonGtk}
+Conflicts: ${F:OtherUnisonGtk}, unison-gtk (<< 2.9.1-3)
 Recommends: ssh-askpass, ssh-client | openssh-client
 Description: A file-synchronization tool for Unix and Windows with GTK+ interface
  Unison is a file-synchronization tool for Unix and Windows, written
