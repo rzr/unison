@@ -38,36 +38,38 @@ PRIORITY=10
 PRIORITY_GTK=5
 endif
 
+TR=$(subst .,_,$(subst -,_,$1))
+
 UNISON=unison-$(VERSION)
 UNISON_MAJ=UNISON-$(VERSION)
 UNISON_PACKAGE=unison$(PACKAGE_VERSION)
 UNISON_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON),unison-latest-stable)
 UNISON_VERSIONNO=unison-$(VERSIONNO)
+UNISON_VAR=$(call TR,$(UNISON))
 
 UNISON_GTK=unison-$(VERSION)-gtk
 UNISON_GTK_PACKAGE=$(UNISON_PACKAGE)-gtk
 UNISON_GTK_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_GTK),unison-latest-stable-gtk)
 UNISON_GTK_VERSIONNO=unison-$(VERSIONNO)-gtk
+UNISON_GTK_VAR=$(call TR,$(UNISON_GTK))
 
 RENAME := debian/unison.1.in 
-RENAME += debian/unison.dirs.in 
 RENAME += debian/unison.doc-base.in
-RENAME += debian/unison.postinst.in
-RENAME += debian/unison.prerm.in
-RENAME += debian/unison.preinst.in
-RENAME += debian/unison.manpages.in
-RENAME += debian/unison-gtk.dirs.in
 RENAME += debian/unison-gtk.menu.in
-RENAME += debian/unison-gtk.postinst.in
-RENAME += debian/unison-gtk.prerm.in
-RENAME += debian/unison-gtk.preinst.in
-RENAME += debian/unison-gtk.manpages.in
 RENAME += debian/unison-gtk.svg.in
 RENAME += debian/unison-gtk.install.in
 RENAME += debian/unison.install.in
-RENAME += debian/unison-gtk.links.in
-RENAME += debian/unison.links.in
 RENAME += debian/unison-gtk.desktop.in
+
+ifeq ($(DEB_SOURCE_PACKAGE),unison)
+OTHER_UNISON_PACKAGE=unison$(VERSION)
+OTHER_UNISON_GTK_PACKAGE=unison$(VERSION)-gtk
+else
+OTHER_UNISON_PACKAGE=unison (<< $(VERSION)-999)
+OTHER_UNISON_GTK_PACKAGE=unison-gtk (<< $(VERSION)-999)
+endif
+DEB_DH_GENCONTROL_ARGS += -- "-VF:OtherUnisonGtk=$(OTHER_UNISON_GTK_PACKAGE)" "-VF:OtherUnison=$(OTHER_UNISON_PACKAGE)"
+
 
 MY_MAKE_FLAGS += $(shell if test -x /usr/bin/ocamlopt.opt; then echo "OCAMLOPT=ocamlopt.opt"; fi )
 
@@ -123,30 +125,82 @@ clean::
 	-$(RM) '$(CURDIR)/debian/$(UNISON_GTK_PACKAGE).xpm'
 
 #
+# Generate debhelper files using templates
+#
+
+SED_REPLACE += -e "s/@VERSION@/$(VERSION)/g"
+SED_REPLACE += -e "s/@PACKAGE_VERSION@/$(PACKAGE_VERSION)/g"
+
+SED_REPLACE += -e "s/@PRIORITY@/$(PRIORITY)/g"
+SED_REPLACE += -e "s/@UNISON@/$(UNISON)/g"
+SED_REPLACE += -e "s/@UNISON_PACKAGE@/$(UNISON_PACKAGE)/g"
+SED_REPLACE += -e "s/@UNISON_ALTERNATIVE@/$(UNISON_ALTERNATIVE)/g"
+SED_REPLACE += -e "s/@UNISON_VERSIONNO@/$(UNISON_VERSIONNO)/g"
+SED_REPLACE += -e "s/@UNISON_VAR@/$(UNISON_VAR)/g"
+SED_REPLACE += -e "s/@UNISON_MAJ@/$(UNISON_MAJ)/g"
+
+SED_REPLACE += -e "s/@PRIORITY_GTK@/$(PRIORITY_GTK)/g"
+SED_REPLACE += -e "s/@UNISON_GTK@/$(UNISON_GTK)/g"
+SED_REPLACE += -e "s/@UNISON_GTK_PACKAGE@/$(UNISON_GTK_PACKAGE)/g"
+SED_REPLACE += -e "s/@UNISON_GTK_ALTERNATIVE@/$(UNISON_GTK_ALTERNATIVE)/g"
+SED_REPLACE += -e "s/@UNISON_GTK_VERSIONNO@/$(UNISON_GTK_VERSIONNO)/g"
+SED_REPLACE += -e "s/@UNISON_GTK_VAR@/$(UNISON_GTK_VAR)/g"
+
+SED_REPLACE += -e "s/@PRIORITY_SELF@/$(PRIORITY_SELF)/g"
+SED_REPLACE += -e "s/@UNISON_SELF@/$(UNISON_SELF)/g"
+SED_REPLACE += -e "s/@UNISON_SELF_PACKAGE@/$(UNISON_SELF_PACKAGE)/g"
+SED_REPLACE += -e "s/@UNISON_SELF_ALTERNATIVE@/$(UNISON_SELF_ALTERNATIVE)/g"
+SED_REPLACE += -e "s/@UNISON_SELF_VERSIONNO@/$(UNISON_SELF_VERSIONNO)/g"
+SED_REPLACE += -e "s/@UNISON_SELF_VAR@/$(UNISON_SELF_VAR)/g"
+SED_REPLACE += -e "s/@IS_GTK@/$(IS_GTK)/g"
+
+%-template-stamp: $(wildcard debian/templates/*)
+	for i in $^ ; do   \
+	   sed $(SED_REPLACE) $$i > debian/$(UNISON_SELF_PACKAGE).$$(basename $$i); \
+	done;
+	touch $@
+
+clean::
+	for i in $(wildcard debian/templates/*); do \
+	   $(RM) -f debian/$(UNISON_GTK_PACKAGE).$$(basename $$i); \
+	   $(RM) -f debian/$(UNISON_PACKAGE).$$(basename $$i); \
+	done
+	-$(RM) unison-gtk-template-stamp unison-template-stamp
+
+unison-gtk-template-stamp: PRIORITY_SELF = $(PRIORITY_GTK)
+unison-gtk-template-stamp: UNISON_SELF = $(UNISON_GTK)
+unison-gtk-template-stamp: UNISON_SELF_PACKAGE = $(UNISON_GTK_PACKAGE)
+unison-gtk-template-stamp: UNISON_SELF_ALTERNATIVE = $(UNISON_GTK_ALTERNATIVE)
+unison-gtk-template-stamp: UNISON_SELF_VERSIONNO = $(UNISON_GTK_VERSIONNO)
+unison-gtk-template-stamp: UNISON_SELF_VAR = $(UNISON_GTK_VAR)
+unison-gtk-template-stamp: IS_GTK=true
+
+unison-template-stamp: PRIORITY_SELF = $(PRIORITY)
+unison-template-stamp: UNISON_SELF = $(UNISON)
+unison-template-stamp: UNISON_SELF_PACKAGE = $(UNISON_PACKAGE)
+unison-template-stamp: UNISON_SELF_ALTERNATIVE = $(UNISON_ALTERNATIVE)
+unison-template-stamp: UNISON_SELF_VERSIONNO = $(UNISON_VERSIONNO)
+unison-template-stamp: UNISON_SELF_VAR = $(UNISON_VAR)
+unison-template-stamp: IS_GTK=false
+
+template: unison-template-stamp unison-gtk-template-stamp
+
+.PHONY: template
+
+common-binary-indep:: template
+common-binary-arch:: template
+
+#
 # Rename and substitute files
 #
 
-unison-rename: unison-rename-stamp
-unison-rename-stamp:	
+unison-rename: unison-rename-stamp 
+unison-rename-stamp: $(RENAME)
 	# Rename all the debhelper files needed and substitue the @XXX@
 	# string
-	for i in $(RENAME); do \
+	for i in $^ ; do \
 	  DST=`echo $$i | sed -e "s/unison/${UNISON_PACKAGE}/" -e "s/\\.in\\$$//"`; \
-	  sed \
-	    -e "s/@VERSION@/$(VERSION)/g"                               \
-	    -e "s/@PACKAGE_VERSION@/$(PACKAGE_VERSION)/g"               \
-	    -e "s/@PRIORITY@/$(PRIORITY)/g"                             \
-	    -e "s/@PRIORITY_GTK@/$(PRIORITY_GTK)/g"                     \
-	    -e "s/@UNISON@/$(UNISON)/g"                                 \
-	    -e "s/@UNISON_MAJ@/$(UNISON_MAJ)/g"                         \
-	    -e "s/@UNISON_PACKAGE@/$(UNISON_PACKAGE)/g"                 \
-	    -e "s/@UNISON_ALTERNATIVE@/$(UNISON_ALTERNATIVE)/g"         \
-	    -e "s/@UNISON_VERSIONNO@/$(UNISON_VERSIONNO)/g"             \
-	    -e "s/@UNISON_GTK@/$(UNISON_GTK)/g"                         \
-	    -e "s/@UNISON_GTK_PACKAGE@/$(UNISON_GTK_PACKAGE)/g"         \
-	    -e "s/@UNISON_GTK_ALTERNATIVE@/$(UNISON_GTK_ALTERNATIVE)/g" \
-	    -e "s/@UNISON_GTK_VERSIONNO@/$(UNISON_GTK_VERSIONNO)/g"     \
-	    "$$i" > "$(CURDIR)/$$DST"; \
+	  sed $(SED_REPLACE) $$i > "$(CURDIR)/$$DST"; \
 	done
 	
 	# We always need to rename the manual 
@@ -155,11 +209,6 @@ unison-rename-stamp:
 	cp '$(CURDIR)/debian/$(UNISON).1' '$(CURDIR)/debian/$(UNISON_GTK).1'
 	
 	touch $@
-
-.PHONY: unison-rename
-
-common-binary-indep:: unison-rename
-common-binary-arch:: unison-rename
 
 clean::
 	# Remove the renamed files
@@ -170,3 +219,8 @@ clean::
 	-$(RM) '$(CURDIR)/debian/$(UNISON).1' 
 	-$(RM) '$(CURDIR)/debian/$(UNISON_GTK).1'
 	-$(RM) '$(CURDIR)/unison-rename-stamp'
+
+.PHONY: unison-rename
+
+common-binary-indep:: unison-rename template
+common-binary-arch:: unison-rename template

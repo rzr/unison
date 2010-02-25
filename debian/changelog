@@ -1,6 +1,14 @@
 unison2.27.57 (2.27.57-2) UNRELEASED; urgency=low
 
   * Synchronize with unison package
+    * unison binaries are custom executables, so we can remove Depends on any
+      ocaml-base* packages
+    * Add bash_completion
+    * Use the full path to access icon in .desktop
+    * Patch from unison trunk to remove 'Connected ...' message even when
+      -silent is set
+    * Auto generate conflicts with unisonX.Y.Z or unison (X.Y.Z) package
+    * Enhance templating for unison and unison-gtk common files
 
  -- Sylvain Le Gall <gildor@debian.org>  Thu, 25 Feb 2010 23:39:44 +0100
 
