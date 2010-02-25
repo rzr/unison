@@ -12,6 +12,7 @@ unison (2.27.57-4) UNRELEASED; urgency=low
     -silent is set (Closes: #497729, #551199)
   * Auto generate conflicts with unisonX.Y.Z or unison (X.Y.Z) package
     (Closes: #570910)
+  * Enhance templating for unison and unison-gtk common files
 
  -- Sylvain Le Gall <gildor@debian.org>  Tue, 23 Feb 2010 00:42:07 +0000
 
