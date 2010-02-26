@@ -153,6 +153,6 @@ Checklist:
 - debian/gbp.conf: check that content is
     upstream-branch = X.Y.Z/upstream
     debian-branch = X.Y.Z/master
-    debian-tag = "debian/X.Y.Z-%(version)s"
+    debian-tag = debian/unisonX.Y.Z-%(version)s
 
  -- Sylvain Le Gall <gildor@debian.org>  Fri, 26 Feb 2010 01:12:22 +0100
