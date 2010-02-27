@@ -149,10 +149,13 @@ To merge the branch master:
 
 Checklist:
 - debian/changelog: check that changelog has not been erased
-- debian/control: rename every package to unisonX.Y.Z or unisonX.Y.Z-gtk
-- debian/gbp.conf: check that content is
+- debian/control: rename every package to unisonX.Y.Z or unisonX.Y.Z-gtk (or
+  for unison package unison and unison-gtk)
+- debian/gbp.conf: check that content end with
     upstream-branch = X.Y.Z/upstream
     debian-branch = X.Y.Z/master
     debian-tag = debian/unisonX.Y.Z-%(version)s
+  or (for unison package) 
+    nothing
 
  -- Sylvain Le Gall <gildor@debian.org>  Fri, 26 Feb 2010 01:12:22 +0100
