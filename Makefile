@@ -74,10 +74,10 @@ INSTALLDIR = $(HOME)/bin/
 install: doinstall
 
 installtext: 
-	make -C .. installtext
+	$(MAKE) -C .. installtext
 
 text: 
-	make -C .. text
+	$(MAKE) -C .. text
 
 doinstall: $(NAME)$(EXEC_EXT)
 	-mv $(INSTALLDIR)/$(NAME)$(EXEC_EXT) /tmp/$(NAME)-$(shell echo $$$$)
@@ -198,10 +198,14 @@ prefsdocs: all
 	./$(NAME) -prefsdocs 2> prefsdocsjunk.tmp
 	mv -f prefsdocsjunk.tmp prefsdocs.tmp
 
-# For developers at Penn
+# For developers 
 runtest:
-	$(MAKE) all NATIVE=false DEBUG=true 
-	./unison test 
+	$(MAKE) all NATIVE=false DEBUG=true
+	./unison test
+
+repeattest:
+	$(MAKE) all NATIVE=false DEBUG=true UISTYLE=text
+	./unison noprofile a.tmp b.tmp -repeat foo.tmp -debug ui
 
 selftest:
 	$(MAKE) all NATIVE=false DEBUG=true UISTYLE=text
@@ -352,12 +356,17 @@ clean::
 
 ifeq (${OSARCH},osx)
 clean::
-	-(cd uimac; xcodebuild clean)
-	-(cd uimac; $(RM) -r build *.plist)
+	-(cd $(UIMACDIR); xcodebuild clean)
+	-(cd $(UIMACDIR); $(RM) -r build ExternalSettings.xcconfig)
 endif
 
 checkin:
 	$(MAKE) -C .. checkin
+
+installremote: 
+	$(MAKE) UISTYLE=text
+	-unison eniac -path current/unison/trunk/src -batch
+	ssh eniac.seas.upenn.edu make -C current/unison/trunk/src installtext
 
 ####################################################################
 # Documentation strings

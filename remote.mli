@@ -1,5 +1,5 @@
 (* Unison file synchronizer: src/remote.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 module Thread : sig
   val unwindProtect : (unit -> 'a Lwt.t) -> (exn -> unit Lwt.t) -> 'a Lwt.t
@@ -83,20 +83,23 @@ val registerServerCmd :
   string -> (connection -> 'a -> 'b Lwt.t) -> connection -> 'a -> 'b Lwt.t
 val registerSpecialServerCmd :
   string ->
-  ('a -> (string * int * int) list -> (string * int * int) list * int) *
-  (string -> int -> 'a) ->
-  ('b -> (string * int * int) list -> (string * int * int) list * int) *
-  (string -> int -> 'b) ->
+  ('a ->
+   (Bytearray.t * int * int) list -> (Bytearray.t * int * int) list * int) *
+  (Bytearray.t -> int -> 'a) ->
+  ('b ->
+   (Bytearray.t * int * int) list -> (Bytearray.t * int * int) list * int) *
+  (Bytearray.t -> int -> 'b) ->
   (connection -> 'a -> 'b Lwt.t) -> connection -> 'a -> 'b Lwt.t
 val defaultMarshalingFunctions :
-  ('a -> (string * int * int) list -> (string * int * int) list * int) *
-  (string -> int -> 'b)
-val encodeInt : int -> string
-val decodeInt : string -> int
+  ('a ->
+   (Bytearray.t * int * int) list -> (Bytearray.t * int * int) list * int) *
+  (Bytearray.t -> int -> 'b)
+val encodeInt : int -> Bytearray.t
+val decodeInt : Bytearray.t -> int -> int
 val registerRootCmdWithConnection :
     string                          (* command name *)
  -> (connection -> 'a -> 'b Lwt.t)  (* local command *)
- ->    Common.root                  (* root on with the command is executed *)
+ ->    Common.root                  (* root on which the command is executed *)
     -> Common.root                  (* other root *)
     -> 'a                           (* additional arguments *)
     -> 'b Lwt.t                     (* result *)

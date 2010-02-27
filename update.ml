@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/update.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 open Common
 let (>>=)  = Lwt.(>>=)
@@ -17,10 +32,13 @@ let debugignore = Trace.debug "ignore"
    archive changes: old archives will then automatically be discarded.  (We
    do not use the unison version number for this because usually the archive
    representation does not change between unison versions.) *)
-(*FIX: change the approximate function in props.ml next time the
+(*FIX: Use similar_correct in props.ml next time the
   format is modified (see file props.ml for the new function) *)
+(*FIX: use Case.normalize next time the format is modified *)
 (*FIX: also change Fileinfo.stamp to drop the info.ctime component, next time the
   format is modified *)
+(*FIX: also make Jerome's suggested change about file times (see his mesg in
+       unison-pending email folder). *)
 let archiveFormat = 22
 
 module NameMap = MyMap.Make (Name)
@@ -86,7 +104,7 @@ let foundArchives = ref true
 
 let rootAliases : string list Prefs.t =
   Prefs.createStringList "rootalias"
-   "Register alias for canonical root names"
+   "!register alias for canonical root names"
    ("When calculating the name of the archive files for a given pair of roots,"
    ^ " Unison replaces any roots matching the left-hand side of any rootalias"
    ^ " rule by the corresponding right-hand side.")
@@ -144,7 +162,7 @@ type archiveVersion = MainArch | NewArch | ScratchArch | Lock
 
 let showArchiveName =
   Prefs.createBool "showarchive" false
-    "show name of archive and 'true names' (for rootalias) of roots"
+    "!show 'true names' (for rootalias) of roots and archive"
     ("When this preference is set, Unison will print out the 'true names'"
      ^ "of the roots, in the same form as is expected by the {\\tt rootalias}"
      ^ "preference.")
@@ -229,6 +247,54 @@ let archivesIdentical l =
     h::r -> h <> None && Safelist.for_all (fun h' -> h = h') r
   | _    -> true
 
+let (archiveNameOnRoot
+       : Common.root ->  archiveVersion -> (string * string * bool) Lwt.t)
+    =
+  Remote.registerRootCmd
+    "archiveName"
+      (fun (fspath, v) ->
+       let (name,_) = archiveName fspath v in
+       Lwt.return
+         (name,
+          Os.myCanonicalHostName,
+          Sys.file_exists (Fspath.toString (Os.fileInUnisonDir name))))
+
+let checkArchiveCaseSensitivity l =
+  match l with
+    Some (_, magic) :: _ ->
+      begin try
+        let archMode = String.sub magic 0 (String.index magic '\000') in
+        let curMode = Case.modeDescription () in
+        if curMode <> archMode then begin
+          (* We cannot compute the archive name locally as it
+             currently depends on the os type *)
+          Globals.allRootsMap
+            (fun r -> archiveNameOnRoot r MainArch) >>= fun names ->
+          let l =
+            List.map
+              (fun (name, host, _) ->
+                 Format.sprintf "    archive %s on host %s" name host)
+              names
+          in
+          Lwt.fail
+            (Util.Fatal
+               (String.concat "\n"
+                  ("Warning: incompatible case sensitivity settings." ::
+                    Format.sprintf "Unison is currently in %s mode," curMode ::
+                    Format.sprintf
+                      "while the archives assume %s mode." archMode ::
+                    "You should either change Unison's setup " ::
+                    "or delete the following archives:" ::
+                    l @
+                    ["Then, try again."])))
+        end else
+          Lwt.return ()
+      with Not_found ->
+        Lwt.return ()
+      end
+  | _ ->
+      Lwt.return ()
+
 (*****************************************************************************)
 (*                      LOADING AND SAVING ARCHIVES                          *)
 (*****************************************************************************)
@@ -301,8 +367,10 @@ let storeArchiveLocal fspath thisRoot archive hash magic =
    output_string c "\n";
    output_string c (verboseArchiveName thisRoot);
    output_string c "\n";
-   output_string c (Printf.sprintf "Written at %s\n"
-                      (Util.time2string (Util.time())));
+   (* This third line is purely informative *)
+   output_string c (Printf.sprintf "Written at %s - %s mode\n"
+                      (Util.time2string (Util.time()))
+                      (Case.modeDescription ()));
    Marshal.to_channel c (archive, hash, magic) [Marshal.No_sharing];
    close_out c)
 
@@ -536,6 +604,7 @@ let loadArchives (optimistic: bool) : bool Lwt.t =
       ^ "       arXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n"
       ^ "     where the X's are a hexidecimal number .\n"
       ^ "  c) Run unison again to synchronize from scratch.\n"));
+  checkArchiveCaseSensitivity checksums >>= fun () ->
   if Prefs.read dumpArchives then 
     Globals.allRootsMap (fun r -> dumpArchiveOnRoot r ())
      >>= (fun _ -> Lwt.return identicals)
@@ -643,11 +712,11 @@ let unlockArchiveOnRoot: Common.root -> unit -> unit Lwt.t =
 
 let ignorelocks =
   Prefs.createBool "ignorelocks" false
-    "ignore locks left over from previous run (dangerous!)"
+    "!ignore locks left over from previous run (dangerous!)"
     ("When this preference is set, Unison will ignore any lock files "
      ^ "that may have been left over from a previous run of Unison that "
      ^ "was interrupted while reading or writing archive files; by default, "
-     ^ "when Unison sees these lock files it will stop and request manual"
+     ^ "when Unison sees these lock files it will stop and request manual "
      ^ "intervention.  This "
      ^ "option should be set only if you are {\\em positive} that no other "
      ^ "instance of Unison might be concurrently accessing the same archive "
@@ -731,18 +800,6 @@ let archivesExistOnRoot: Common.root -> unit -> (bool * bool) Lwt.t =
        let newexists =
          Sys.file_exists (Fspath.toString (Os.fileInUnisonDir newname)) in
        Lwt.return (oldexists, newexists))
-
-let (archiveNameOnRoot
-       : Common.root ->  archiveVersion -> (string * string * bool) Lwt.t)
-    =
-  Remote.registerRootCmd
-    "archiveName"
-      (fun (fspath, v) ->
-       let (name,_) = archiveName fspath v in
-       Lwt.return
-         (name,
-          Os.myCanonicalHostName,
-          Sys.file_exists (Fspath.toString (Os.fileInUnisonDir name))))
 
 let forall = Safelist.for_all (fun x -> x)
 let exists = Safelist.exists (fun x -> x)
@@ -915,7 +972,7 @@ let isDir fspath path =
 
 let mountpoints = 
   Prefs.createStringList "mountpoint"
-    "abort if this path does not exist"
+    "!abort if this path does not exist"
     ("Including the preference \\texttt{-mountpoint PATH} causes Unison to "
      ^ "double-check, at the end of update detection, that \\texttt{PATH} exists "
      ^ "and abort if it does not.  This is useful when Unison is used to synchronize "
@@ -942,7 +999,7 @@ let abortIfAnyMountpointsAreMissing fspath =
 
 let fastcheck =
   Prefs.createString "fastcheck" "default"
-    "do fast update detection (`true', `false', or `default')"
+    "!do fast update detection (true/false/default)"
     ( "When this preference is set to \\verb|true|, \
        Unison will use the modification time and length of a file as a
        `pseudo inode number' \
@@ -971,16 +1028,18 @@ let useFastChecking () =
    || (Prefs.read fastcheck = "default" && Util.osType = `Unix)
    || (Prefs.read fastcheck = "auto" && Util.osType = `Unix)
 
-let immutable = Pred.create "immutable"
+let immutable = Pred.create "immutable" ~advanced:true
    ("This preference specifies paths for directories whose \
-     children are all immutable files --- i.e., once a file has been \
+     immediate children are all immutable files --- i.e., once a file has been \
      created, its contents never changes.  When scanning for updates, \
      Unison does not check whether these files have been modified; \
      this can speed update detection significantly (in particular, for mail \
      directories).")
 
-let immutablenot = Pred.create "immutablenot"
+let immutablenot = Pred.create "immutablenot" ~advanced:true
    ("This preference overrides {\\tt immutable}.")
+
+(** Status display **)
 
 let bigFileLength = 10 * 1024
 let bigFileLengthFS = Uutil.Filesize.ofInt bigFileLength
@@ -1002,7 +1061,7 @@ let showStatusAddLength info =
     else
       fileLength :=
         min bigFileLength
-          (!fileLength + Uutil.Filesize.toInt len1 + Uutil.Filesize.toInt len2)
+         (!fileLength + Uutil.Filesize.toInt len1 + Uutil.Filesize.toInt len2)
   end
 
 let showStatus path =
@@ -1012,11 +1071,30 @@ let showStatus path =
       fileLength := 0;
       let t = Unix.gettimeofday () in
       if t -. !t0 > 0.05 then begin
-        Trace.statusDetail ("scanning " ^ Path.toString path);
+        Uutil.showUpdateStatus (Path.toString path);
+(*Trace.statusDetail ("scanning... " ^ Path.toString path);*)
         t0 := t
       end
     end
   end
+
+let showStatusDir path = ()
+
+(* BCP (4/09) The code above tries to be smart about showing status messages
+   at regular intervals, but people seem to find this confusing.
+   I tried replace all this with something simpler -- just show directories as
+   they are scanned -- but this seems worse: it prints far too much stuff.
+   So I'm going to revert to the old version. *)
+(*
+let showStatus path = ()
+let showStatusAddLength info = ()
+let showStatusDir path =
+  if not !Trace.runningasserver then begin
+        Trace.statusDetail ("scanning... " ^ Path.toString path);
+  end
+*)
+
+(* ------- *)
 
 let symlinkInfo =
   Common.Previous (`SYMLINK, Props.dummy, Os.fullfingerprint_dummy, Osx.ressDummy)
@@ -1077,7 +1155,7 @@ let checkContentsChange
                  (Util.msg "archStamp is ctime (%f)" stamp;
                   Util.msg " / info.ctime (%f)" info.Fileinfo.ctime)
            end;
-           Util.msg " / times: %f - %f - %b"
+           Util.msg " / times: %f = %f... %b"
              (Props.time archDesc) (Props.time info.Fileinfo.desc)
              (Props.same_time info.Fileinfo.desc archDesc);
            Util.msg " / lengths: %s - %s"
@@ -1120,10 +1198,15 @@ let checkContentsChange
              (Os.fullfingerprint_to_string archDig)
              (Os.fullfingerprint_to_string newDigest));
     if archDig = newDigest then begin
-      Some (ArchiveFile
-              (Props.setTime archDesc (Props.time info.Fileinfo.desc),
-               archDig, Fileinfo.stamp info, Fileinfo.ressStamp info)),
-      checkPropChange info archive archDesc
+      let newprops = Props.setTime archDesc (Props.time info.Fileinfo.desc) in
+      let newarch =
+        ArchiveFile
+
+          (newprops, archDig, Fileinfo.stamp info, Fileinfo.ressStamp info) in
+      debugverbose (fun() ->
+        Util.msg "  Contents match: update archive with new time...%f\n" 
+                   (Props.time newprops));      
+      Some newarch, checkPropChange info archive archDesc
     end else begin
       debug (fun() -> Util.msg "  Updated file\n");
       None,
@@ -1201,6 +1284,7 @@ let rec buildUpdateChildren
     fspath path (archChi: archive NameMap.t) fastCheck
     : archive NameMap.t option * (Name.t * Common.updateItem) list * bool
     =
+  showStatusDir path;
   let t = Trace.startTimerQuietly
             (Printf.sprintf "checking %s" (Path.toString path)) in
   let skip =
@@ -1378,7 +1462,7 @@ and buildUpdateRec archive currfspath path fastCheck =
 let rec buildUpdate archive fspath fullpath here path =
   match Path.deconstruct path with
     None ->
-      showStatus path;
+      showStatus here;
       let (arch, ui) =
         buildUpdateRec archive fspath here (useFastChecking()) in
       (begin match arch with
@@ -1510,8 +1594,9 @@ let findUpdatesOnPaths pathList : Common.updateItem list Common.oneperpath =
        findOnRoot r pathList)
        (fun (host, _) ->
          begin match host with
-           Remote(_) -> Trace.statusDetail "Waiting for changes from server"
-         | _ -> ()
+           Remote _ -> Uutil.showUpdateStatus "";
+                       Trace.statusDetail "Waiting for changes from server"
+         | _        -> ()
          end)
        >>= (fun updates ->
      Trace.showTimer t;
@@ -1520,6 +1605,12 @@ let findUpdatesOnPaths pathList : Common.updateItem list Common.oneperpath =
      Lwt.return (ONEPERPATH(result))))))
 
 let findUpdates () : Common.updateItem list Common.oneperpath =
+  (* TODO: We should filter the paths to remove duplicates (including prefixes)
+     and ignored paths *)
+(* FIX: The following line can be deleted -- it's just for debugging *)
+debug (fun() -> Util.msg "Running bogus external program\n");
+let _ = External.runExternalProgram "dir" in
+debug (fun() -> Util.msg "Finished running bogus external program\n");
   findUpdatesOnPaths (Prefs.read Globals.paths)
 
 
@@ -1556,7 +1647,8 @@ let commitUpdates () =
      Remote.Thread.unwindProtect
        (fun () ->
           let magic =
-            Format.sprintf "%.f.%d" (Unix.gettimeofday ()) (Unix.getpid ())
+            Format.sprintf "%s\000%.f.%d"
+              (Case.modeDescription ()) (Unix.gettimeofday ()) (Unix.getpid ())
           in
           Globals.allRootsMap (fun r -> prepareCommitOnRoot r magic)
             >>= (fun checksums ->
@@ -1668,7 +1760,7 @@ let updateArchiveLocal fspath path ui id =
   let (localPath, subArch) = getPathInArchive archive Path.empty path in
   let newArch = updateArchiveRec ui (stripArchive path subArch) in
   let commit () =
-    let _ = Stasher.stashCurrentVersion fspath localPath in
+    let _ = Stasher.stashCurrentVersion fspath localPath None in
     let archive = getArchive root in
     let archive, () =
       updatePathInArchive archive fspath Path.empty path
@@ -1723,13 +1815,14 @@ let markEqual equals =
           Tree.map (fun n -> n) (fun (uc1,uc2) -> uc2) equals])
   end
 
-let rec replaceArchiveRec fspath path arch paranoid =
+let rec replaceArchiveRec fspath path arch paranoid deleteBadTempFiles =
   match arch with
     ArchiveDir (desc, children) ->
       ArchiveDir (desc,
                   NameMap.mapi
                     (fun nm a ->
-                       replaceArchiveRec fspath (Path.child path nm) a paranoid)
+                       replaceArchiveRec
+                         fspath (Path.child path nm) a paranoid deleteBadTempFiles)
                     children)
   | ArchiveFile (desc, dig, stamp, ress) ->
       if paranoid then begin
@@ -1738,11 +1831,19 @@ let rec replaceArchiveRec fspath path arch paranoid =
         let info = Fileinfo.get false fspath path in
         let dig' = Os.fingerprint fspath path info in
         let ress' = Osx.stamp info.Fileinfo.osX in
-        if dig' <> dig then
-          raise (Util.Transient
-                   (Printf.sprintf
-                      "The file %s was incorrectly transferred \
-                       (fingerprint mismatch)" (Path.toString path)));
+        if dig' <> dig then begin
+          let savepath = Path.addSuffixToFinalName path "-bad" in
+          (* if deleteBadTempFiles then Os.delete fspath path; *)
+          if deleteBadTempFiles then
+            Os.rename "save temp" fspath path fspath savepath; 
+          raise (Util.Transient (Printf.sprintf
+            "The file %s was incorrectly transferred  (fingerprint mismatch in %s)%s"
+            (Path.toString path)
+            (Os.reasonForFingerprintMismatch dig dig')
+            (if deleteBadTempFiles
+               then " -- temp file saved as" ^ Path.toString savepath
+               else "")));
+        end;
         ArchiveFile (Props.override info.Fileinfo.desc desc,
                      dig, Fileinfo.stamp info, ress')
       end else begin
@@ -1753,7 +1854,7 @@ let rec replaceArchiveRec fspath path arch paranoid =
   | NoArchive ->
       arch
 
-let replaceArchiveLocal fspath pathTo location arch id paranoid =
+let replaceArchiveLocal fspath pathTo location arch id paranoid deleteBadTempFiles =
   debug (fun() -> Util.msg
              "replaceArchiveLocal %s %s\n"
              (Fspath.toString fspath)
@@ -1766,7 +1867,8 @@ let replaceArchiveLocal fspath pathTo location arch id paranoid =
       None     -> (fspath, localPath)
     | Some loc -> loc
   in
-  let newArch = replaceArchiveRec workingDir tempPathTo arch paranoid in
+  let newArch =
+    replaceArchiveRec workingDir tempPathTo arch paranoid deleteBadTempFiles in
   let commit () =
     debug (fun() -> Util.msg "replaceArchiveLocal: committing\n");
     let _ = Stasher.stashCurrentVersion fspath localPath (Some tempPathTo) in
@@ -1783,11 +1885,13 @@ let replaceArchiveLocal fspath pathTo location arch id paranoid =
 let replaceArchiveOnRoot =
   Remote.registerRootCmd
     "replaceArchive"
-    (fun (fspath, (pathTo, location, arch, id, paranoid)) ->
-       Lwt.return (replaceArchiveLocal fspath pathTo location arch id paranoid))
+    (fun (fspath, (pathTo, location, arch, id, paranoid, deleteBadTempFiles)) ->
+       Lwt.return (replaceArchiveLocal fspath pathTo location arch
+                                       id paranoid deleteBadTempFiles))
 
-let replaceArchive root pathTo location archive id paranoid =
-  replaceArchiveOnRoot root (pathTo, location, archive, id, paranoid)
+let replaceArchive root pathTo location archive id paranoid deleteBadTempFiles =
+  replaceArchiveOnRoot root
+    (pathTo, location, archive, id, paranoid, deleteBadTempFiles)
 
 (* Update the archive to reflect
       - the last observed state of the file on disk (ui)
@@ -1868,7 +1972,12 @@ let checkNoUpdatesLocal fspath pathInArchive ui =
   (* ...and check that this is a good description of what's out in the world *)
   let (_, uiNew) = buildUpdateRec archive fspath localPath false in
   if uiNew <> NoUpdates then
-    raise (Util.Transient "Destination updated during synchronization")
+    raise (Util.Transient (
+             "Destination updated during synchronization\n"
+           ^ (if useFastChecking() then
+                "  (if this happens repeatedly on a file that has not been changed, \n"
+              ^ "  try running once with 'fastcheck' set to false)"
+              else "")))
 
 let checkNoUpdatesOnRoot =
   Remote.registerRootCmd

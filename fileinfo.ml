@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/fileinfo.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 let debugV = Util.debug "fileinfo+"
 
@@ -36,9 +51,9 @@ let get fromRoot fspath path =
     (fun () ->
        try
          let stats = statFn fromRoot fspath path in
-debugV (fun () ->
-  Util.msg "%s: %b %f %f\n" (Fspath.concatToString fspath path)
-  fromRoot stats.Unix.LargeFile.st_ctime stats.Unix.LargeFile.st_mtime);
+         debugV (fun () ->
+                   Util.msg "%s: %b %f %f\n" (Fspath.concatToString fspath path)
+                     fromRoot stats.Unix.LargeFile.st_ctime stats.Unix.LargeFile.st_mtime);
          let typ =
            match stats.Unix.LargeFile.st_kind with
              Unix.S_REG -> `FILE
@@ -67,13 +82,21 @@ debugV (fun () ->
            osX      = Osx.getFileInfos fspath path `ABSENT })
 
 let check fspath path props =
-  Props.check fspath path (statFn false fspath path) props
+  Util.convertUnixErrorsToTransient
+  "checking file information"
+    (fun () -> Props.check fspath path (statFn false fspath path) props)
 
 let set fspath path action newDesc =
   let (kind, p) =
     match action with
       `Set defDesc ->
         (* Set the permissions and maybe the other properties                *)
+        (* BCP [Nov 2008]: Jerome, in a message to unison-hackers on
+           Oct 5, 2005, suggested that this would be better as
+              `Set, Props.override (get false fspath path).desc newDesc
+           but this does not seem right to me (bcp): if the file was just
+           created, then its permissions are something like 0x600, whereas
+           the default permissions will set the world read bit, etc. *)
         `Set, Props.override defDesc newDesc
     | `Copy oldPath ->
         (* Set the permissions (using the permissions of the file at         *)
@@ -101,7 +124,7 @@ type stamp =
 
 let pretendLocalOSIsWin32 =
   Prefs.createBool "pretendwin" false
-    "Use creation times for detecting updates"
+    "!Use creation times for detecting updates"
     ("When set to true, this preference makes Unison use Windows-style "
   ^ "fast update detection (using file creation times as "
   ^ "``pseudo-inode-numbers''), even when running on a Unix system.  This "

@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/ubase/trace.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 (* ---------------------------------------------------------------------- *)
 (* Choosing where messages go *)
@@ -15,7 +30,7 @@ let redirect x = (traceprinter := x)
 
 let debugmods =
   Prefs.createStringList "debug"
-    "debug module xxx ('all' -> everything, 'verbose' -> more)" 
+    "!debug module xxx ('all' -> everything, 'verbose' -> more)" 
     ("This preference is used to make Unison print various sorts of "
      ^ "information about what it is doing internally on the standard "
      ^ "error stream.  It can be used many times, each time with the name "
@@ -92,14 +107,14 @@ let _ = Util.debugPrinter := Some(debug)
 
 let logging =
   Prefs.createBool "log" true
-    "record actions in file specified by logfile preference"
+    "!record actions in logfile"
     "When this flag is set, Unison will log all changes to the filesystems
      on a file."
 
 let logfile =
   Prefs.createString "logfile"
     (Util.fileInHomeDir "unison.log")
-    "Log file name"
+    "!logfile name"
     "By default, logging messages will be appended to the file
      \\verb|unison.log| in your HOME directory.  Set this preference if
      you prefer another file."

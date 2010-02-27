@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/props.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 let debug = Util.debug "props"
 
@@ -73,6 +88,9 @@ let permMask =
 let (fileDefault, dirDefault, fileSafe, dirSafe) =
   match Util.osType with
     `Win32 ->
+      debug
+        (fun() ->
+           Util.msg "Using windows defaults for file permissions");
       ((0o600, -1), (* rw------- *)
        (0o700, -1), (* rwx------ *)
        (0o600, -1), (* rw------- *)
@@ -162,8 +180,22 @@ let syncedPartsToString =
      bit 0o0002 "?" "-" "w" ^
      bit 0o0001 "?" "-" "x"
 
+let dontChmod =
+  Prefs.createBool "dontchmod" 
+  false
+  "!When set, never use the chmod system call"
+  ("By default, Unison uses the 'chmod' system call to set the permission bits"
+  ^ " of files after it has copied them.  But in some circumstances (and under "
+  ^ " some operating systems), the chmod call always fails.  Setting this "
+  ^ " preference completely prevents Unison from ever calling chmod.")
+
 let set fspath path kind (fp, mask) =
-  if mask <> 0 then  (* BCP: removed "|| kind <> `Update"  10/2005 *)
+  (* BCP: removed "|| kind <> `Update" on 10/2005, but reinserted it on 11/2008.
+     I'd removed it to make Dale Worley happy -- he wanted a way to make sure that
+     Unison would never call chmod, and setting prefs to 0 seemed like a reasonable
+     way to do this.  But in fact it caused new files to be created with wrong prefs.
+   *)
+  if (mask <> 0 || kind = `Set) && (not (Prefs.read dontChmod)) then
     Util.convertUnixErrorsToTransient
     "setting permissions"
       (fun () ->
@@ -212,8 +244,8 @@ end
 (* ------------------------------------------------------------------------- *)
 
 let numericIds =
-  Prefs.createBool "numericids"
-    false "don't map uid/gid values by user/group names"
+  Prefs.createBool "numericids" false
+    "!don't map uid/gid values by user/group names"
     "When this flag is set to \\verb|true|, groups and users are \
      synchronized numerically, rather than by name. \n\
      \n\
@@ -343,7 +375,7 @@ module Gid = Id (struct
 
 let sync =
   Prefs.createBool "group"
-    false "synchronize group"
+    false "synchronize group attributes"
     ("When this flag is set to \\verb|true|, the group attributes "
      ^ "of the files are synchronized.  "
      ^ "Whether the group names or the group identifiers are synchronized"
@@ -493,7 +525,27 @@ let set fspath path kind t =
                     Unix.utimes abspath v v)
                  (fun()-> Unix.chmod abspath oldPerms)
              end
-           else Unix.utimes abspath v v)
+           else if false then begin
+             (* A special hack for Rasmus, who has a special situation that
+                requires the utimes-setting program to run 'setuid root'
+                (and we do not want all of Unison to run setuid, so we just
+                spin off an external utility to do it). *)
+             let time = Unix.localtime v in
+             let tstr = Printf.sprintf
+                          "%4d%02d%02d%02d%02d.%02d"
+                          (time.Unix.tm_year + 1900)
+                          (time.Unix.tm_mon + 1)
+                          time.Unix.tm_mday
+                          time.Unix.tm_hour
+                          time.Unix.tm_min
+                          time.Unix.tm_sec in
+             let cmd = "/usr/local/bin/sudo -u root /usr/bin/touch -m -a -t "
+                       ^ tstr ^ " '" ^ abspath ^ "'" in
+             Util.msg "Running external program to set utimes:\n  %s\n" cmd;
+             let (r,_) = External.runExternalProgram cmd in
+             if r<>(Unix.WEXITED 0) then raise (Util.Transient "External time-setting command failed")
+           end else
+             Unix.utimes abspath v v)
   | _ ->
       ()
 
@@ -525,8 +577,11 @@ let check fspath path stats t =
    we have to compare then using "similar". *)
 let same p p' =
   match p, p' with
-    Synced _, Synced _ -> similar p p'
-  | _                  -> extract p = extract p'
+    Synced _, Synced _ ->
+      similar p p'
+  | _                  ->
+      let delta = extract p -. extract p' in
+      delta = 0. || delta = 3600. || delta = -3600.
 
 let init _ = ()
 

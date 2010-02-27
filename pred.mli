@@ -1,5 +1,5 @@
 (* Unison file synchronizer: src/pred.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 (* Predicates over paths.
    
@@ -30,7 +30,7 @@ type t
 
 (* Create a new predicate and register it with the preference module.  The first
    arg is the name of the predicate; the second is full (latex) documentation. *)
-val create : string -> string -> t  
+val create : string -> ?advanced:bool -> string -> t  
 
 (* Check whether a given path matches one of the default or current patterns *)
 val test : t -> string -> bool

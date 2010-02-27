@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/case.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 (* The update detector, reconciler, and transporter behave differently       *)
 (* depending on whether the local and/or remote file system is case          *)
@@ -7,13 +22,13 @@
 (* the hosts is case insensitive.                                            *)
 let caseInsensitiveMode =
   Prefs.createString "ignorecase" "default"
-    "ignore upper/lowercase in filenames (`true', `false', or `default')"
+    "!identify upper/lowercase filenames (true/false/default)"
     ("When set to {\\tt true}, this flag causes Unison to treat "
      ^ "filenames as case insensitive---i.e., files in the two "
      ^ "replicas whose names differ in (upper- and lower-case) `spelling' "
      ^ "are treated as the same file.  When the flag is set to {\\tt false}, Unison "
      ^ "will treat all filenames as case sensitive.  Ordinarily, when the flag is "
-     ^ "set to {\tt default}, "
+     ^ "set to {\\tt default}, "
      ^ "filenames are automatically taken to be case-insensitive if "
      ^ "either host is running Windows or OSX.  In rare circumstances it is  "
      ^ "useful to set the flag manually (e.g. when running Unison on a  "
@@ -27,6 +42,9 @@ let someHostIsInsensitive =
 
 (* Note: this function must be fast *)
 let insensitive () = Prefs.read someHostIsInsensitive
+
+let modeDescription () =
+  if insensitive () then "Latin-1 case insensitive" else "case sensitive"
 
 let needNormalization s =
   let rec iter s pos len wasDot =

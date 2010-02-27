@@ -44,7 +44,7 @@ let initGlobalProgress b =
   totalBytesTransferred := Uutil.Filesize.zero;
   showGlobalProgress Uutil.Filesize.zero;;
 
-(* Defined in MyController.m, used to redisplay the table
+(* Defined in Bridge.m, used to redisplay the table
    when the status for a row changes *)
 external bridgeThreadWait : int -> unit = "bridgeThreadWait";;
 
@@ -97,7 +97,8 @@ let unisonGetVersion() = Uutil.myVersion
 Callback.register "unisonGetVersion" unisonGetVersion;;
 
 (* snippets from Uicommon, duplicated for now *)
-(* BCP: Duplicating this is a bad idea!!! *)
+(* BCP: Duplicating this is a really bad idea!!! *)
+
 (* First initialization sequence *)
 (* Returns a string option: command line profile, if any *)
 let unisonInit0() =

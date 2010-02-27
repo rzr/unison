@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/uigtk2.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 open Common
 open Lwt
@@ -1428,8 +1443,10 @@ let rec createToplevelWindow () =
 		    )
           | None,   _ ->
               (false, true, false) in
-        grSet grAction activate1;
-        grSet grDiff activate2;
+        if not !busy then begin
+          grSet grAction activate1;
+          grSet grDiff activate2
+        end;
         if details then
           showDetailsButton#misc#show ()
         else

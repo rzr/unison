@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/files.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 open Common
 open Lwt
@@ -75,13 +90,14 @@ let performDelete = Remote.registerRootCmd "delete" deleteLocal
 (* FIX: maybe we should rename the destination before making any check ? *)
 let delete rootFrom pathFrom rootTo pathTo ui =
   Update.transaction (fun id ->
-    Update.replaceArchive rootFrom pathFrom None Update.NoArchive id true
+    Update.replaceArchive rootFrom pathFrom None Update.NoArchive id true false
       >>= (fun _ ->
     (* Unison do the next line cause we want to keep a backup of the file.
        FIX: We only need this when we are making backups *)
 	Update.updateArchive rootTo pathTo ui id >>= (fun _ ->
 	  Update.replaceArchive
-	    rootTo pathTo None Update.NoArchive id true >>= (fun localPathTo ->
+	    rootTo pathTo None Update.NoArchive id true false
+        >>= (fun localPathTo ->
     (* Make sure the target is unchanged *)
     (* (There is an unavoidable race condition here.) *)
 	      Update.checkNoUpdates rootTo pathTo ui >>= (fun () ->
@@ -123,16 +139,28 @@ let setProp fromRoot fromPath toRoot toPath newDesc oldDesc uiFrom uiTo =
 	setPropRemote2 toRoot (toLocalPath, `Update oldDesc, newDesc))))
     
 (* ------------------------------------------------------------ *)
-    
+
 let mkdirRemote =
   Remote.registerRootCmd
     "mkdir"
     (fun (fspath,(workingDir,path)) ->
-      Os.createDir workingDir path Props.dirDefault;
-      Lwt.return (Fileinfo.get false workingDir path).Fileinfo.desc)
-    
+       let info = Fileinfo.get false workingDir path in
+       if info.Fileinfo.typ = `DIRECTORY then begin
+         begin try
+           (* Make sure the directory is writable *)
+           Unix.chmod (Fspath.concatToString workingDir path)
+             (Props.perms info.Fileinfo.desc lor 0o700)
+         with Unix.Unix_error _ -> () end;
+         Lwt.return info.Fileinfo.desc
+       end else begin
+         if info.Fileinfo.typ <> `ABSENT then
+           Os.delete workingDir path;
+         Os.createDir workingDir path Props.dirDefault;
+         Lwt.return (Fileinfo.get false workingDir path).Fileinfo.desc
+       end)
+
 let mkdir onRoot workingDir path = mkdirRemote onRoot (workingDir,path)
-    
+
 (* ------------------------------------------------------------ *)
     
 let renameLocal (root, (localTargetPath, fspath, pathFrom, pathTo)) =
@@ -261,9 +289,8 @@ let checkContentsChangeLocal
           "The file %s\nhas been modified during synchronization.  \
            Transfer aborted.%s"
           (Fspath.concatToString currfspath path)
-          (if
-             Util.osType = `Win32 && Update.useFastChecking () &&
-             Props.same_time info.Fileinfo.desc archDesc
+          (if    Update.useFastChecking () 
+              && Props.same_time info.Fileinfo.desc archDesc
            then
              "  If this happens repeatedly, try running once with the \
               fastcheck option set to 'no'"
@@ -302,7 +329,7 @@ let checkContentsChange root path archDesc archDig archStamp archRess =
 let setupTargetPathsLocal (fspath, path) =
   let localPath = Update.translatePathLocal fspath path in
   let (workingDir,realPath) = Fspath.findWorkingDir fspath localPath in
-  let tempPath = Os.tempPath workingDir realPath in
+  let tempPath = Os.tempPath ~fresh:false workingDir realPath in
   Lwt.return (workingDir, realPath, tempPath, localPath)
 
 let setupTargetPaths =
@@ -314,6 +341,8 @@ let makeSymlink =
   Remote.registerRootCmd
     "makeSymlink"
     (fun (fspath, (workingDir, path, l)) ->
+       if Os.exists workingDir path then
+         Os.delete workingDir path;
        Os.symlink workingDir path l;
        Lwt.return ())
 
@@ -414,188 +443,34 @@ let copy
     | Update.NoArchive ->
         assert false
   in
-  Remote.Thread.unwindProtect
-    (fun () ->
-       Update.transaction (fun id ->
-         (* Update the archive on the source replica (but don't commit
-            the changes yet) and return the part of the new archive
-            corresponding to this path *)
-         Update.updateArchive rootFrom pathFrom uiFrom id
-           >>= (fun (localPathFrom, archFrom) ->
-         let make_backup =
-           (* Perform (asynchronously) a backup of the destination files *)
-           Update.updateArchive rootTo pathTo uiTo id
-         in
-         copyRec localPathFrom tempPathTo realPathTo archFrom >>= (fun () ->
-         make_backup >>= (fun _ ->
-         Update.replaceArchive
-           rootTo pathTo (Some (workingDir, tempPathTo))
-           archFrom id true >>= (fun _ ->
-         rename rootTo pathTo localPathTo workingDir tempPathTo realPathTo uiTo ))))))
-    (fun _ ->
-       performDelete rootTo (Some workingDir, tempPathTo)))
-
-(* A PARTIALLY COMPLETE HACKED VERSION THAT COPIES DIRECTORIES IN PLACE -- Jan 14, 2006
-
-(This is left here in case Jerome gets a chance to finish it...)
-
-let copy
-      update
-      rootFrom pathFrom   (* copy from here... *)
-      uiFrom              (* (and then check that this updateItem still
-                             describes the current state of the src replica) *)
-      rootTo pathTo       (* ...to here *)
-      uiTo                (* (but, before committing the copy, check that
-                             this updateItem still describes the current
-                             state of the target replica) *)
-      id =                (* for progress display *)
-  debug (fun() ->
-    Util.msg
-      "copy %s %s ---> %s %s \n"
-      (root2string rootFrom) (Path.toString pathFrom)
-      (root2string rootTo) (Path.toString pathTo));
-  (* Inner loop for recursive copy... *)
-  let rec copyRec pFrom      (* Path to copy from *)
-                  pTo        (* (Temp) path to copy to *)
-                  f =        (* Source archive subtree for this path *)
-    debug (fun() ->
-      Util.msg "copyRec %s --> %s\n"
-        (Path.toString pFrom) (Path.toString pTo));
-    (* Calculate target paths *)
-    setupTargetPaths rootTo pTo
-       >>= (fun (workingDir, realPathTo, tempPathTo, _) ->
-    match f with
-      Update.ArchiveFile (desc, dig, stamp, ress) ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          Abort.check id;
-          Copy.file
-            rootFrom pFrom rootTo workingDir tempPathTo realPathTo
-            update desc dig ress id
-            >>= (fun () ->
-          checkContentsChange rootFrom pFrom desc dig stamp ress))
-    | Update.ArchiveSymlink l ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          debug (fun() -> Util.msg "Making symlink %s/%s -> %s\n"
-                            (root2string rootTo) (Path.toString pTo) l);
-          Abort.check id;
-          makeSymlink rootTo (workingDir, tempPathTo, l))
-    | Update.ArchiveDir (desc, children) ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          debug (fun() -> Util.msg "Creating directory %s/%s\n"
-            (root2string rootTo) (Path.toString pTo));
-          mkdir rootTo workingDir realPathTo) >>= (fun initialDesc ->
-        Abort.check id;
-        let runningThreads = ref [] in
-        Lwt.catch
-          (fun () ->
-             Update.NameMap.iter
-               (fun name child ->
-                  let thread =
-                    copyRec (Path.child pFrom name)
-                            (Path.child pTo name)
-                            child
-                  in
-                  runningThreads := thread :: !runningThreads)
-               children;
-             Lwt_util.join !runningThreads)
-          (fun e ->
-             (* If one thread fails (in a non-fatal way), we wait for
-                all other threads to terminate before continuing *)
-             if not (Abort.testException e) then Abort.file id;
-             match e with
-               Util.Transient _ ->
-                 let e = ref e in
-                 Lwt_util.iter
-                   (fun act ->
-                      Lwt.catch
-                         (fun () -> act)
-                         (fun e' ->
-                            match e' with
-                              Util.Transient _ ->
-                                if Abort.testException !e then e := e';
-                                Lwt.return ()
-                            | _                ->
-                                Lwt.fail e'))
-                   !runningThreads >>= (fun () ->
-                 Lwt.fail !e)
-             | _ ->
-                 Lwt.fail e) >>= (fun () ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          (* We use the actual file permissions so as to preserve
-             inherited bits *)
-          Abort.check id;
-          setPropRemote rootTo
-            (workingDir, realPathTo, `Set initialDesc, desc))))
-    | Update.NoArchive ->
-        assert false)
-  in
+  (* BCP (6/08): We used to have an unwindProtect here that would *always* do the
+     final performDelete.  This was removed so that failed partial transfers can
+     be restarted.  We instead remove individual failing files (not
+     directories) inside replaceArchive. *)
   Update.transaction (fun id ->
-    (* Update the archive on the source replica (but don't commit
-       the changes yet) and return the part of the new archive
-       corresponding to this path *)
-    Update.updateArchive rootFrom pathFrom uiFrom id
-      >>= (fun (localPathFrom, archFrom) ->
+  (* Update the archive on the source replica (but don't commit
+     the changes yet) and return the part of the new archive
+     corresponding to this path *)
+  Update.updateArchive rootFrom pathFrom uiFrom id
+    >>= (fun (localPathFrom, archFrom) ->
+  let make_backup =
     (* Perform (asynchronously) a backup of the destination files *)
-    Update.updateArchive rootTo pathTo uiTo id >>= (fun _ ->
-(*
-  Remote.Thread.unwindProtect
-      (fun () ->
-*)
-           copyRec localPathFrom pathTo archFrom >>= (fun () ->
-(*
-           rename rootTo pathTo workingDir tempPathTo realPathTo uiTo ))
-      (fun _ ->
-         performDelete rootTo (Some workingDir, tempPathTo)) >>= (fun () ->
-*)
-    Update.replaceArchive
-      rootTo pathTo (Some (workingDir, tempPathTo))
-      archFrom id true))))
-
-*)   
-   
+    Update.updateArchive rootTo pathTo uiTo id
+  in
+  copyRec localPathFrom tempPathTo realPathTo archFrom >>= (fun () ->
+  make_backup >>= (fun _ ->
+  Update.replaceArchive
+    rootTo pathTo (Some (workingDir, tempPathTo))
+    archFrom id true true  >>= (fun _ ->
+  rename rootTo pathTo localPathTo workingDir tempPathTo realPathTo uiTo))))))
 
 (* ------------------------------------------------------------ *)
 
-let readChannelTillEof c =
-  let rec loop lines =
-    try let l = input_line c in
-        loop (l::lines)
-    with End_of_file -> lines in
-  String.concat "\n" (Safelist.rev (loop []))
-
-let readChannelTillEof_lwt c =
-  let rec loop lines =
-    let lo =
-      try
-        Some(Lwt_unix.run (Lwt_unix.input_line c))
-      with End_of_file -> None
-    in
-    match lo with
-      Some l -> loop (l :: lines)
-    | None   -> lines
-  in
-  String.concat "\n" (Safelist.rev (loop []))
-
 let (>>=) = Lwt.bind
-
-let readChannelsTillEof l =
-  let rec suckitdry lines c =
-    Lwt.catch
-      (fun() -> Lwt_unix.input_line c >>= (fun l -> return (Some l)))
-      (fun e -> match e with End_of_file -> return None | _ -> raise e)
-    >>= (fun lo ->
-           match lo with
-             None -> return lines
-           | Some l -> suckitdry (l :: lines) c) in
-  Lwt_util.map
-    (fun c ->
-       suckitdry [] c
-       >>= (fun res -> return (String.concat "\n" (Safelist.rev res))))
-    l
 
 let diffCmd =
   Prefs.createString "diff" "diff -u CURRENT2 CURRENT1"
-    "*command for showing differences between files"
+    "!command for showing differences between files"
     ("This preference can be used to control the name and command-line "
      ^ "arguments of the system "
      ^ "utility used to generate displays of file differences.  The default "
@@ -603,16 +478,6 @@ let diffCmd =
      ^ "CURRENT1 and CURRENT2, these will be replaced by the names of the files to be "
      ^ "diffed.  If not, the two filenames will be appended to the command.  In both "
      ^ "cases, the filenames are suitably quoted.")
-
-(* Using single quotes is simpler under Unix but they are not accepted
-   by the Windows shell.  Double quotes without further quoting is
-   sufficient with Windows as filenames are not allowed to contain
-   double quotes. *)
-let quotes s =
-  if Util.osType = `Win32 && not Util.isCygwin then
-    "\"" ^ s ^ "\""
-  else
-    "'" ^ Util.replacesubstring s "'" "'\''" ^ "'"
 
 let tempName s = Os.tempFilePrefix ^ s
 
@@ -626,12 +491,12 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
     let cmd =
       if Util.findsubstring "CURRENT1" (Prefs.read diffCmd) = None then
           (Prefs.read diffCmd)
-        ^ " " ^ (quotes (Fspath.toString fspath1))
-        ^ " " ^ (quotes (Fspath.toString fspath2))
+        ^ " " ^ (Os.quotes (Fspath.toString fspath1))
+        ^ " " ^ (Os.quotes (Fspath.toString fspath2))
       else
         Util.replacesubstrings (Prefs.read diffCmd)
-          ["CURRENT1", quotes (Fspath.toString fspath1);
-           "CURRENT2", quotes (Fspath.toString fspath2)] in
+          ["CURRENT1", Os.quotes (Fspath.toString fspath1);
+           "CURRENT2", Os.quotes (Fspath.toString fspath2)] in
     (* Doesn't seem to work well on Windows! 
        let c = Lwt_unix.run (Lwt_unix.open_process_in cmd) in *)
     let c = Unix.open_process_in
@@ -641,7 +506,7 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
         "\"" ^ cmd ^ "\""
        else
          cmd) in
-    showDiff cmd (readChannelTillEof c);
+    showDiff cmd (External.readChannelTillEof c);
     ignore (Unix.close_process_in c) in
   let (desc1, fp1, ress1, desc2, fp2, ress2) = Common.fileInfos ui1 ui2 in
   match root1,root2 with
@@ -888,47 +753,15 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
       let dig2 = Os.fingerprint workingDirForMerge working2 info2 in
       let cmd = formatMergeCmd
           path
-          (quotes (Fspath.concatToString workingDirForMerge working1))
-          (quotes (Fspath.concatToString workingDirForMerge working2))
-          (match arch with None -> None | Some f -> Some(quotes (Fspath.toString f)))
-          (quotes (Fspath.concatToString workingDirForMerge new1))
-          (quotes (Fspath.concatToString workingDirForMerge new2))
-          (quotes (Fspath.concatToString workingDirForMerge newarch)) in
+          (Os.quotes (Fspath.concatToString workingDirForMerge working1))
+          (Os.quotes (Fspath.concatToString workingDirForMerge working2))
+          (match arch with None -> None | Some f -> Some(Os.quotes (Fspath.toString f)))
+          (Os.quotes (Fspath.concatToString workingDirForMerge new1))
+          (Os.quotes (Fspath.concatToString workingDirForMerge new2))
+          (Os.quotes (Fspath.concatToString workingDirForMerge newarch)) in
       Trace.log (Printf.sprintf "Merge command: %s\n" cmd);
       
-      let returnValue, mergeResultLog = 
-        if Util.osType = `Win32 && not Util.isCygwin then
-          let c = Unix.open_process_in ("\"" ^ cmd ^ "\"") in
-          let mergeLog = readChannelTillEof c in
-          let returnValue = Unix.close_process_in c in
-    
-          let mergeResultLog =
-            cmd ^
-            (if mergeLog <> "" then "\n\n" ^ mergeLog else "") ^
-            (if returnValue <> Unix.WEXITED 0 then
-               "\n\n" ^ Util.process_status_to_string returnValue
-             else
-               "") in
-          (returnValue,mergeResultLog) 
-        else Lwt_unix.run (
-          Lwt_unix.open_process_full cmd (Unix.environment ()) 
-          >>= (fun (out, ipt, err) ->
-          readChannelsTillEof [out;err]
-          >>= (function [mergeLogOut;mergeLogErr] ->
-          Lwt_unix.close_process_full (out, ipt, err)
-          >>= (fun returnValue ->
-          return (returnValue, (
-              cmd
-            ^ "\n\n" ^
-              (if mergeLogOut = "" || mergeLogErr = ""
-                 then mergeLogOut ^ mergeLogErr
-               else mergeLogOut ^ "\n\n" ^ ("Error Output:"^mergeLogErr))
-            ^"\n\n" 
-            ^ (if returnValue = Unix.WEXITED 0
-               then ""
-               else Util.process_status_to_string returnValue))))
-            (* Stop typechechecker from complaining about non-exhaustive pattern above *)
-            | _ -> assert false))) in
+      let returnValue, mergeResultLog = External.runExternalProgram cmd in
       
       Trace.log (Printf.sprintf "Merge result (%s):\n%s\n"
                    (showStatus returnValue) mergeResultLog);
@@ -1068,6 +901,7 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
                    (Path.toString path));
            if not (Stasher.shouldBackupCurrent path) then
              Util.msg "Warning: 'backupcurrent' is not set for path %s\n" (Path.toString path);
+           Stasher.stashCurrentVersion workingDirForMerge localPath1 (Some workingarch);
            let infoarch = Fileinfo.get false workingDirForMerge workingarch in
            let dig = Os.fingerprint arch_fspath Path.empty infoarch in
            debug (fun () -> Util.msg "New digest is %s\n" (Os.fullfingerprint_to_string dig));
@@ -1080,10 +914,10 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
              (fun transid ->
                 Update.replaceArchive root1 path
                  (Some(workingDirForMerge, workingarch))
-                 new_archive_entry transid false >>= (fun _ ->
+                 new_archive_entry transid false false >>= (fun _ ->
                 Update.replaceArchive root2 path
                   (Some(workingDirForMerge, workingarch))
-                  new_archive_entry transid false >>= (fun _ ->
+                  new_archive_entry transid false false >>= (fun _ ->
                 Lwt.return ())))
          end else 
            (Lwt.return ()) )))) )
