@@ -13,7 +13,7 @@ let save fn =
     fn, tmp
 
 let restore ?(ext="") (fn, tmp) =
-  mv [tmp] (fn^ext)
+  mv tmp (fn^ext)
 
 let fns = 
   [
@@ -42,4 +42,4 @@ let () =
             List.iter (restore ~ext:".old") baks
 
   with e ->
-    rm ~force:true (List.map snd baks)
+    rm (List.map snd baks)
