@@ -1,6 +1,6 @@
-#----------------------------#
-# Documentation              #
-#----------------------------#
+#---------------#
+# Documentation #
+#---------------#
 
 Documentation for Unison is in the manual, which is available in 
 text formats in /usr/share/doc/unison. The same documentation 
@@ -22,14 +22,15 @@ the unison-gtk package.
 
  -- Robert McQueen <robot101@debian.org>  Wed, 29 Aug 2001 21:18:29 +0100
 
-#----------------------------#
-# Unison and UnisonXXX       #
-#----------------------------#
+#------------------------#
+# Unison and UnisonX.Y.Z #
+#------------------------#
 
 This package has been split when Unison 2.10.2 was released. 
-There now exist 3 versions of the package : 
+There is now many versions of the package : 
 - unison, unison-gtk (version 2.27)
-- unison2.13.16, unison2.13.16 (version 2.13.16)
+- unison2.27.57, unison2.27.57-gtk (version 2.27.57)
+- unison2.13.16, unison2.13.16-gtk (version 2.13.16)
 - unison2.9.1, unison2.9.1-gtk (version 2.9.1)
 
 The reason for this split is to preserve protocol compatibility with actual
@@ -37,7 +38,7 @@ stable release of debian (e.g. Woody or Sarge or Etch).  By this way, you can
 install unison and synchronise testing/unstable systems or install unison2.9.1
 and synchronise testing/unstable with stable systems.
 
-You can install both unison and unison2.9.1, an alternative system is used (see
+You can install both unison and unisonX.Y.Z, an alternative system is used (see
 "man update-alternatives"). 
 
 When the stable release will contain unison 2.10.2, unison2.9.1 will be
@@ -57,9 +58,9 @@ Lenny has been released with unison 2.27.57, so unison2.13.16 has been removed.
 
  -- Sylvain Le Gall <gildor@debian.org>  Mon, 25 Apr 2005 23:06:44 +0200  
 
-#----------------------------#
-# ssh-askpass                #
-#----------------------------#
+#-------------#
+# ssh-askpass #
+#-------------#
 
 Ssh-askpass is a recommended package when using unison-gtk. The reason 
 for this is that if you use SSH access and that the key for this specific
@@ -113,3 +114,48 @@ upgrading the package from major version to major version (when the version
 of unison change).
 
  -- Sylvain Le Gall <gildor@debian.org>  Thu, 20 Sep 2007 15:58:53 +0200
+
+#---------------------------------------------#
+# Git merge, branches and unisonX.Y.Z package #
+#---------------------------------------------#
+
+The unison package is represented by the master branch in git. unisonX.Y.Z are
+represented through X.Y.Z/{master|upstream} branches. 
+
+To create a new branch:
+- git checkout master
+- git branch X.Y.Z/master
+- git checkout X.Y.Z/master
+- go through the checklist (see after)
+- git checkout upstream
+- git branch X.Y.Z/upstream
+- git checkout pristine-tar
+- copy and rename corresponding pristine tar files to allow a
+  unisonX.Y.Z.orig.tar.gz to be recreated.
+
+To merge a branch X.Y.Z/master:
+- git checkout X.Y.Z/master
+- dch "Synchronize with unison package:" && git add debian/changelog 
+  && git commit 
+- git merge master 
+- solve conflicts and go through checlist (see after)
+
+To merge the branch master:
+- git checkout master
+- dch "Synchronize with unisonX.Y.Z package:" && git add debian/changelog 
+  && git commit 
+- git merge X.Y.Z/master
+- solve conflicts and go through checlist (see after)
+
+Checklist:
+- debian/changelog: check that changelog has not been erased
+- debian/control: rename every package to unisonX.Y.Z or unisonX.Y.Z-gtk (or
+  for unison package unison and unison-gtk)
+- debian/gbp.conf: check that content end with
+    upstream-branch = X.Y.Z/upstream
+    debian-branch = X.Y.Z/master
+    debian-tag = debian/unisonX.Y.Z-%(version)s
+  or (for unison package) 
+    nothing
+
+ -- Sylvain Le Gall <gildor@debian.org>  Fri, 26 Feb 2010 01:12:22 +0100
