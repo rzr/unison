@@ -96,7 +96,6 @@ configure::
 build/$(UNISON_PACKAGE)::
 	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) $(MY_MAKE_FLAGS) CFLAGS=
 	mv '$(CURDIR)/unison' '$(CURDIR)/$(UNISON)'
-	env HOME='$(CURDIR)' '$(CURDIR)/$(UNISON)' -doc all > '$(CURDIR)/unison-manual.txt'
 
 build/$(UNISON_GTK_PACKAGE):: debian/$(UNISON_GTK_PACKAGE).xpm
 	$(MAKE) UISTYLE=$(UISTYLE) NATIVE=$(NATIVE) $(MY_MAKE_FLAGS) CFLAGS=
@@ -104,15 +103,27 @@ build/$(UNISON_GTK_PACKAGE):: debian/$(UNISON_GTK_PACKAGE).xpm
 	if test 'x$(OCAML_HAVE_OCAMLOPT)' = 'xyes'; then /usr/bin/chrpath -d '$(CURDIR)/$(UNISON_GTK)'; fi
 
 clean::
-	-$(RM) '$(CURDIR)/unison-manual.txt'
 	-$(RM) '$(CURDIR)/$(UNISON_GTK)'
 	-$(RM) '$(CURDIR)/$(UNISON)'
 	$(MAKE) clean
 
+debian/unison-manual.txt: build/$(UNISON_PACKAGE)
+	env HOME='$(CURDIR)' '$(CURDIR)/$(UNISON)' -doc all > '$(CURDIR)/unison-manual.txt'
+
+debian/unison.1.in: build/$(UNISON_PACKAGE)
+	cp debian/unison-intro.1.in debian/unison.1.in
+	env HOME='$(CURDIR)' ocaml debian/generate-manpage.ml '$(CURDIR)/$(UNISON)' >> debian/unison.1.in
+	cat debian/unison-outro.1.in >> debian/unison.1.in
+
+clean::
+	-$(RM) unison-manual.txt
+	-$(RM) debian/unison.1.in
+
+common-binary-arch:: debian/unison-manual.txt debian/unison.1.in
+
 #
 # Unison icons
 #
-
 
 debian/$(UNISON_GTK_PACKAGE).png: debian/unison-gtk.svg.in
 	 rsvg -f png -w 32 -h 32 $^ $@
