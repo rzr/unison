@@ -29,6 +29,10 @@ ifeq ($(shell uname),Darwin)
 else
 ifeq ($(shell uname),OpenBSD)
   OSARCH=OpenBSD
+else
+ifeq ($(shell uname),NetBSD)
+  OSARCH=NetBSD
+endif
 endif
 endif
 endif
@@ -87,8 +91,15 @@ ifeq ($(OSARCH),win32)
   EXEC_EXT=.exe
   OBJ_EXT=.obj
   CWD=.
-  CLIBS+=-cclib win32rc/unison.res
-  STATICLIBS+=-cclib win32rc/unison.res
+#  Fix suggested by Karl M, Jan 2009:
+#    "The new flexlink wrapper that OCaml 3.11 uses was gagging on the res
+#    file. So the res file has to be passed through flexlink untouched to
+#    the linker.  I only touched the MSVC side, but mingw may have the same
+#    issue."
+#  CLIBS+=-cclib win32rc/unison.res
+#  STATICLIBS+=-cclib win32rc/unison.res
+  CLIBS+=-cclib "-link win32rc/unison.res"
+  STATICLIBS+=-cclib "-link win32rc/unison.res"
   buildexecutable::
 	@echo Building for Windows
 else
@@ -144,16 +155,18 @@ else
 endif
 endif
 
+MINOSXVERSION=10.4
+
 # NOTE: the OCAMLLIBDIR is not getting passed correctly?
 # The two cases for cltool are needed because Xcode 2.1+
 # builds in build/Default/, and earlier versions use build/
 macexecutable: $(NAME)-blob.o
-	sed -e's/@@VERSION@@/$(VERSION)/' $(UIMACDIR)/Info.plist.template > $(UIMACDIR)/Info.plist
-	(cd $(UIMACDIR); xcodebuild OCAMLLIBDIR="$(OCAMLLIBDIR)")
+#	sed -e's/@@VERSION@@/$(VERSION)/' $(UIMACDIR)/Info.plist.template > $(UIMACDIR)/Info.plist
+	(cd $(UIMACDIR); xcodebuild OCAMLLIBDIR="$(OCAMLLIBDIR)" SYMROOT=build)
 	if [ -e $(UIMACDIR)/build/Default ]; then \
-	  gcc $(UIMACDIR)/cltool.c -o $(UIMACDIR)/build/Default/Unison.app/Contents/MacOS/cltool -framework Carbon; \
+	  gcc -mmacosx-version-min=$(MINOSXVERSION) $(UIMACDIR)/cltool.c -o $(UIMACDIR)/build/Default/Unison.app/Contents/MacOS/cltool -framework Carbon; \
 	else \
-	  gcc $(UIMACDIR)/cltool.c -o $(UIMACDIR)/build/Unison.app/Contents/MacOS/cltool -framework Carbon; \
+	  gcc -mmacosx-version-min=$(MINOSXVERSION) $(UIMACDIR)/cltool.c -o $(UIMACDIR)/build/Unison.app/Contents/MacOS/cltool -framework Carbon; \
 	fi
 
 # OCaml objects for the bytecode version
@@ -166,23 +179,23 @@ OCAMLOBJS += \
           \
           lwt/pqueue.cmo lwt/lwt.cmo lwt/lwt_util.cmo lwt/lwt_unix.cmo \
           \
-          case.cmo pred.cmo uutil.cmo \
+          bytearray.cmo case.cmo pred.cmo uutil.cmo \
           fileutil.cmo name.cmo path.cmo fspath.cmo fingerprint.cmo \
-          abort.cmo osx.cmo \
+          abort.cmo osx.cmo external.cmo \
           props.cmo fileinfo.cmo os.cmo lock.cmo clroot.cmo common.cmo \
           tree.cmo checksum.cmo terminal.cmo \
           transfer.cmo xferhint.cmo remote.cmo globals.cmo copy.cmo \
           stasher.cmo update.cmo \
 	  files.cmo sortri.cmo recon.cmo transport.cmo \
-          strings.cmo uicommon.cmo uitext.cmo test.cmo 
+          strings.cmo uicommon.cmo uitext.cmo test.cmo
 
 OCAMLOBJS+=main.cmo
 
 # OCaml libraries for the bytecode version
 # File extensions will be substituted for the native code version
-OCAMLLIBS+=unix.cma str.cma
+OCAMLLIBS+=unix.cma str.cma bigarray.cma
 
-COBJS+=osxsupport$(OBJ_EXT) pty$(OBJ_EXT)
+COBJS+=osxsupport$(OBJ_EXT) pty$(OBJ_EXT) bytearray_stubs$(OBJ_EXT)
 
 ########################################################################
 ### User Interface setup
@@ -259,6 +272,10 @@ else
   ifeq ($(shell echo type -t ocamldot | bash), file)
     OCAMLDOT=true
   endif
+endif
+
+ifeq ($(OSARCH), NetBSD)
+  OCAMLDOT=false
 endif
 
 # Rebuild dependencies (must be invoked manually)

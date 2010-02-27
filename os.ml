@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/os.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 (* This file attempts to isolate operating system specific details from the  *)
 (* rest of the program.                                                      *)
@@ -14,6 +29,9 @@ let tempFilePrefix = ".unison."
 let tempFileSuffixFixed = ".unison.tmp"
 let tempFileSuffix = ref tempFileSuffixFixed
 let includeInTempNames s =
+  (* BCP: Added this in Jan 08.  If (as I believe) it never fails, then this tricky
+     stuff can be deleted. *)
+  assert (s<>"");  
   tempFileSuffix :=
     if s = "" then tempFileSuffixFixed
     else "." ^ s ^ tempFileSuffixFixed
@@ -25,6 +43,20 @@ let initializeXferFunctions del ren =
   xferDelete := del;
   xferRename := ren
       
+
+(*****************************************************************************)
+(*                      ESCAPING SHELL PARAMETERS                            *)
+(*****************************************************************************)
+
+(* Using single quotes is simpler under Unix but they are not accepted
+   by the Windows shell.  Double quotes without further quoting is
+   sufficient with Windows as filenames are not allowed to contain
+   double quotes. *)
+let quotes s =
+  if Util.osType = `Win32 && not Util.isCygwin then
+    "\"" ^ s ^ "\""
+  else
+    "'" ^ Util.replacesubstring s "'" "'\\''" ^ "'"
 
 (*****************************************************************************)
 (*                      QUERYING THE FILESYSTEM                              *)
@@ -105,10 +137,18 @@ let rec childrenOf fspath path =
          Util.startswith file tempFilePrefix
        then begin
          if Util.endswith file !tempFileSuffix then begin
-           let newPath = Path.child path filename in
-           debug (fun()-> Util.msg "deleting old temp file %s\n"
-                            (Fspath.concatToString fspath newPath));
-           delete fspath newPath
+           let p = Path.child path filename in
+           let i = Fileinfo.get false fspath p in
+           let secondsinthirtydays = 2592000.0 in
+           if Props.time i.Fileinfo.desc +. secondsinthirtydays < Util.time()
+           then begin
+             debug (fun()-> Util.msg "deleting old temp file %s\n"
+                      (Fspath.concatToString fspath p));
+             delete fspath p
+           end else
+             debug (fun()-> Util.msg
+                      "keeping temp file %s since it is less than 30 days old\n"
+                      (Fspath.concatToString fspath p));
          end;
          false
        end else
@@ -185,7 +225,11 @@ let symlink =
          Unix.symlink l abspath)
   else
     fun fspath path l ->
-      raise (Util.Transient "symlink not supported under Win32")
+      raise (Util.Transient
+               (Format.sprintf
+                  "Cannot create symlink \"%s\": \
+                   symlinks are not supported under Windows"
+                  (Fspath.concatToString fspath path)))
 
 (* Create a new directory, using the permissions from the given props        *)
 let createDir fspath path props =
@@ -237,10 +281,15 @@ let safeFingerprint fspath path info optDig =
   in
   retryLoop 10 info (* Maximum retries: 10 times *)
     (match optDig with None -> None | Some (d, _) -> Some d)
-    (match optDig with None -> None | Some (_, d) -> Some d)
+    None
 
 let fullfingerprint_to_string (fp,rfp) =
   Printf.sprintf "(%s,%s)" (Fingerprint.toString fp) (Fingerprint.toString rfp)
+
+let reasonForFingerprintMismatch (digdata,digress) (digdata',digress') =
+  if digdata = digdata' then "resource fork"
+  else if digress = digress' then "file contents"
+  else "both file contents and resource fork"
 
 let fullfingerprint_dummy = (Fingerprint.dummy,Fingerprint.dummy)
 
@@ -286,7 +335,7 @@ let createUnisonDir() =
 (*****************************************************************************)
 
 (* Generates an unused fspath for a temporary file.                          *)
-let freshPath fspath path prefix suffix =
+let genTempPath fresh fspath path prefix suffix =
   let rec f i =
     let s =
       if i=0 then suffix
@@ -296,11 +345,11 @@ let freshPath fspath path prefix suffix =
         (Path.addSuffixToFinalName path s)
         prefix
     in
-    if exists fspath tempPath then f (i + 1) else tempPath
+    if fresh && exists fspath tempPath then f (i + 1) else tempPath
   in f 0
 
-let tempPath fspath path =
-  freshPath fspath path tempFilePrefix !tempFileSuffix
+let tempPath ?(fresh=true) fspath path =
+  genTempPath fresh fspath path tempFilePrefix !tempFileSuffix
 
 (*****************************************************************************)
 (*                     INTERRUPTED SYSTEM CALLS                              *)
@@ -315,3 +364,5 @@ let accept fd =
      try Unix.accept fd
      with Unix.Unix_error(Unix.EINTR,_,_) -> loop() in
    loop()
+
+

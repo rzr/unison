@@ -1,5 +1,5 @@
 (* Unison file synchronizer: src/update.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 module NameMap : Map.S with type key = Name.t
 
@@ -42,7 +42,7 @@ val updateArchive :
 (* Replace a part of an archive by another archive *)
 val replaceArchive :
   Common.root -> Path.t -> (Fspath.t * Path.local) option ->
-  archive -> transaction -> bool -> Path.local Lwt.t
+  archive -> transaction -> bool -> bool -> Path.local Lwt.t
 (* Update only some permissions *)
 val updateProps :
   Common.root -> Path.t -> Props.t option -> Common.updateItem ->

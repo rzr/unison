@@ -1,5 +1,5 @@
 (* Unison file synchronizer: src/files.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 (* As usual, these functions should only be called by the client (i.e., in   *)
 (* the same address space as the user interface).                            *)
@@ -12,6 +12,10 @@ val delete :
   -> Path.t                      (* path to delete *)
   -> Common.updateItem           (* updates that will be discarded *)
   -> unit Lwt.t
+
+(* Region used for the copying. Exported to be correctly set in transport.ml *)
+(* to the maximum number of threads                                          *)
+val copyReg : Lwt_util.region
 
 (* Copy a path in one replica to another path in a second replica.  The copy *)
 (* is performed atomically (or as close to atomically as the os will         *)

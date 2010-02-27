@@ -1,5 +1,5 @@
 (* Unison file synchronizer: src/transfer.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 (*
    Rsync : general algorithm description
@@ -37,7 +37,7 @@
 
 
 (* Transfer instruction giving data to build a file incrementally *)
-type transfer_instruction = string * int * int
+type transfer_instruction = Bytearray.t * int * int
 
 type transmitter = transfer_instruction -> unit Lwt.t
 

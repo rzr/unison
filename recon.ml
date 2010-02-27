@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/recon.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 open Common
 
@@ -84,7 +99,7 @@ let forceRoot: string Prefs.t =
      ^ "know what you are doing!")
 
 let forceRootPartial: Pred.t =
-  Pred.create "forcepartial"
+  Pred.create "forcepartial" ~advanced:true
     ("Including the preference \\texttt{forcepartial \\ARG{PATHSPEC} -> \\ARG{root}} causes Unison to "
      ^ "resolve all differences (even non-conflicting changes) in favor of "
      ^ "\\ARG{root} for the files in \\ARG{PATHSPEC} (see \\sectionref{pathspec}{Path Specification} "
@@ -112,7 +127,7 @@ let preferRoot: string Prefs.t =
      ^ "know what you are doing!")
 
 let preferRootPartial: Pred.t =
-  Pred.create "preferpartial"
+  Pred.create "preferpartial" ~advanced:true
     ("Including the preference \\texttt{preferpartial \\ARG{PATHSPEC} -> \\ARG{root}} "
      ^ "causes Unison always to "
      ^ "resolve conflicts in favor of \\ARG{root}, rather than asking for "
@@ -458,9 +473,9 @@ let rec leavePath p t =
 let dangerousPath u1 u2 =
   let emptied u =
     match u with
-      Updates (Absent, _)                 -> true
-    | Updates (Dir (_, _, _, emptied), _) -> emptied
-    | _                                   -> false
+      Updates (Absent, _)               -> true
+    | Updates (Dir (_, _, _, empty), _) -> empty
+    | _                                 -> false
   in
   emptied u1 <> emptied u2
 

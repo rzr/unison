@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/main.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 (* ---------------------------------------------------------------------- *)
 
@@ -13,17 +28,17 @@
 
    A non-functor interface is provided to allow the Mac GUI to reuse the
    startup code for non-GUI options.
-*)
+ *)
 
 (* ---------------------------------------------------------------------- *)
 
 (* Some command-line arguments are handled specially during startup, e.g.,
-       -doc
-       -help
-       -version
-       -server
-       -socket
-       -ui
+   -doc
+   -help
+   -version
+   -server
+   -socket
+   -ui
    They are expected to appear on the command-line only, not in a
    profile. In particular, -version and -doc will print to the
    standard output, so they only make sense if invoked from the
@@ -36,8 +51,8 @@
    without loading a profile; and then we can't do command-line
    parsing because it is intertwined with profile loading.
 
-   NB: the Mac GUI handles these options and needs to change if they
-   any more are added.
+   NB: the Mac GUI handles these options itself and needs to change 
+   if any more are added.
 *)
 
 let versionPrefName = "version"
@@ -70,7 +85,8 @@ let server =
 
 let socketPrefName = "socket"
 let socket =
-  Prefs.create socketPrefName None "act as a server on a socket" ""
+  Prefs.create socketPrefName None
+    "!act as a server on a socket" ""
     (fun _ -> fun i ->
       (try
          Some(int_of_string i)
@@ -81,13 +97,13 @@ let socket =
 let serverHostName = "host"
 let serverHost =
   Prefs.createString serverHostName ""
-    "bind the socket to this host name in server socket mode" ""
+    "!bind the socket to this host name in server socket mode" ""
 
 (* User preference for which UI to use if there is a choice *)
 let uiPrefName = "ui"
 let interface =
   Prefs.create uiPrefName Uicommon.Graphic
-    "select user interface ('text' or 'graphic'); command-line only"
+    "!select UI ('text' or 'graphic'); command-line only"
     ("This preference selects either the graphical or the textual user "
      ^ "interface.  Legal values are \\verb|graphic| or \\verb|text|.  "
      ^ "\n\nBecause this option is processed specially during Unison's "
@@ -184,7 +200,7 @@ let init() = begin
   begin try
     let i = List.hd (Util.StringMap.find socketPrefName argv) in
     catch_all (fun () ->
-      Os.createUnisonDir();
+     Os.createUnisonDir();
       Remote.waitOnPort
         (begin try
            match Util.StringMap.find serverHostName argv with

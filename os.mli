@@ -1,9 +1,9 @@
 (* Unison file synchronizer: src/os.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 val myCanonicalHostName : string
 
-val tempPath : Fspath.t -> Path.local -> Path.local
+val tempPath : ?fresh:bool -> Fspath.t -> Path.local -> Path.local
 val tempFilePrefix : string
 val includeInTempNames : string -> unit
 
@@ -29,6 +29,7 @@ val delete : Fspath.t -> Path.local -> unit
    if any. *)
 type fullfingerprint
 val fullfingerprint_to_string : fullfingerprint -> string
+val reasonForFingerprintMismatch : fullfingerprint -> fullfingerprint -> string
 val fullfingerprint_dummy : fullfingerprint
 
 (* Use this function if the file may change during fingerprinting *)
@@ -54,3 +55,4 @@ val initializeXferFunctions :
     ((Fspath.t * Path.local) -> (Fspath.t * Path.local) -> unit) ->
     unit
 
+val quotes : string -> string

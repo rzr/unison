@@ -1,5 +1,5 @@
 (* Unison file synchronizer: src/globals.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 (* Global variables and functions needed by top-level modules and user       *)
 (* interfaces                                                                *)
@@ -12,6 +12,7 @@ val setRawRoots : string list -> unit
 (* Parse and canonize roots from their raw names                             *)
 val installRoots : (string -> string -> string) option -> unit Lwt.t
 
+(* An alternate method (under development?) *)
 val installRoots2 : unit -> unit
 
 (* The roots of the synchronization (with names canonized, but in the same   *)

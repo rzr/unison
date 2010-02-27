@@ -7,9 +7,64 @@ is not promise that anybody is going to implement it!)
 See the file BUGS.txt for a list of currently open bugs.
 
 ###########################################################################
+        
+* CURRENT
+* =======
 
-SOON
-====
+* Merge issues:
+     - It would be better to ignore the exit status of the external merge
+       tool and just look at what files it produced to decide what happened
+     - The function that runs the external program should not grab stdin /
+       stdout / stderr if Unison is running with the text UI. 
+     - The confirmation step should offer to display the new merged file.
+     - (There are some older merge issues documented below)
+
+* Makefile for fstest
+
+* Work on the Unison side
+     - create temp file
+     - start watcher based on watcherosx switch, passing all paths as args
+     - on each loop
+         - parse results into shallow and deep ones
+         - combine the two lists (marking which is which)
+         - sort the list
+         - if there are any adjacent pairs where the first is a prefix of the
+           second, drop the second and mark the first as deep
+         - go through the list and drop any item for whioch any PREFIX of
+           its path matches 'ignore' and doesn't match 'ignorenot'
+     - bulletproof, handling fatal errors and restarting completely from
+       scratch if necessary
+
+* See if there are other hacks that should be propagated to 2.27 (the
+  directory transfer throttle for sure!), and Jerome's recent suggested fix
+
+* Rsync debugging
+
+     - R can't run with debugging (even in 2.13) -- Alan cannot reproduce
+
+     - when using socket mode under windows, upon completion of the first
+       external rsync call, the connection to the server is dropped (the
+       server gets an EOF and closes the connection; the client sees a
+       broken connection)
+
+          - only with rsync, not scp
+          - only with socket mode connection by Unison, not ssh mode
+          - seems to have nothing to do with ssh tunneling
+
+          - calling Unix.open_process_in instead of
+            Lwt_unix.open_process_full seems to make no difference
+
+          - one difference we can see is that, at the end of the transfer,
+            the ssh started by rsync (when run with with -v -v) says
+            something like "FD1 clearing O_NONBLOCK".  The similar call to
+            ssh from scp does not print this.
+
+       We're running under Cygwin (which is needed to have rsync)
+
+###########################################################################
+
+* SOON
+* ====
 
 **** Document: root, fspath, path (local/not)
 
@@ -32,6 +87,15 @@ SOON
 
 **** When deleting a directory, we should *not* skip over Unison temp files
      in the process of listing children
+
+*** Un-writeable directories can't be copied.
+    The 'rename' operation at the end of Files.copy will fail (at least on
+    OSX) if the path being renamed points to a directory and that directory
+    (not the one containing it!) is not writeable by the user.  To fix this,
+    we'd need to notice when we are renaming a directory and temporarily
+    make it writeable just before the rename and then make it what it should
+    be just after.  But I don't feel like writing this bit of code right
+    now, to handle such a corner case.  [BCP, November 2008]
 
 *** make the ETA bar show which file is actually transferring bytes at the
     moment
@@ -128,8 +192,8 @@ SOON
 ** Peter Selinger has built an SHA256 implementation that should be usable
    as a drop-in replacement for MD5, if we ever need to do that
 
-BUILDING AND INSTALLING
-=======================
+* BUILDING AND INSTALLING
+* =======================
 
 ** 'make install' could be improved (and documented)
    1. Typing "make install' after a "make" should simply install the 
@@ -146,8 +210,8 @@ BUILDING AND INSTALLING
 should strip symbols from binary files in 'make exportnative'
 
 
-DOCUMENTATION
-=============
+* DOCUMENTATION
+* =============
 
 ** Put a little more order on the flags and preferences -- e.g.,
     organize them into "basic preferences", "advanced preferences,"
@@ -183,8 +247,18 @@ DOCUMENTATION
    ===> Try it and see.
 
 
-SMALL FUNCTIONALITY IMPROVEMENTS
-================================
+* SMALL FUNCTIONALITY IMPROVEMENTS
+* ================================
+
+**** When I tell unison to ignore a file whose name has a comma in it,
+    then unison adds to the preferences file a line like:
+     ignore = Path{this file, has a comma}
+    which gets interpreted as "this file" OR " has a comma".
+    unison should be escaping that comma and write it as \, instead.
+
+**** Please let me say
+       root = ~/bla
+     instead of requiring me to give an absolute path to my home dir.
 
 **** The archive should indicate whether it is case-dependant or not.
      (This is important for correctness -- if the case-insensitive flag is
@@ -193,6 +267,30 @@ SMALL FUNCTIONALITY IMPROVEMENTS
 **** Use LargeFile (submodule of Unix) instead of standard file commands,
      to avoid problems with huge files
      DONE
+
+*** [Marcus Sundman, 2008] Unison can't propagate changes in read-only
+    folders. The correct way to do it is to temporarily add write
+    permissions for the user to the folder, then do the changes and then
+    reset the permissions. Now unison tries to just do the changes, which
+    fails with a "permission denied" error.
+
+*** [Adrian Stephens, 2007] I would like the scope of rootalias to be
+    expanded so that any command that expects a root will perform aliasing
+    on the command.  In my application, I need to change the root statement
+    as I move my machine from desk to the road.  I also have a "force"
+    statement, and I also have to remember to edit this to match.  It would
+    be more convenient to have to edit in a single place and, more
+    importantly, avoids introducing any inconsistency.
+    --- [BCP:] I like this idea.  However, since I'm struggling at the
+    moment to find time to finish polishing 2.27 to become the new stable
+    release, I am not going to undertake to implement it.  If you (or
+    someone else) would like to give it a shot, here is what I think needs
+    to happen:
+      - Move the rootalias preference and the rootalias-expanding code from
+        Update.root2stringOrAlias into the Common module (creating a new
+        function there for rootalias expansion).
+      - Find places like Recon.lookupPreferredRoot that deal with names of
+        roots and add a call to the rootalias-expanding function.
 
 *** Delete old backups mechanism and, instead, extend new one to cover its
     functionality 
@@ -620,9 +718,30 @@ Maybe we should never emit a conflict for modtimes; instead, we just
      http://www-2.cs.cmu.edu/~jcl/programs/sync_file.tar.gz
   Make sure you pay attention to the compile line as it is important.
 
+[Ivo Welch] I would do a quick test of case sensitivity in the program
+itself at the time you do a first prf sync, so that the user does not have
+to bother with it.  Just write two files on each end which differ in case,
+and see if there is overwriting.  Then do the smart thing.  The long-named
+file in the .unison directory should keep this information thereafter.
+(BCP: Implementing this is more difficult than it might seem.  E.g.,
+whenever a symlink is followed we might need to go through the same
+exercise.  And then we'd need to be able to deal with replicas that are not
+all one way or the other...)
 
-USER INTERFACE
-==============
+[Ivo Welch] I would give some examples in the man page of what an xxx
+specification is.
+
+[Ivo Welch] I would allow '--' switches, in addition to the '-' switch spec.
+
+[Ivo Welch] On OSX, create a link from ~/Library/Application Support/Unison
+to .unison, just for ease of finding it. It took me a long time to find my
+.prf files.
+
+[Ivo Welch] the OSX GUI front end should be clear which side (left or right)
+the local host and which side the remote host is.
+
+* USER INTERFACE
+* ==============
 
 ** In menu Actions
     - show Diff applies to the current line, while
@@ -886,8 +1005,8 @@ It would be nice to be able to STOP the GUI in the middle of propagating
   changes.  
 
 
-TIDYING
-=======
+* TIDYING
+* =======
 
 * Go through the sources and make all fatal and transient error messages
   as informative as possible 
@@ -903,8 +1022,8 @@ Ocamlexc v1.0, the uncaught exceptions analyzer for Objective Caml is now
   Unison sources and see if it reveals any problems.
 
 
-LARGER EXTENSIONS
-=================
+* LARGER EXTENSIONS
+* =================
 
 Fast update checking would be cool... Some resources:
    FAM (used in Enlightenment) 
@@ -962,8 +1081,8 @@ It might be nice to implement an (optional) safety check that detects
   paranoid.) 
 
 
-WINDOWS ISSUES
-==============
+* WINDOWS ISSUES
+* ==============
 
 Suggestion from Arnaud:
   I have been using XP for a while and despite all the problems I have, there
@@ -1005,3 +1124,7 @@ Comments from Karl Moerder:
     provided on FAT file systems) and the new way is the more Unix like way
     (added for NTFS file systems). The new way has rwxdpo bits for each
     group (and there can be several groups).
+
+Local Variables: 
+mode: outline
+End: 

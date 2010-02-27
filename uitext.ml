@@ -1,5 +1,20 @@
 (* Unison file synchronizer: src/uitext.ml *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 
 open Common
 open Lwt
@@ -16,7 +31,7 @@ let dumbtty =
            Not_found -> false)
       | _ ->
           true)
-    "do not try to change terminal settings in text UI"
+    "!do not change terminal settings in text UI"
     ("When set to \\verb|true|, this flag makes the text mode user "
      ^ "interface avoid trying to change any of the terminal settings.  "
      ^ "(Normally, Unison puts the terminal in `raw mode', so that it can "
@@ -31,7 +46,7 @@ let dumbtty =
      ^ "interface.")
     
 let silent =
-  Prefs.createBool "silent" false "print nothing (except error messages)"
+  Prefs.createBool "silent" false "print nothing except error messages"
     ("When this preference is set to {\\tt true}, the textual user "
      ^ "interface will print nothing at all, except in the case of errors.  "
      ^ "Setting \\texttt{silent} to true automatically sets the "
@@ -492,11 +507,14 @@ let rec interactAndPropagateChanges reconItemList
     let trans = updatesToDo - failures in
     let summary =
       Printf.sprintf
-       "Synchronization %s  (%d item%s transferred, %d skipped, %d failure%s)"
+       "Synchronization %s at %s  (%d item%s transferred, %d skipped, %d failed)"
        (if failures=0 then "complete" else "incomplete")
+       (let tm = Util.localtime (Util.time()) in
+        Printf.sprintf "%02d:%02d:%02d"
+          tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec)
        trans (if trans=1 then "" else "s")
        skipped
-       failures (if failures=1 then "" else "s") in
+       failures in
     Trace.log (summary ^ "\n");
     if skipped>0 then
       Safelist.iter
@@ -509,14 +527,21 @@ let rec interactAndPropagateChanges reconItemList
       Safelist.iter
         (fun p -> alwaysDisplayAndLog ("  failed: " ^ (Path.toString p)))
         failedPaths;
-    (skipped > 0, failures > 0, failedPaths)
-  in
-  if updatesToDo = 0 then
-    (display "No updates to propagate\n";
-     (skipped > 0, false, []))
-  else if proceed=ProceedImmediately then
+    (skipped > 0, failures > 0, failedPaths) in
+  if updatesToDo = 0 then begin
+    display "No updates to propagate\n";
+    (* BCP (3/09): We need to commit the archives even if there are
+       no updates to propagate because some files (in fact, if we've
+       just switched to DST on windows, a LOT of files) might have new
+       modtimes in the archive. *)
+    (* JV (5/09): Don't save the archive in repeat mode as it has some
+       costs and its unlikely there is much change to the archives in
+       this mode. *)
+    if Prefs.read Uicommon.repeat = "" then Update.commitUpdates ();
+    (skipped > 0, false, [])
+  end else if proceed=ProceedImmediately then begin
     doit()
-  else begin
+  end else begin
     displayWhenInteractive "\nProceed with propagating updates? ";
     selectAction
       (* BCP: I find it counterintuitive that every other prompt except this one
@@ -564,9 +589,31 @@ let checkForDangerousPath dangerousPaths =
   end
 
 let synchronizeOnce() =
+  let showStatus path =
+    if path = "" then Util.set_infos "" else
+    let max_len = 70 in
+    let mid = (max_len - 3) / 2 in
+    let path =
+      let l = String.length path in
+      if l <= max_len then path else
+      String.sub path 0 (max_len - mid - 3) ^ "..." ^
+      String.sub path (l - mid) mid
+    in
+    let c = "-\\|/".[truncate (mod_float (4. *. Unix.gettimeofday ()) 4.)] in
+    Util.set_infos (Format.sprintf "%c %s" c path)
+  in
   Trace.status "Looking for changes";
+  if not (Prefs.read Trace.terse) && (Prefs.read Trace.debugmods = []) then
+    Uutil.setUpdateStatusPrinter (Some showStatus);
+
+  let updates = Update.findUpdates() in
+
+  Uutil.setUpdateStatusPrinter None;
+  Util.set_infos "";
+
   let (reconItemList, anyEqualUpdates, dangerousPaths) =
-    Recon.reconcileAll (Update.findUpdates()) in
+    Recon.reconcileAll updates in
+
   if reconItemList = [] then begin
     (if anyEqualUpdates then
       Trace.status ("Nothing to do: replicas have been changed only "
@@ -582,6 +629,80 @@ let synchronizeOnce() =
     (exitStatus, failedPaths)
   end
 
+let watchinterval = 10
+
+(* FIX; Using string concatenation to accumulate characters is
+   pretty inefficient! *)
+let charsRead = ref ""
+let linesRead = ref []
+let watcherchan = ref None
+
+let suckOnWatcherFileLocal n =
+  Util.convertUnixErrorsToFatal
+    ("Reading changes from watcher process in file " ^ n)
+    (fun () ->
+       (* The main loop, invoked from two places below *)
+       let rec loop ch =
+         match try Some(input_char ch) with End_of_file -> None with
+           None ->
+             let res = !linesRead in
+             linesRead := [];
+             res
+         | Some(c) ->
+             if c = '\n' then begin
+               linesRead := !charsRead
+                            :: !linesRead;
+               charsRead := "";
+               loop ch
+             end else begin
+               charsRead := (!charsRead) ^ (String.make 1 c);
+               loop ch
+             end in
+       (* Make sure there's a file to watch, then read from it *)
+       match !watcherchan with
+         None -> 
+           if Sys.file_exists n then begin
+             let ch = open_in n in
+             watcherchan := Some(ch);
+             loop ch
+           end else []
+       | Some(ch) -> loop ch
+      )
+
+let suckOnWatcherFileRoot: Common.root -> string -> (string list) Lwt.t =
+  Remote.registerRootCmd
+    "suckOnWatcherFile"
+    (fun (fspath, n) ->
+      Lwt.return (suckOnWatcherFileLocal n))
+
+let suckOnWatcherFiles n =
+  Safelist.concat
+    (Lwt_unix.run (
+      Globals.allRootsMap (fun r -> suckOnWatcherFileRoot r n)))
+
+let synchronizePathsFromFilesystemWatcher () =
+  let watcherfilename = "" in
+  (* STOPPED HERE -- need to find the program using watcherosx preference and invoke it using a redirect to get the output into a temp file... *)
+  let rec loop failedPaths = 
+    let newpaths = suckOnWatcherFiles watcherfilename in
+    if newpaths <> [] then
+      display (Printf.sprintf "Changed paths:\n  %s\n"
+                 (String.concat "\n  " newpaths));
+    let p = failedPaths @ (Safelist.map Path.fromString newpaths) in
+    if p <> [] then begin
+      Prefs.set Globals.paths p;
+      let (exitStatus,newFailedPaths) = synchronizeOnce() in 
+      debug (fun() -> Util.msg "Sleeping for %d seconds...\n" watchinterval);
+      Unix.sleep watchinterval;
+      loop newFailedPaths 
+    end else begin
+      debug (fun() -> Util.msg "Nothing changed: sleeping for %d seconds...\n"
+               watchinterval);
+      Unix.sleep watchinterval;
+      loop []
+    end in
+  loop []
+
 let synchronizeUntilNoFailures () =
   let initValueOfPathsPreference = Prefs.read Globals.paths in
   let rec loop triesLeft =
@@ -595,17 +716,25 @@ let synchronizeUntilNoFailures () =
   loop (Prefs.read Uicommon.retry)
 
 let rec synchronizeUntilDone () =
+  let repeatinterval =
+    if Prefs.read Uicommon.repeat = "" then -1 else
+    try int_of_string (Prefs.read Uicommon.repeat)
+    with Failure "int_of_string" ->
+      (* If the 'repeat' pref is not a number, switch modes... *)
+      if Prefs.read Uicommon.repeat = "watch" then 
+        synchronizePathsFromFilesystemWatcher() 
+      else
+        raise (Util.Fatal ("Value of 'repeat' preference ("
+                           ^Prefs.read Uicommon.repeat
+                           ^") should be either a number or 'watch'\n")) in
+
   let exitStatus = synchronizeUntilNoFailures() in
-  if Prefs.read Uicommon.repeat = "" then
-    (* Done *)
+  if repeatinterval < 0 then
     exitStatus
   else begin
     (* Do it again *)
-    let n = try int_of_string (Prefs.read Uicommon.repeat)
-            with Invalid_argument "int_of_string" ->
-              assert false (* file watching not yet implemented *) in
-    Trace.status (Printf.sprintf "\nSleeping for %d seconds...\n" n);
-    Unix.sleep n;
+    Trace.status (Printf.sprintf "\nSleeping for %d seconds...\n" repeatinterval);
+    Unix.sleep repeatinterval;
     synchronizeUntilDone ()
   end
 

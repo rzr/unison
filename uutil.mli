@@ -1,5 +1,5 @@
 (* Unison file synchronizer: src/uutil.mli *)
-(* Copyright 1999-2007 (see COPYING for details) *)
+(* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
 (* This module collects a number of low-level, Unison-specific utility
    functions.  It is kept separate from the Util module so that that module
@@ -46,6 +46,8 @@ module File :
 val setProgressPrinter :
   (File.t -> Filesize.t ->  string -> unit) -> unit
 val showProgress : File.t -> Filesize.t -> string -> unit
+val setUpdateStatusPrinter : (string -> unit) option -> unit
+val showUpdateStatus : string -> unit
 
 (* Utility function to transfer bytes from one file descriptor to another
    until EOF *)

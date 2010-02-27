@@ -14,6 +14,9 @@ therefore have the following limitations:
 - [connect] is blocking
 *)
 let windows_hack = Sys.os_type <> "Unix"
+let recent_ocaml =
+  Scanf.sscanf Sys.ocaml_version "%d.%d"
+    (fun maj min -> (maj = 3 && min >= 11) || maj > 3)
 
 module SleepQueue =
   Pqueue.Make (struct
@@ -112,7 +115,7 @@ let rec run thread =
       let infds = List.map fst !inputs in
       let outfds = List.map fst !outputs in
       let (readers, writers, _) =
-        if windows_hack then
+        if windows_hack && not recent_ocaml then
           let writers = outfds in
           let readers =
             if delay = 0. || writers <> [] then [] else infds in
@@ -129,37 +132,48 @@ let rec run thread =
               ([], [], [])
           | Unix.Unix_error (Unix.EBADF, _, _) ->
               (List.filter bad_fd infds, List.filter bad_fd outfds, [])
+          | Unix.Unix_error (Unix.EPIPE, _, _)
+            when windows_hack && recent_ocaml ->
+            (* Workaround for a bug in Ocaml 3.11: select fails with an
+               EPIPE error when the file descriptor is remotely closed *)
+              (infds, [], [])
       in
       restart_threads !event_counter now;
       List.iter
         (fun fd ->
-           match List.assoc fd !inputs with
-             `Read (buf, pos, len, res) ->
-                wrap_syscall inputs fd res
-                  (fun () -> Unix.read fd buf pos len)
-           | `Accept res ->
-                wrap_syscall inputs fd res
-                  (fun () ->
-                     let (s, _) as v = Unix.accept fd in
-                     if not windows_hack then Unix.set_nonblock s;
-                     v)
-           | `Wait res ->
-                wrap_syscall inputs fd res (fun () -> ()))
+           try
+             match List.assoc fd !inputs with
+               `Read (buf, pos, len, res) ->
+                  wrap_syscall inputs fd res
+                    (fun () -> Unix.read fd buf pos len)
+             | `Accept res ->
+                  wrap_syscall inputs fd res
+                    (fun () ->
+                       let (s, _) as v = Unix.accept fd in
+                       if not windows_hack then Unix.set_nonblock s;
+                       v)
+             | `Wait res ->
+                  wrap_syscall inputs fd res (fun () -> ())
+           with Not_found ->
+             ())
         readers;
       List.iter
         (fun fd ->
-           match List.assoc fd !outputs with
-             `Write (buf, pos, len, res) ->
-                wrap_syscall outputs fd res
-                  (fun () -> Unix.write fd buf pos len)
-           | `CheckSocket res ->
-                wrap_syscall outputs fd res
-                  (fun () ->
-                     try ignore (Unix.getpeername fd) with
-                       Unix.Unix_error (Unix.ENOTCONN, _, _) ->
-                         ignore (Unix.read fd " " 0 1))
-           | `Wait res ->
-                wrap_syscall inputs fd res (fun () -> ()))
+           try
+             match List.assoc fd !outputs with
+               `Write (buf, pos, len, res) ->
+                  wrap_syscall outputs fd res
+                    (fun () -> Unix.write fd buf pos len)
+             | `CheckSocket res ->
+                  wrap_syscall outputs fd res
+                    (fun () ->
+                       try ignore (Unix.getpeername fd) with
+                         Unix.Unix_error (Unix.ENOTCONN, _, _) ->
+                           ignore (Unix.read fd " " 0 1))
+             | `Wait res ->
+                  wrap_syscall inputs fd res (fun () -> ())
+           with Not_found ->
+             ())
         writers;
       if !child_exited then begin
         child_exited := false;
@@ -406,7 +420,15 @@ let open_process cmd =
   Unix.close in_write;
   Lwt.return (inchan, outchan)))
 
-let open_proc_full cmd env proc input output error toclose =
+(* FIX: Subprocesses that use /dev/tty to print things on the terminal
+   will NOT have this output captured and returned to the caller of this
+   function.  There's an argument that this is correct, but if we are
+   running from a GUI the user may not be looking at any terminal and it
+   will appear that the process is just hanging.  This can be fixed, in
+   principle, by writing a little C code that opens /dev/tty and then uses
+   the TIOCNOTTY ioctl control to detach the terminal. *)
+
+let open_proc_full cmd env proc output input error toclose =
   match Unix.fork () with
      0 -> Unix.dup2 input Unix.stdin; Unix.close input;
           Unix.dup2 output Unix.stdout; Unix.close output;
@@ -420,15 +442,15 @@ let open_process_full cmd env =
   Lwt.bind (pipe ()) (fun (in_read, in_write) ->
   Lwt.bind (pipe ()) (fun (out_read, out_write) ->
   Lwt.bind (pipe ()) (fun (err_read, err_write) ->
-  let inchan = Unix.in_channel_of_descr in_read in
-  let outchan = Unix.out_channel_of_descr out_write in
+  let inchan = Unix.out_channel_of_descr in_write in
+  let outchan = Unix.in_channel_of_descr out_read in
   let errchan = Unix.in_channel_of_descr err_read in
-  open_proc_full cmd env (Process_full(inchan, outchan, errchan))
-                 out_read in_write err_write [in_read; out_write; err_read];
-  Unix.close out_read;
-  Unix.close in_write;
+  open_proc_full cmd env (Process_full(outchan, inchan, errchan))
+                 out_write in_read err_write [in_write; out_read; err_read];
+  Unix.close out_write;
+  Unix.close in_read;
   Unix.close err_write;
-  Lwt.return (inchan, outchan, errchan))))
+  Lwt.return (outchan, inchan, errchan))))
 
 let find_proc_id fun_name proc =
   try
@@ -453,9 +475,9 @@ let close_process (inchan, outchan) =
   close_in inchan; close_out outchan;
   Lwt.bind (waitpid [] pid) (fun (_, status) -> Lwt.return status)
 
-let close_process_full (inchan, outchan, errchan) =
+let close_process_full (outchan, inchan, errchan) =
   let pid =
     find_proc_id "close_process_full"
-                 (Process_full(inchan, outchan, errchan)) in
-  close_in inchan; close_out outchan; close_in errchan;
+                 (Process_full(outchan, inchan, errchan)) in
+  close_out inchan; close_in outchan; close_in errchan;
   Lwt.bind (waitpid [] pid) (fun (_, status) -> Lwt.return status)
