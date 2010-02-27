@@ -7,6 +7,7 @@ unison (2.32.52-1) UNRELEASED; urgency=low
   * Generate manpage using debian/generate-manpage.ml and output of 'unison
     -help', so manpage is always up-to-date 
     (Closes: #524526, #517972, #524475)
+  * Backup files changed during build (lwt/depend, ubase/depend)
 
  -- Sylvain Le Gall <gildor@debian.org>  Sat, 27 Feb 2010 16:29:59 +0100
 
