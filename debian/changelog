@@ -1,3 +1,14 @@
+unison2.27.57 (2.27.57-5) unstable; urgency=low
+
+  * Add myself to Uploaders, remove Sylvain
+  * Synchronize with unison/2.40.63-2:
+    - generate manpage using debian/generate-manpage.ml and output of
+      'unison -help', so manpage is always up-to-date
+    - add Fix-bad-interaction-with-OpenSSH-5.6.patch
+    - remove unison-gtk alternative on uninstall (Closes: #657421)
+
+ -- Stéphane Glondu <glondu@debian.org>  Fri, 10 Feb 2012 06:02:37 +0100
+
 unison2.27.57 (2.27.57-4) unstable; urgency=low
 
   [ Stéphane Glondu ]
