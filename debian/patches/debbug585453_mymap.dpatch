@@ -1,0 +1,21 @@
+#! /bin/sh /usr/share/dpatch/dpatch-run
+## debbug585453_mymap.dpatch by Stéphane Glondu <glondu@debian.org>
+##
+## All lines beginning with `## DP:' are a description of the patch.
+## DP: Fix build with OCaml 3.12, where Map has been extended
+## DP: (Closes: #585453)
+
+@DPATCH@
+diff --git a/update.mli b/update.mli
+index dc1e018..c99c704 100644
+--- a/update.mli
++++ b/update.mli
+@@ -1,7 +1,7 @@
+ (* Unison file synchronizer: src/update.mli *)
+ (* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
+ 
+-module NameMap : Map.S with type key = Name.t
++module NameMap : MyMap.S with type key = Name.t
+ 
+ type archive =
+     ArchiveDir of Props.t * archive NameMap.t
