@@ -5,7 +5,7 @@ Maintainer: Debian OCaml Maintainers <debian-ocaml-maint@lists.debian.org>
 Uploaders: Sylvain Le Gall <gildor@debian.org>
 Build-Depends: cdbs (>= 0.4.23),
  debhelper (>= 7),
- dpatch,
+ quilt (>= 0.46-7~),
  ocaml-nox (>= 3.10.0-8),
  liblablgtk2-ocaml-dev (>= 2.12.0-2),
  chrpath,

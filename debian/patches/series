@@ -1,0 +1,5 @@
+0001-Typo-in-ignore-Regex-help.patch
+0002-Fix-obsolete-help-about-ssh.patch
+0003-Fix-typo-missing-o-in-follow.patch
+0004-Fix-silent-behaviour.patch
+0005-Fix-build-with-OCaml-3.12.patch

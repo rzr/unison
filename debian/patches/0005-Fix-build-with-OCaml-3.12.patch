@@ -1,0 +1,23 @@
+From: =?UTF-8?q?St=C3=A9phane=20Glondu?= <glondu@debian.org>
+Date: Thu, 10 Feb 2011 11:38:49 +0100
+Subject: Fix build with OCaml 3.12
+
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=585454
+---
+ update.mli |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/update.mli b/update.mli
+index dd5c15b..ef4fc9d 100644
+--- a/update.mli
++++ b/update.mli
+@@ -1,7 +1,7 @@
+ (* Unison file synchronizer: src/update.mli *)
+ (* Copyright 1999-2007 (see COPYING for details) *)
+ 
+-module NameMap : Map.S with type key = Name.t
++module NameMap : MyMap.S with type key = Name.t
+ 
+ type archive =
+     ArchiveDir of Props.t * archive NameMap.t
+-- 
