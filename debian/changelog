@@ -1,8 +1,17 @@
-unison2.27.57 (2.27.57-3) UNRELEASED; urgency=low
+unison2.27.57 (2.27.57-3) unstable; urgency=low
 
-  * Add debbug585454_mymap.dpatch (Closes: #585454)
+  [ Stéphane Glondu ]
+  * Team upload
+  * Switch source package format to 3.0 (quilt)
+  * Add patch to fix build with OCaml 3.12 (Closes: #585453)
+  * Add "set -e" to maintainer scripts
+  * Remove conflicts older than oldstable
+  * Bump Standards-Version to 3.9.1
 
- -- Stéphane Glondu <glondu@debian.org>  Tue, 15 Jun 2010 23:12:41 +0200
+  [ Sylvain Le Gall ]
+  * Backup files changed during build (lwt/depend, ubase/depend)
+
+ -- Sylvain Le Gall <gildor@debian.org>  Thu, 10 Feb 2011 14:47:54 +0100
 
 unison2.27.57 (2.27.57-2) unstable; urgency=low
 
