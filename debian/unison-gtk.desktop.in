@@ -1,5 +1,4 @@
 [Desktop Entry]
-Encoding=UTF-8
 Name=Unison
 Comment=GTK interface for the unison file synchronization tool @VERSION@
 GenericName=File synchronization tool
