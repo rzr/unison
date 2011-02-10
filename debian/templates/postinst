@@ -1,4 +1,6 @@
-#!/bin/sh -e
+#!/bin/sh
+
+set -e
 
 # This file is common between unison and unison-gtk package
 if @IS_GTK@; then

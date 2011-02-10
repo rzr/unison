@@ -1,4 +1,6 @@
-#!/bin/sh -e
+#!/bin/sh
+
+set -e
 
 if [ "$1" = "remove" ]; then
 	update-alternatives --remove unison /usr/bin/@UNISON_SELF_ALTERNATIVE@
