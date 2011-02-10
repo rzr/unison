@@ -12,7 +12,7 @@ Build-Depends: cdbs (>= 0.4.23),
  librsvg2-bin (>= 2.18.2),
  imagemagick,
  dh-ocaml (>= 0.9.1)
-Standards-Version: 3.8.4
+Standards-Version: 3.9.1
 Vcs-Git: git://git.debian.org/git/pkg-ocaml-maint/packages/unison.git
 Vcs-Browser: http://git.debian.org/?p=pkg-ocaml-maint/packages/unison.git
 Homepage: http://www.cis.upenn.edu/~bcpierce/unison/
@@ -21,7 +21,7 @@ Package: unison2.27.57
 Architecture: any
 Depends: ${shlibs:Depends}, ${ocaml:Depends}, ${misc:Depends}
 Recommends: ssh-client | openssh-client
-Conflicts: ${F:OtherUnison}, unison (<< 2.9.1-3)
+Conflicts: ${F:OtherUnison}
 Description: A file-synchronization tool for Unix and Windows
  Unison is a file-synchronization tool for Unix and Windows, written
  in OCaml. It allows two replicas of a collection of files and
@@ -45,7 +45,7 @@ Description: A file-synchronization tool for Unix and Windows
 Package: unison2.27.57-gtk
 Architecture: any
 Depends: ${shlibs:Depends}, ${ocaml:Depends}, ${misc:Depends}
-Conflicts: ${F:OtherUnisonGtk}, unison-gtk (<< 2.9.1-3)
+Conflicts: ${F:OtherUnisonGtk}
 Recommends: ssh-askpass, ssh-client | openssh-client
 Description: A file-synchronization tool for Unix and Windows with GTK+ interface
  Unison is a file-synchronization tool for Unix and Windows, written
