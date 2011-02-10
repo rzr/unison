@@ -3,13 +3,13 @@ Section: utils
 Priority: optional
 Maintainer: Debian OCaml Maintainers <debian-ocaml-maint@lists.debian.org>
 Uploaders: Sylvain Le Gall <gildor@debian.org>
-Build-Depends: cdbs (>= 0.4.23), 
- debhelper (>= 7), 
- dpatch, 
- ocaml-nox (>= 3.10.0-8), 
- liblablgtk2-ocaml-dev (>= 2.12.0-2), 
- chrpath, 
- librsvg2-bin (>= 2.18.2), 
+Build-Depends: cdbs (>= 0.4.23),
+ debhelper (>= 7),
+ dpatch,
+ ocaml-nox (>= 3.10.0-8),
+ liblablgtk2-ocaml-dev (>= 2.12.0-2),
+ chrpath,
+ librsvg2-bin (>= 2.18.2),
  imagemagick,
  dh-ocaml (>= 0.9.1)
 Standards-Version: 3.8.4
@@ -37,9 +37,9 @@ Description: A file-synchronization tool for Unix and Windows
  on the same machine, or across a network using ssh or a direct
  socket connection.
  .
- Transfers are optimised using a version of the rsync protocol, 
- making it ideal for slower links. Unison has a clear and precise 
- specification, and is resilient to failure due to its careful 
+ Transfers are optimised using a version of the rsync protocol,
+ making it ideal for slower links. Unison has a clear and precise
+ specification, and is resilient to failure due to its careful
  handling of the replicas and its private structures.
 
 Package: unison-gtk
@@ -62,9 +62,9 @@ Description: A file-synchronization tool for Unix and Windows with GTK+ interfac
  on the same machine, or across a network using ssh or a direct
  socket connection.
  .
- Transfers are optimised using a version of the rsync protocol, 
- making it ideal for slower links. Unison has a clear and precise 
- specification, and is resilient to failure due to its careful 
+ Transfers are optimised using a version of the rsync protocol,
+ making it ideal for slower links. Unison has a clear and precise
+ specification, and is resilient to failure due to its careful
  handling of the replicas and its private structures.
  .
  This package adds the optional GTK+ interface.
