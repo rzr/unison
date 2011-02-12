@@ -1,3 +1,9 @@
+unison2.27.57 (2.27.57-4) UNRELEASED; urgency=low
+
+  * Remove obsolete README.source
+
+ -- Stéphane Glondu <glondu@debian.org>  Sat, 12 Feb 2011 10:31:01 +0100
+
 unison2.27.57 (2.27.57-3) unstable; urgency=low
 
   [ Stéphane Glondu ]
