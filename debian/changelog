@@ -1,3 +1,9 @@
+unison (2.32.52-3) UNRELEASED; urgency=low
+
+  * Remove obsolete README.source
+
+ -- Stéphane Glondu <glondu@debian.org>  Sat, 12 Feb 2011 10:31:01 +0100
+
 unison (2.32.52-2) unstable; urgency=low
 
   * Team upload
