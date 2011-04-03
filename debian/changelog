@@ -22,7 +22,7 @@ unison (2.32.52-1) unstable; urgency=low
     * Move ${F:OtherUnison*} fields first due to a problem when merging
       conflicts in dpkg-gencontrol
   * Generate manpage using debian/generate-manpage.ml and output of 'unison
-    -help', so manpage is always up-to-date 
+    -help', so manpage is always up-to-date
     (Closes: #524526, #517972, #524475)
   * Backup files changed during build (lwt/depend, ubase/depend)
 
@@ -48,7 +48,7 @@ unison (2.27.57-4) unstable; urgency=low
 
 unison (2.27.57-2) unstable; urgency=low
 
-  * Correct typo in documentation, thanks to Lucas B. Cohen 
+  * Correct typo in documentation, thanks to Lucas B. Cohen
     (Closes: #137960, #129478, #466173)
   * Switch packaging to git
   * Set maintainer to Debian OCaml Maintainers
@@ -89,7 +89,7 @@ unison (2.13.16-9) unstable; urgency=low
 
 unison (2.13.16-8) unstable; urgency=low
 
-  * Change section from net to utils 
+  * Change section from net to utils
   * Tighten build-dependency on lablgtk2 and librsvg2
   * Rework description of the package
 
@@ -112,10 +112,10 @@ unison (2.13.16-7) unstable; urgency=low
   * Apply patche 01gtkfont to stop trying to use deprecated
     font setting, thanks to Norman Ramsey (Closes: #372545)
   * Add a note on what unison-latest-stable is supposed to do in
-    README.Debian (Closes: #361900), in the same time explain failure 
+    README.Debian (Closes: #361900), in the same time explain failure
     when trying to upgrade with update-alternatives (Closes: #335413)
   * unison-gtk is now an alternative to unison (Closes: #411297)
-  * change stable release codename to Etch in README.Debian 
+  * change stable release codename to Etch in README.Debian
     (Closes: #394738)
 
  -- Sylvain Le Gall <gildor@debian.org>  Thu, 20 Sep 2007 15:58:53 +0200
@@ -157,7 +157,7 @@ unison (2.13.16-2) unstable; urgency=low
     NAME=$(UNISON) when building (Closes: #325932, #326589, #326395, #325812)
   * Remove reference to PostScript/HTML in the manpages (Closes: #323859)
   * Reformat NEWS.Debian to limit line length to 72 (Closes: #326154)
-  
+
  -- Sylvain Le Gall <sylvain.le-gall@polytechnique.org>  Mon,  5 Sep 2005 23:50:34 +0200
 
 unison (2.13.16-1) unstable; urgency=low
@@ -165,17 +165,17 @@ unison (2.13.16-1) unstable; urgency=low
   * New upstream release (Closes: #322042)
   * Use the same binary version scheme as the "-addversionno" unison
     option (Closes: #308507)
-  * Change the menu section to Apps/Tools (Closes: #308683). 
+  * Change the menu section to Apps/Tools (Closes: #308683).
   * The conflict between unison and unison-gtk as proposed in bug #308683 will
-    not be used: 
+    not be used:
     * the dependency is mainly a documentation dependency (symlink for
       unison-gtk.1.gz and /usr/share/doc/unison-gtk )
     * user can choose to install both unison and unison-gtk
   * Correct a problem in the alternative system: when a package is upgraded
-    upstream, the binary provided is also changed (ie going from 
+    upstream, the binary provided is also changed (ie going from
     /usr/bin/unison-2.12.0 to /usr/bin/unison-2.13.16). So we symlinked the
     binary to unison-latest-stable and use this binary in the alternative
-    system. 
+    system.
   * Add a unison[-gtk].preinst in order to correct the former behavior of
     update alternatives.
   * Transition to svn-buildpackage
@@ -225,7 +225,7 @@ unison (2.10.2-1) unstable; urgency=medium
   * Use a "Provide: unison" to manage the oldest package ( which provides
     also unison, but with a slightly different protocol ).
   * Remove the patch 01_ocaml_3_08 since it is applied upstream
-  * Use a GTK2 interface, since GTK1 interface doesn't even build 
+  * Use a GTK2 interface, since GTK1 interface doesn't even build
     (Closes: #252617)
   * No more HTML/PS documentation, only text documentation, because it is the
     only one i can produce without doing severe licence violation ( the former
@@ -248,17 +248,17 @@ unison (2.9.1-1) unstable; urgency=medium
 
   * New upstream version.				(closes: #142748)
   * Medium urgency to make woody release. Rationale:
-     - upstream versions of unison are rarely, if ever, broken, and if 
+     - upstream versions of unison are rarely, if ever, broken, and if
        they are, are fixed within days. this release has had a week or
        two to sweat it out.
      - the previous version had problems on windows. seeing as
-       cross-platform compatibility is a major feature of unison, this 
+       cross-platform compatibility is a major feature of unison, this
        could cause long-term aggrivation for people hoping to sync their
        woody box with their windows box.
-     - unison's protocol is version specific, and if I waited until sid 
+     - unison's protocol is version specific, and if I waited until sid
        released to upload this new version, I'd have to provide an old
        version in sid sooner than I'd have liked.
-     - it'd really annoy me if the version in woody wasn't the latest 
+     - it'd really annoy me if the version in woody wasn't the latest
        when it released. =)
 
  -- Robert McQueen <robot101@debian.org>  Wed, 24 Apr 2002 19:05:08 +0100
