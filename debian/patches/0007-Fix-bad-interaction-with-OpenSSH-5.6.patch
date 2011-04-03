@@ -1,0 +1,23 @@
+From: Stephane Glondu <steph@glondu.net>
+Date: Sun, 3 Apr 2011 11:44:19 +0200
+Subject: Fix bad interaction with OpenSSH 5.6
+
+Origin: https://bugs.archlinux.org/task/20877
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=620031
+---
+ terminal.ml |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/terminal.ml b/terminal.ml
+index 657f3d2..aafa425 100644
+--- a/terminal.ml
++++ b/terminal.ml
+@@ -191,7 +191,6 @@ let create_session cmd args new_stdin new_stdout new_stderr =
+             exit 127
+           end
+       | childPid ->
+-          Unix.close slaveFd;
+           (Some masterFd, childPid)
+       end
+ 
+-- 

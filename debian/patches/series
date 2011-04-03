@@ -4,3 +4,4 @@
 0004-Fix-silent-behaviour.patch
 0005-Fix-build-with-OCaml-3.12.patch
 0006-Fix-build-with-ld-as-needed.patch
+0007-Fix-bad-interaction-with-OpenSSH-5.6.patch
