@@ -3,3 +3,4 @@
 0003-Fix-typo-missing-o-in-follow.patch
 0004-Fix-silent-behaviour.patch
 0005-Fix-build-with-OCaml-3.12.patch
+0006-Fix-build-with-ld-as-needed.patch

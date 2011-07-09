@@ -1,0 +1,30 @@
+From: Julian Taylor <jtaylor.debian@googlemail.com>
+Date: Sat, 9 Jul 2011 21:13:35 +0200
+Subject: Fix build with ld --as-needed
+
+When building with ld --as-needed the libraries must be placed after
+the objects needing their symbols. Else the library is not registered
+as needed and dropped leading to undefined references.
+
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/unison2.27.57/+bug/803210
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=633354
+Author: Julian Taylor <jtaylor.debian@googlemail.com>
+Signed-off-by: Stephane Glondu <steph@glondu.net>
+---
+ Makefile.OCaml |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/Makefile.OCaml b/Makefile.OCaml
+index 0a1127e..8e6d836 100644
+--- a/Makefile.OCaml
++++ b/Makefile.OCaml
+@@ -349,7 +349,7 @@ win32rc/unison.res.lib: win32rc/unison.res
+ 
+ $(NAME)$(EXEC_EXT): $(CAMLOBJS) $(COBJS)
+ 	@echo Linking $@
+-	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $(CLIBS) $^
++	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $^ $(CLIBS)
+ 
+ # Unfortunately -output-obj does not put .o files into the output, only .cmx
+ # files, so we have to use $(LD) to take care of COBJS.
+-- 
