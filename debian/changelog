@@ -1,8 +1,14 @@
-unison2.27.57 (2.27.57-4) UNRELEASED; urgency=low
+unison2.27.57 (2.27.57-4) unstable; urgency=low
 
+  [ Stéphane Glondu ]
+  * Team upload
   * Remove obsolete README.source
+  * Bump Standards-Version to 3.9.2
 
- -- Stéphane Glondu <glondu@debian.org>  Sat, 12 Feb 2011 10:31:01 +0100
+  [ Julian Taylor ]
+  * Fix build with ld --as-needed (Closes: #633354)
+
+ -- Stéphane Glondu <glondu@debian.org>  Sat, 09 Jul 2011 21:18:41 +0200
 
 unison2.27.57 (2.27.57-3) unstable; urgency=low
 
