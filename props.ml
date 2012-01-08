@@ -45,6 +45,9 @@ module Perm : sig
   val dirDefault : t
   val extract : t -> int
   val check : Fspath.t -> Path.local -> Unix.LargeFile.stats -> t -> unit
+  val validatePrefs : unit -> unit
+  val permMask : int Prefs.t
+  val dontChmod : bool Prefs.t
 end = struct
 
 (* We introduce a type, Perm.t, that holds a file's permissions along with   *)
@@ -82,7 +85,11 @@ let permMask =
      $0o1777$: all bits but the set-uid and set-gid bits are \
      synchronised (synchronizing theses latter bits can be a security \
      hazard).  If you want to synchronize all bits, you can set the \
-     value of this preference to $-1$."
+     value of this preference to $-1$.  If one of the replica is on \
+     a FAT [Windows] filesystem, you should consider using the \
+     {\tt fat} preference instead of this preference.  If you need \
+     Unison not to set permissions at all, set the value of this \
+     preference to $0$ and set the preference {\tt dontchmod} to {\tt true}."
 
 (* Os-specific local conventions on file permissions                         *)
 let (fileDefault, dirDefault, fileSafe, dirSafe) =
@@ -146,7 +153,9 @@ let toString =
        else
          off
      in
-     bit 0o1000 "" ""  "t" ^
+     bit 0o4000 "" "-"  "S" ^
+     bit 0o2000 "" "-"  "s" ^
+     bit 0o1000 "?" ""  "t" ^
      bit 0o0400 "?" "-" "r" ^
      bit 0o0200 "?" "-" "w" ^
      bit 0o0100 "?" "-" "x" ^
@@ -169,7 +178,9 @@ let syncedPartsToString =
        else
          off
      in
-     bit 0o1000 "" ""  "t" ^
+     bit 0o4000 "" "-"  "S" ^
+     bit 0o2000 "" "-"  "s" ^
+     bit 0o1000 "?" ""  "t" ^
      bit 0o0400 "?" "-" "r" ^
      bit 0o0200 "?" "-" "w" ^
      bit 0o0100 "?" "-" "x" ^
@@ -183,11 +194,15 @@ let syncedPartsToString =
 let dontChmod =
   Prefs.createBool "dontchmod" 
   false
-  "!When set, never use the chmod system call"
-  ("By default, Unison uses the 'chmod' system call to set the permission bits"
+  "!when set, never use the chmod system call"
+  (  "By default, Unison uses the 'chmod' system call to set the permission bits"
   ^ " of files after it has copied them.  But in some circumstances (and under "
   ^ " some operating systems), the chmod call always fails.  Setting this "
   ^ " preference completely prevents Unison from ever calling chmod.")
+
+let validatePrefs () =
+  if Prefs.read dontChmod && (Prefs.read permMask <> 0) then raise (Util.Fatal
+    "If the 'dontchmod' preference is set, the 'perms' preference should be 0")  
 
 let set fspath path kind (fp, mask) =
   (* BCP: removed "|| kind <> `Update" on 10/2005, but reinserted it on 11/2008.
@@ -199,13 +214,24 @@ let set fspath path kind (fp, mask) =
     Util.convertUnixErrorsToTransient
     "setting permissions"
       (fun () ->
-        let abspath = Fspath.concatToString fspath path in
+        let abspath = Fspath.concat fspath path in
         debug
           (fun() ->
             Util.msg "Setting permissions for %s to %s (%s)\n"
-              abspath (toString (fileperm2perm fp))
+              (Fspath.toDebugString abspath) (toString (fileperm2perm fp))
               (Printf.sprintf "%o/%o" fp mask));
-        Unix.chmod abspath fp)
+        try
+          Fs.chmod abspath fp
+        with Unix.Unix_error (Unix.EOPNOTSUPP, _, _) as e ->
+          try
+            Util.convertUnixErrorsToTransient "setting permissions"
+              (fun () -> raise e)
+          with Util.Transient msg ->
+            raise (Util.Transient
+                     (msg ^
+                      ". You can use preference \"fat\",\
+                       or else set preference \"perms\" to 0 and \
+                       preference \"dontchmod\" to true to avoid this error")))
 
 let get stats _ = (stats.Unix.LargeFile.st_perm, Prefs.read permMask)
 
@@ -218,12 +244,14 @@ let check fspath path stats (fp, mask) =
             "Failed to set permissions of file %s to %s: \
              the permissions was set to %s instead. \
              The filesystem probably does not support all permission bits. \
-             You should probably set the \"perms\" option to 0o%o \
+             If this is a FAT filesystem, you should set the \"fat\" option \
+             to true. \
+             Otherwise, you should probably set the \"perms\" option to 0o%o \
              (or to 0 if you don't need to synchronize permissions)."
-            (Fspath.concatToString fspath path)
+            (Fspath.toPrintString (Fspath.concat fspath path))
             (syncedPartsToString (fp, mask))
             (syncedPartsToString (fp', mask))
-            (mask land (lnot (fp lxor fp')))))
+            ((Prefs.read permMask) land (lnot (fp lxor fp')))))
 
 let init someHostIsRunningWindows =
   let mask = if someHostIsRunningWindows then wind_mask else unix_mask in
@@ -261,7 +289,7 @@ module Id (M : sig
   val to_num : string -> int
   val toString : int -> string
   val syncedPartsToString : int -> string
-  val set : string -> int -> unit
+  val set : Fspath.t -> int -> unit
   val get : Unix.LargeFile.stats -> int
 end) : S = struct
 
@@ -328,7 +356,7 @@ let set fspath path kind id =
       Util.convertUnixErrorsToTransient
         "setting file ownership"
         (fun () ->
-           let abspath = Fspath.concatToString fspath path in
+           let abspath = Fspath.concat fspath path in
            M.set abspath id)
 
 let tbl = Hashtbl.create 17
@@ -358,7 +386,7 @@ let sync =
     ("When this flag is set to \\verb|true|, the owner attributes "
      ^ "of the files are synchronized.  "
      ^ "Whether the owner names or the owner identifiers are synchronized"
-     ^ "depends on the preference \texttt{numerids}.")
+     ^ "depends on the preference \\texttt{numerids}.")
 
 let kind = "user"
 
@@ -366,7 +394,7 @@ let to_num nm = (Unix.getpwnam nm).Unix.pw_uid
 let toString id = (Unix.getpwuid id).Unix.pw_name
 let syncedPartsToString = toString
 
-let set path id = Unix.chown path id (-1)
+let set path id = Fs.chown path id (-1)
 let get stats = stats.Unix.LargeFile.st_uid
 
 end)
@@ -378,7 +406,7 @@ let sync =
     false "synchronize group attributes"
     ("When this flag is set to \\verb|true|, the group attributes "
      ^ "of the files are synchronized.  "
-     ^ "Whether the group names or the group identifiers are synchronized"
+     ^ "Whether the group names or the group identifiers are synchronized "
      ^ "depends on the preference \\texttt{numerids}.")
 
 let kind = "group"
@@ -387,7 +415,7 @@ let to_num nm = (Unix.getgrnam nm).Unix.gr_gid
 let toString id = (Unix.getgrgid id).Unix.gr_name
 let syncedPartsToString = toString
 
-let set path id = Unix.chown path (-1) id
+let set path id = Fs.chown path (-1) id
 let get stats = stats.Unix.LargeFile.st_gid
 
 end)
@@ -426,33 +454,24 @@ let moduloOneHour t =
   let v = Int64.rem t oneHour in
   if v >= Int64.zero then v else Int64.add v oneHour
 
-let hash t h =
-  Uutil.hash2
-    (match t with
-       Synced f    -> Hashtbl.hash (moduloOneHour (approximate f))
-     | NotSynced _ -> 0)
-    h
-
-let similar t t' =
-  not (Prefs.read sync)
-    ||
-  match t, t' with
-    Synced v, Synced v'      ->
-      let delta = Int64.sub (approximate v) (approximate v') in
-      delta = Int64.zero || delta = oneHour || delta = minusOneHour
-  | NotSynced _, NotSynced _ ->
-      true
-  | _                        ->
-      false
-
 (* Accept one hour differences and one second differences *)
 let possible_deltas =
   [ -3601L; 3601L; -3600L; 3600L; -3599L; 3599L; -1L; 1L; 0L ]
 
-(* FIX: this is the right similar function (dates are approximated
-   on FAT filesystems upward under Windows, downward under Linux).
-   The hash function needs to be updated as well *)
-let similar_correct t t' =
+let hash t h =
+  Uutil.hash2
+    (match t with
+       Synced _    -> 1 (* As we are ignoring one-second differences,
+                           we cannot provide a more accurate hash. *)
+     | NotSynced _ -> 0)
+    h
+
+(* Times have a two-second granularity on FAT filesystems.  They are
+   approximated upward under Windows, downward under Linux...
+   Ignoring one-second changes also makes Unison more robust when
+   dealing with systems with sub-second granularity (we have no control
+   on how this is may be rounded). *)
+let similar t t' =
   not (Prefs.read sync)
     ||
   match t, t' with
@@ -485,15 +504,8 @@ let diff t t' = if similar t t' then NotSynced (extract t') else t'
 let toString t = Util.time2string (extract t)
 
 let syncedPartsToString t = match t with
-  Synced _    -> toString t
+  Synced _    -> Format.sprintf "%s (%f)" (toString t) (extract t)
 | NotSynced _ -> ""
-
-let iCanWrite p =
-  try
-    Unix.access p [Unix.W_OK];
-    true
-  with
-    Unix.Unix_error _ -> false
 
 (* FIX: Probably there should be a check here that prevents us from ever     *)
 (* setting a file's modtime into the future.                                 *)
@@ -503,8 +515,8 @@ let set fspath path kind t =
       Util.convertUnixErrorsToTransient
         "setting modification time"
         (fun () ->
-           let abspath = Fspath.concatToString fspath path in
-           if Util.osType = `Win32 && not (iCanWrite abspath) then
+           let abspath = Fspath.concat fspath path in
+           if not (Fs.canSetTime abspath) then
              begin
               (* Nb. This workaround was proposed by Dmitry Bely, to
                  work around the fact that Unix.utimes fails on readonly
@@ -518,12 +530,12 @@ let set fspath path kind t =
                  certainly don't want to make it WORLD-writable, even
                  briefly!). *)
                let oldPerms =
-                 (Unix.LargeFile.lstat abspath).Unix.LargeFile.st_perm in
+                 (Fs.lstat abspath).Unix.LargeFile.st_perm in
                Util.finalize
                  (fun()->
-                    Unix.chmod abspath 0o600;
-                    Unix.utimes abspath v v)
-                 (fun()-> Unix.chmod abspath oldPerms)
+                    Fs.chmod abspath 0o600;
+                    Fs.utimes abspath v v)
+                 (fun()-> Fs.chmod abspath oldPerms)
              end
            else if false then begin
              (* A special hack for Rasmus, who has a special situation that
@@ -540,12 +552,12 @@ let set fspath path kind t =
                           time.Unix.tm_min
                           time.Unix.tm_sec in
              let cmd = "/usr/local/bin/sudo -u root /usr/bin/touch -m -a -t "
-                       ^ tstr ^ " '" ^ abspath ^ "'" in
+                       ^ tstr ^ " " ^ Fspath.quotes abspath in
              Util.msg "Running external program to set utimes:\n  %s\n" cmd;
-             let (r,_) = External.runExternalProgram cmd in
+             let (r,_) = Lwt_unix.run (External.runExternalProgram cmd) in
              if r<>(Unix.WEXITED 0) then raise (Util.Transient "External time-setting command failed")
            end else
-             Unix.utimes abspath v v)
+             Fs.utimes abspath v v)
   | _ ->
       ()
 
@@ -562,13 +574,13 @@ let check fspath path stats t =
       ()
   | Synced v ->
       let t' = Synced (stats.Unix.LargeFile.st_mtime) in
-      if not (similar_correct t t') then
+      if not (similar t t') then
         raise
           (Util.Transient
              (Format.sprintf
                 "Failed to set modification time of file %s to %s: \
              the time was set to %s instead"
-            (Fspath.concatToString fspath path)
+            (Fspath.toPrintString (Fspath.concat fspath path))
             (syncedPartsToString t)
             (syncedPartsToString t')))
 
@@ -612,7 +624,8 @@ let zeroes = "\000\000\000\000\000\000\000\000"
 
 let toString t =
   match t with
-    Some s when s.[0] = 'F' && String.sub (s ^ zeroes) 1 8 <> zeroes ->
+    Some s when String.length s > 0 && s.[0] = 'F' &&
+                String.sub (s ^ zeroes) 1 8 <> zeroes ->
       let s = s ^ zeroes in
       " " ^ String.escaped (String.sub s 1 4) ^
       " " ^ String.escaped (String.sub s 5 4)
@@ -768,3 +781,32 @@ let setTime p t = {p with time = Time.replace p.time t}
 let perms p = Perm.extract p.perm
 
 let syncModtimes = Time.sync
+let permMask = Perm.permMask
+let dontChmod = Perm.dontChmod
+
+let validatePrefs = Perm.validatePrefs
+
+(* ------------------------------------------------------------------------- *)
+(*                          Directory change stamps                          *)
+(* ------------------------------------------------------------------------- *)
+
+(* We are reusing the directory length to store a flag indicating that
+   the directory is unchanged *)
+
+type dirChangedStamp = Uutil.Filesize.t
+
+let freshDirStamp () =
+  let t =
+    (Unix.gettimeofday () +. sqrt 2. *. float (Unix.getpid ())) *. 1000.
+  in
+  Uutil.Filesize.ofFloat t
+
+let changedDirStamp = Uutil.Filesize.zero
+
+let setDirChangeFlag p stamp inode =
+  let stamp = Uutil.Filesize.add stamp (Uutil.Filesize.ofInt inode) in
+  (setLength p stamp, length p <> stamp)
+
+let dirMarkedUnchanged p stamp inode =
+  let stamp = Uutil.Filesize.add stamp (Uutil.Filesize.ofInt inode) in
+  stamp <> changedDirStamp && length p = stamp

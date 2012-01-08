@@ -3,9 +3,11 @@
 
 type 'a t
 
-val read : 'a t -> 'a  
+val read : 'a t -> 'a
 val set : 'a t -> 'a -> unit
 val name : 'a t -> string list
+val overrideDefault : 'a t -> 'a -> unit
+val readDefault : 'a t -> 'a
 
 (* Convenient functions for registering simple kinds of preferences.  Note   *)
 (* that createStringPref creates a preference that can only be set once,     *)
@@ -13,6 +15,7 @@ val name : 'a t -> string list
 (* accumulates a list of values.                                             *)
 val createBool :
         string              (* preference name *)
+     -> ?local:bool             (* whether it is local to the client *)
      -> bool                (* initial value *)
      -> string              (* documentation string *)
      -> string              (* full (tex) documentation string *)
@@ -20,6 +23,7 @@ val createBool :
   
 val createInt :
         string              (* preference name *)
+     -> ?local:bool             (* whether it is local to the client *)
      -> int                 (* initial value *)
      -> string              (* documentation string *)
      -> string              (* full (tex) documentation string *)
@@ -27,23 +31,42 @@ val createInt :
   
 val createString :
         string              (* preference name *)
+     -> ?local:bool             (* whether it is local to the client *)
      -> string              (* initial value *)
      -> string              (* documentation string *)
      -> string              (* full (tex) documentation string *)
      -> string t            (*   -> new preference value *)
   
+val createFspath :
+        string              (* preference name *)
+     -> ?local:bool             (* whether it is local to the client *)
+     -> System.fspath       (* initial value *)
+     -> string              (* documentation string *)
+     -> string              (* full (tex) documentation string *)
+     -> System.fspath t     (*   -> new preference value *)
+  
 val createStringList :
         string              (* preference name *)
+     -> ?local:bool             (* whether it is local to the client *)
      -> string              (* documentation string *)
      -> string              (* full (tex) documentation string *)
      -> string list t       (*   -> new preference value *)
-  
+
+val createBoolWithDefault :
+        string              (* preference name *)
+     -> ?local:bool             (* whether it is local to the client *)
+     -> string              (* documentation string *)
+     -> string              (* full (tex) documentation string *)
+     -> [`True|`False|`Default] t
+                            (*   -> new preference value *)
+
 exception IllegalValue of string
 (* A more general creation function that allows arbitrary functions for      *)
 (* interning and printing values.  The interning function should raise       *)
 (* IllegalValue if it is passed a string it cannot deal with.                *)
 val create :
         string                  (* preference name *)
+     -> ?local:bool             (* whether it is local to the client *)
      -> 'a                      (* initial value *)
      -> string                  (* documentation string *)
      -> string                  (* full (tex) documentation string *)
@@ -81,7 +104,10 @@ val printUsage : string -> unit
 val profileName : string option ref
 
 (* Calculate the full pathname of a preference file                          *)
-val profilePathname : string -> string
+val profilePathname : string -> System.fspath
+
+(* Check whether the profile file is unchanged                               *)
+val profileUnchanged : unit -> bool
 
 (* Add a new preference to the file on disk (the result is a diagnostic      *)
 (* message that can be displayed to the user to verify where the new pref    *)
@@ -112,6 +138,16 @@ val dump : unit -> dumpedPrefs
 
 (* Load new values of all preferences from a string created by dump          *)
 val load : dumpedPrefs -> unit
+
+(* ------------------------------------------------------------------------- *)
+
+type typ =
+  [`BOOL | `INT | `STRING | `STRING_LIST | `BOOLDEF | `CUSTOM | `UNKNOWN]
+
+val canonicalName : string -> string
+val typ : string -> typ
+val documentation : string -> string * string * bool
+val list : unit -> string list
 
 (* ------------------------------------------------------------------------- *)
 

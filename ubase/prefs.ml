@@ -3,29 +3,50 @@
 
 let debug = Util.debug "prefs"
 
-type 'a t = ('a * string list) ref
+type 'a t =
+  { mutable value : 'a; defaultValue : 'a; mutable names : string list;
+    mutable setInProfile : bool }
 
-let read p = fst !p
+let read p = p.value
 
-let set p v = p:=(v, snd !p)
+let set p v = p.setInProfile <- true; p.value <- v
 
-let name p = snd !p
+let overrideDefault p v = if not p.setInProfile then p.value <- v
 
-let rawPref default = ref default
+let name p = p.names
+
+let readDefault p = p.defaultValue
+
+let rawPref default name =
+  { value = default; defaultValue = default; names = [name];
+    setInProfile = false }
 
 (* ------------------------------------------------------------------------- *)
 
 let profileName = ref None
+let profileFiles = ref []
 
 let profilePathname n =
   let f = Util.fileInUnisonDir n in
-  if Sys.file_exists f then f
+  if System.file_exists f then f
   else Util.fileInUnisonDir (n ^ ".prf")
 
 let thePrefsFile () = 
   match !profileName with
     None -> raise (Util.Transient("No preference file has been specified"))
   | Some(n) -> profilePathname n
+
+let profileUnchanged () =
+  List.for_all
+    (fun (path, info) ->
+       try
+         let newInfo = System.stat path in
+         newInfo.Unix.LargeFile.st_kind = Unix.S_REG &&
+         info.Unix.LargeFile.st_mtime = newInfo.Unix.LargeFile.st_mtime &&
+         info.Unix.LargeFile.st_size = newInfo.Unix.LargeFile.st_size
+       with Unix.Unix_error _ ->
+         false)
+    !profileFiles
 
 (* ------------------------------------------------------------------------- *)
 
@@ -46,8 +67,9 @@ let resetters = ref []
 
 let addresetter f = resetters := f :: !resetters
 
-let resetToDefaults () = Safelist.iter (fun f -> f()) !resetters
-  
+let resetToDefaults () =
+  Safelist.iter (fun f -> f()) !resetters; profileFiles := []
+
 (* ------------------------------------------------------------------------- *)
 
 (* When the server starts up, we need to ship it the current state of all    *)
@@ -56,30 +78,33 @@ let resetToDefaults () = Safelist.iter (fun f -> f()) !resetters
 (* created, a dumper (marshaler) and a loader (parser) are added to the list *)
 (* kept here...                                                              *)
 
-type dumpedPrefs = (string * string) list
+type dumpedPrefs = (string * bool * string) list
 
-let dumpers = ref ([] : (string * (unit->string)) list)
+let dumpers = ref ([] : (string * bool * (unit->string)) list)
 let loaders = ref (Util.StringMap.empty : (string->unit) Util.StringMap.t)
 
-let adddumper name f =
-  dumpers := (name,f) :: !dumpers
+let adddumper name optional f =
+  dumpers := (name,optional,f) :: !dumpers
 
 let addloader name f =
   loaders := Util.StringMap.add name f !loaders
 
-let dump () = Safelist.map (fun (name,f) -> (name, f())) !dumpers
-  
+let dump () = Safelist.map (fun (name, opt, f) -> (name, opt, f())) !dumpers
+
 let load d =
-  begin
-    Safelist.iter
-      (fun (name, dumpedval) ->
-        let loaderfn =
-          try Util.StringMap.find name !loaders
-          with Not_found -> raise (Util.Fatal
-            ("Preference "^name^" not found: inconsistent Unison versions??"))
-        in loaderfn dumpedval)
-      d
-  end
+  Safelist.iter
+    (fun (name, opt, dumpedval) ->
+       match
+         try Some (Util.StringMap.find name !loaders) with Not_found -> None
+       with
+         Some loaderfn ->
+           loaderfn dumpedval
+       | None ->
+           if not opt then
+             raise (Util.Fatal
+                      ("Preference "^name^" not found: \
+                        inconsistent Unison versions??")))
+    d
 
 (* For debugging *)
 let dumpPrefsToStderr() =
@@ -100,9 +125,42 @@ let dumpPrefsToStderr() =
 (* generate an appropriate usage message.                                    *)
 exception IllegalValue of string
 
+(* aliasMap: prefName -> prefName *)
+let aliasMap = ref (Util.StringMap.empty : string Util.StringMap.t)
+
+let canonicalName nm =
+  try Util.StringMap.find nm !aliasMap with Not_found -> nm
+
+type typ =
+  [`BOOL | `INT | `STRING | `STRING_LIST | `BOOLDEF | `CUSTOM | `UNKNOWN]
+
+(* prefType : prefName -> type *)
+let prefType = ref (Util.StringMap.empty : typ Util.StringMap.t)
+
+let typ nm = try Util.StringMap.find nm !prefType with Not_found -> `UNKNOWN
+
 (* prefs: prefName -> (doc, pspec, fulldoc)                                  *)
 let prefs =
   ref (Util.StringMap.empty : (string * Uarg.spec * string) Util.StringMap.t)
+
+let documentation nm =
+  try
+    let (doc, _, fulldoc) = Util.StringMap.find nm !prefs in
+    if doc <> "" && doc.[0] = '*' then raise Not_found;
+    let basic = doc = "" || doc.[0] <> '!' in
+    let doc =
+      if not basic then
+        String.sub doc 1 (String.length doc - 1)
+      else
+        doc
+    in
+    (doc, fulldoc, basic)
+  with Not_found ->
+    ("", "", false)
+
+let list () =
+  List.sort String.compare
+    (Util.StringMap.fold (fun nm _ l -> nm :: l) !prefType [])
 
 (* aliased pref has *-prefixed doc and empty fulldoc                         *)
 let alias pref newname =
@@ -110,46 +168,78 @@ let alias pref newname =
   (* found in the map, no need for catching exception                       *)
   let (_,pspec,_) = Util.StringMap.find (Safelist.hd (name pref)) !prefs in
   prefs := Util.StringMap.add newname ("*", pspec, "") !prefs;
-  pref := (fst !pref, newname::(snd !pref))
+  aliasMap := Util.StringMap.add newname (Safelist.hd (name pref)) !aliasMap;
+  pref.names <- newname :: pref.names
 
-let registerPref name pspec doc fulldoc =
+let registerPref name typ pspec doc fulldoc =
   if Util.StringMap.mem name !prefs then
     raise (Util.Fatal ("Preference " ^ name ^ " registered twice"));
-  prefs := Util.StringMap.add name (doc, pspec, fulldoc) !prefs
+  prefs := Util.StringMap.add name (doc, pspec, fulldoc) !prefs;
+  (* Ignore internal preferences *)
+  if doc = "" || doc.[0] <> '*' then
+    prefType := Util.StringMap.add name typ !prefType
 
-let createPrefInternal name default doc fulldoc printer parsefn =
-  let newCell = rawPref (default, [name]) in
-  registerPref name (parsefn newCell) doc fulldoc;
-  adddumper name (fun () -> Marshal.to_string !newCell []);
-  addprinter name (fun () -> printer (fst !newCell));
-  addresetter (fun () -> newCell := (default, [name]));
-  addloader name (fun s -> newCell := Marshal.from_string s 0);
+let createPrefInternal name typ local default doc fulldoc printer parsefn =
+  let newCell = rawPref default name in
+  registerPref name typ (parsefn newCell) doc fulldoc;
+  adddumper name local
+    (fun () -> Marshal.to_string (newCell.value, newCell.names) []);
+  addprinter name (fun () -> printer newCell.value);
+  addresetter
+    (fun () ->
+       newCell.setInProfile <- false; newCell.value <- newCell.defaultValue);
+  addloader name
+    (fun s ->
+       let (value, names) = Marshal.from_string s 0 in
+       newCell.value <- value);
   newCell
 
-let create name default doc fulldoc intern printer =
-  createPrefInternal name default doc fulldoc printer
-    (fun cell -> Uarg.String (fun s -> set cell (intern (fst !cell) s)))
+let create name ?(local=false) default doc fulldoc intern printer =
+  createPrefInternal name `CUSTOM local default doc fulldoc printer
+    (fun cell -> Uarg.String (fun s -> set cell (intern (read cell) s)))
 
-let createBool name default doc fulldoc =
+let createBool name ?(local=false) default doc fulldoc =
   let doc = if default then doc ^ " (default true)" else doc in
-  createPrefInternal name default doc fulldoc
+  createPrefInternal name `BOOL local default doc fulldoc
     (fun v -> [if v then "true" else "false"])
     (fun cell -> Uarg.Bool (fun b -> set cell b))
 
-let createInt name default doc fulldoc =
-  createPrefInternal name default doc fulldoc
-    (fun v -> [string_of_int v])  
+let createInt name ?(local=false) default doc fulldoc =
+  createPrefInternal name `INT local default doc fulldoc
+    (fun v -> [string_of_int v])
     (fun cell -> Uarg.Int (fun i -> set cell i))
 
-let createString name default doc fulldoc =
-  createPrefInternal name default doc fulldoc 
+let createString name ?(local=false) default doc fulldoc =
+  createPrefInternal name `STRING local default doc fulldoc
     (fun v -> [v])
     (fun cell -> Uarg.String (fun s -> set cell s))
 
-let createStringList name doc fulldoc =
-  createPrefInternal name [] doc fulldoc
+let createFspath name ?(local=false) default doc fulldoc =
+  createPrefInternal name `STRING local default doc fulldoc
+    (fun v -> [System.fspathToString v])
+    (fun cell -> Uarg.String (fun s -> set cell (System.fspathFromString s)))
+
+let createStringList name ?(local=false) doc fulldoc =
+  createPrefInternal name `STRING_LIST local [] doc fulldoc
     (fun v -> v)
-    (fun cell -> Uarg.String (fun s -> set cell (s::(fst !cell))))
+    (fun cell -> Uarg.String (fun s -> set cell (s:: read cell)))
+
+let createBoolWithDefault name ?(local=false) doc fulldoc =
+  createPrefInternal name `BOOLDEF local `Default doc fulldoc
+    (fun v -> [match v with
+                 `True    -> "true"
+               | `False   -> "false"
+               | `Default -> "default"])
+    (fun cell ->
+       Uarg.String
+         (fun s ->
+            let v =
+              match s with
+                "yes" | "true"     -> `True
+              | "default" | "auto" -> `Default
+              | _                  -> `False
+            in
+            set cell v))
 
 (*****************************************************************************)
 (*                      Command-line parsing                                 *)
@@ -260,13 +350,27 @@ let string2int name string =
    in the same order as in the file. *)
 let rec readAFile filename : (string * int * string * string) list =
   let chan =
-    try open_in (profilePathname filename)
-    with Sys_error _ ->
-      raise(Util.Fatal(Printf.sprintf "Preference file %s not found" filename)) in
+    try
+      let path = profilePathname filename in
+        profileFiles := (path, System.stat path) :: !profileFiles;
+        System.open_in_bin path
+    with Unix.Unix_error _ | Sys_error _ ->
+      raise(Util.Fatal(Printf.sprintf "Preference file %s not found" filename))
+  in
+  let bom = "\xef\xbb\xbf" in (* BOM: UTF-8 byte-order mark *)
   let rec loop lines =
     match (try Some(input_line chan) with End_of_file -> None) with
       None -> close_in chan; parseLines filename lines
-    | Some(theLine) -> loop (theLine::lines) in
+    | Some(theLine) ->
+        let theLine =
+          (* A lot of Windows tools start a UTF-8 encoded file by a
+             byte-order mark.  We skip it. *)
+          if lines = [] && Util.startswith theLine bom then
+            String.sub theLine 3 (String.length theLine - 3)
+          else
+            theLine
+        in
+        loop (theLine::lines) in
   loop []
 
 (* Takes a list of strings in reverse order and yields a list of "parsed lines"
@@ -276,6 +380,7 @@ and parseLines filename lines =
     match lines with
       [] -> res
     | theLine :: rest ->
+        let theLine = Util.removeTrailingCR theLine in
         let l = Util.trimWhitespace theLine in
         if l = "" || l.[0]='#' then
           loop rest (lineNum+1) res
@@ -370,10 +475,12 @@ let addLine l =
       then profilePathname (read addprefsto)
       else thePrefsFile() in
   try
-    debug (fun() -> Util.msg "Adding '%s' to %s\n" l filename);
-    let resultmsg = l ^ "' added to profile " ^ filename in 
+    debug (fun() ->
+      Util.msg "Adding '%s' to %s\n" l (System.fspathToDebugString filename));
+    let resultmsg =
+      l ^ "' added to profile " ^ System.fspathToPrintString filename in
     let ochan =
-      open_out_gen [Open_wronly; Open_append; Open_creat] 0o600 filename
+      System.open_out_gen [Open_wronly; Open_creat; Open_append] 0o600 filename
     in
     output_string ochan l;
     output_string ochan "\n";

@@ -14,11 +14,12 @@ Callback.register "unisonNonGuiStartup" unisonNonGuiStartup;;
 
 type stateItem = { mutable ri : reconItem;
                    mutable bytesTransferred : Uutil.Filesize.t;
+                   mutable bytesToTransfer : Uutil.Filesize.t;
                    mutable whatHappened : Util.confirmation option;
                    mutable statusMessage : string option };;
 let theState = ref [| |];;
 
-let unisonDirectory() = Fspath.toString Os.unisonDir
+let unisonDirectory() = System.fspathToString Os.unisonDir
 ;;
 Callback.register "unisonDirectory" unisonDirectory;;
 
@@ -28,6 +29,7 @@ external displayGlobalProgress : float -> unit = "displayGlobalProgress";;
 let totalBytesToTransfer = ref Uutil.Filesize.zero;;
 let totalBytesTransferred = ref Uutil.Filesize.zero;;
 
+let lastFrac = ref 0.;;
 let showGlobalProgress b =
   (* Concatenate the new message *)
   totalBytesTransferred := Uutil.Filesize.add !totalBytesTransferred b;
@@ -37,12 +39,15 @@ let showGlobalProgress b =
     else (Uutil.Filesize.percentageOfTotalSize
        !totalBytesTransferred !totalBytesToTransfer)
   in
-  displayGlobalProgress v;;
+  if v = 0. || abs_float (v -. !lastFrac) > 1. then begin
+    lastFrac := v;
+    displayGlobalProgress v
+  end;;
 
 let initGlobalProgress b =
   totalBytesToTransfer := b;
   totalBytesTransferred := Uutil.Filesize.zero;
-  showGlobalProgress Uutil.Filesize.zero;;
+  displayGlobalProgress 0.;;
 
 (* Defined in Bridge.m, used to redisplay the table
    when the status for a row changes *)
@@ -51,6 +56,7 @@ external bridgeThreadWait : int -> unit = "bridgeThreadWait";;
 (* Defined in MyController.m, used to redisplay the table
    when the status for a row changes *)
 external displayStatus : string -> unit = "displayStatus";;
+let displayStatus s = displayStatus (Unicode.protect s);;
 
 (*
 	Called to create callback threads which wait on the C side for callbacks.
@@ -64,11 +70,28 @@ external displayStatus : string -> unit = "displayStatus";;
 let callbackThreadCreate() = 
 	let tCode () = 
 		bridgeThreadWait 1;
-	in Thread.create tCode (); Thread.create tCode ();
+	in ignore (Thread.create tCode ()); ignore (Thread.create tCode ());
 	let tid = Thread.create tCode ()
 	in Thread.join tid;
 ;;
 Callback.register "callbackThreadCreate" callbackThreadCreate;;
+
+(* Defined in MyController.m; display the error message and exit *)
+external displayFatalError : string -> unit = "fatalError";;
+
+let fatalError message =
+  Trace.log (message ^ "\n");
+  displayFatalError message
+
+let doInOtherThread f =
+  Thread.create
+    (fun () ->
+       try
+         f ()
+       with
+         Util.Transient s | Util.Fatal s -> fatalError s
+       | exn -> fatalError (Uicommon.exn2string exn))
+    ()
 
 (* Defined in MyController.m, used to redisplay the table
    when the status for a row changes *)
@@ -76,21 +99,21 @@ external reloadTable : int -> unit = "reloadTable";;
 (* from uigtk2 *)
 let showProgress i bytes dbg =
 (*  Trace.status "showProgress"; *)
-(* XXX There should be a way to reset the amount of bytes transferred... *)
   let i = Uutil.File.toLine i in
   let item = !theState.(i) in
   item.bytesTransferred <- Uutil.Filesize.add item.bytesTransferred bytes;
   let b = item.bytesTransferred in
-  let len = Common.riLength item.ri in
+  let len = item.bytesToTransfer in
   let newstatus =
     if b = Uutil.Filesize.zero || len = Uutil.Filesize.zero then "start "
     else if len = Uutil.Filesize.zero then
       Printf.sprintf "%5s " (Uutil.Filesize.toString b)
     else Util.percent2string (Uutil.Filesize.percentageOfTotalSize b len) in
+  let oldstatus = item.statusMessage in
   item.statusMessage <- Some newstatus;
   showGlobalProgress bytes;
 (* FIX: No status window in Mac version, see GTK version for how to do it *)
-  reloadTable i;;
+  if oldstatus <> Some newstatus then reloadTable i;;
 
 let unisonGetVersion() = Uutil.myVersion
 ;;
@@ -107,7 +130,7 @@ let unisonInit0() =
      this in Util just because the Prefs module lives below the Os module in the
      dependency hierarchy, so Prefs can't call Os directly.) *)
   Util.supplyFileInUnisonDirFn 
-    (fun n -> Fspath.toString (Os.fileInUnisonDir(n)));
+    (fun n -> Os.fileInUnisonDir(n));
   (* Display status in GUI instead of on stderr *)
   let formatStatus major minor = (Util.padto 30 (major ^ "  ")) ^ minor in
   Trace.messageDisplayer := displayStatus;
@@ -127,8 +150,8 @@ let unisonInit0() =
       match Util.StringMap.find "rest" args with
         [] -> ()
       | [profile] -> clprofile := Some profile
-      | [root1;root2] -> Globals.setRawRoots [root1;root2]
-      | [root1;root2;profile] ->
+      | [root2;root1] -> Globals.setRawRoots [root1;root2]
+      | [root2;root1;profile] ->
           Globals.setRawRoots [root1;root2];
           clprofile := Some profile
       | _ ->
@@ -155,8 +178,9 @@ let unisonInit0() =
     None -> ()
   | Some n ->
       let f = Prefs.profilePathname n in
-      if not(Sys.file_exists f)
-      then (Printf.eprintf "Profile %s does not exist" f;
+      if not(System.file_exists f)
+      then (Printf.eprintf "Profile %s does not exist"
+              (System.fspathToPrintString f);
             exit 1)
   end;
   !clprofile
@@ -180,7 +204,7 @@ let do_unisonInit1 profileName =
   (* If the profile does not exist, create an empty one (this should only
      happen if the profile is 'default', since otherwise we will already
      have checked that the named one exists). *)
-   if not(Sys.file_exists (Prefs.profilePathname profileName)) then
+   if not(System.file_exists (Prefs.profilePathname profileName)) then
      Prefs.addComment "Unison preferences file";
 
   (* Load the profile *)
@@ -200,6 +224,9 @@ let do_unisonInit1 profileName =
   Trace.debug "" (fun() -> Prefs.dumpPrefsToStderr() );
 
   (* FIX: if no roots, ask the user *)
+
+  Recon.checkThatPreferredRootIsValid();
+
   let localRoots,remoteRoots =
     Safelist.partition
       (function Clroot.ConnectLocal _ -> true | _ -> false)
@@ -218,17 +245,22 @@ external unisonInit1Complete : Remote.preconnection option -> unit = "unisonInit
 
 (* Do this in another thread and return immedidately to free up main thread in cocoa *)
 let unisonInit1 profileName =
-	let doIt () =
-		let r =  do_unisonInit1 profileName in 
-		unisonInit1Complete r;
-	in
-	Thread.create doIt();
+  doInOtherThread
+    (fun () ->
+       let r = do_unisonInit1 profileName in
+       unisonInit1Complete r)
 ;;
 Callback.register "unisonInit1" unisonInit1;;
 Callback.register "openConnectionPrompt" Remote.openConnectionPrompt;;
 Callback.register "openConnectionReply" Remote.openConnectionReply;;
 Callback.register "openConnectionEnd" Remote.openConnectionEnd;;
 Callback.register "openConnectionCancel" Remote.openConnectionCancel;;
+
+let commitUpdates () =
+  Trace.status "Updating synchronizer state";
+  let t = Trace.startTimer "Updating synchronizer state" in
+  Update.commitUpdates();
+  Trace.showTimer t
 
 let do_unisonInit2 () =
   (* Canonize the names of the roots and install them in Globals. *)
@@ -264,10 +296,8 @@ let do_unisonInit2 () =
        Printf.eprintf "\n"
     );
 
-  Recon.checkThatPreferredRootIsValid();
-
   Lwt_unix.run
-    (Uicommon.checkCaseSensitivity () >>=
+    (Uicommon.validateAndFixupPrefs () >>=
      Globals.propagatePrefs);
 
   (* Initializes some backups stuff according to the preferences just loaded from the profile.
@@ -294,17 +324,22 @@ let do_unisonInit2 () =
   let reconcile updates = Recon.reconcileAll updates in
   let (reconItemList, thereAreEqualUpdates, dangerousPaths) =
     reconcile (findUpdates ()) in
+  if not !Update.foundArchives then commitUpdates ();
   if reconItemList = [] then
-    if thereAreEqualUpdates then
-      Trace.status "Replicas have been changed only in identical ways since last sync"
-    else
+    if thereAreEqualUpdates then begin
+      if !Update.foundArchives then commitUpdates ();
+      Trace.status
+        "Replicas have been changed only in identical ways since last sync"
+    end else
       Trace.status "Everything is up to date"
   else
     Trace.status "Check and/or adjust selected actions; then press Go";
   Trace.status (Printf.sprintf "There are %d reconitems" (Safelist.length reconItemList));
   let stateItemList =
     Safelist.map
-      (fun ri -> { ri = ri; bytesTransferred = Uutil.Filesize.zero;
+      (fun ri -> { ri = ri;
+                   bytesTransferred = Uutil.Filesize.zero;
+                   bytesToTransfer = Uutil.Filesize.zero;
                    whatHappened = None; statusMessage = None })
       reconItemList in
   theState := Array.of_list stateItemList;
@@ -319,25 +354,28 @@ external unisonInit2Complete : stateItem array -> unit = "unisonInit2Complete";;
 
 (* Do this in another thread and return immedidately to free up main thread in cocoa *)
 let unisonInit2 () =
-	let doIt () =
-		let r =  do_unisonInit2 () in 
-		unisonInit2Complete r;
-	in
-	Thread.create doIt();
+  doInOtherThread
+    (fun () ->
+       let r = do_unisonInit2 () in
+       unisonInit2Complete r)
 ;;
 Callback.register "unisonInit2" unisonInit2;;
 
 let unisonRiToDetails ri =
-  match ri.whatHappened with
-    Some (Util.Failed s) -> (Path.toString ri.ri.path) ^ "\n" ^ s
-  | _ -> (Path.toString ri.ri.path) ^ "\n" ^ (Uicommon.details2string ri.ri "  ");;
+  Unicode.protect
+    (match ri.whatHappened with
+       Some (Util.Failed s) ->
+         Path.toString ri.ri.path1 ^ "\n" ^ s
+     | _ ->
+         Path.toString ri.ri.path1 ^ "\n" ^
+         Uicommon.details2string ri.ri "  ");;
 Callback.register "unisonRiToDetails" unisonRiToDetails;;
 
-let unisonRiToPath ri = Path.toString ri.ri.path;;
+let unisonRiToPath ri = Unicode.protect (Path.toString ri.ri.path1);;
 Callback.register "unisonRiToPath" unisonRiToPath;;
 
-let rcToString (_,status,_,_) =
-  match status with
+let rcToString rc =
+  match rc.status with
     `Deleted      -> "Deleted"
   | `Modified     -> "Modified"
   | `PropsChanged -> "PropsChanged"
@@ -346,16 +384,16 @@ let rcToString (_,status,_,_) =
 let unisonRiToLeft ri =
   match ri.ri.replicas with
     Problem _ -> ""
-  | Different(rc,_,_,_) -> rcToString rc;;
+  | Different {rc1 = rc} -> rcToString rc;;
 Callback.register "unisonRiToLeft" unisonRiToLeft;;
 let unisonRiToRight ri =
   match ri.ri.replicas with
     Problem _ -> ""
-  | Different(_,rc,_,_) -> rcToString rc;;
+  | Different {rc2 = rc} -> rcToString rc;;
 Callback.register "unisonRiToRight" unisonRiToRight;;
 
 let unisonRiToFileSize ri =
-  Uutil.Filesize.toInt (riLength ri.ri);;
+  Uutil.Filesize.toFloat (riLength ri.ri);;
 Callback.register "unisonRiToFileSize" unisonRiToFileSize;;
 
 let unisonRiToFileType ri =
@@ -370,28 +408,28 @@ let direction2niceString = function (* from Uicommon where it's not exported *)
 let unisonRiToDirection ri =
   match ri.ri.replicas with
     Problem _ -> "XXXXX"
-  | Different(_,_,d,_) -> direction2niceString !d;;
+  | Different diff -> direction2niceString diff.direction;;
 Callback.register "unisonRiToDirection" unisonRiToDirection;;
 
 let unisonRiSetLeft ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Replica2ToReplica1;;
+  | Different diff -> diff.direction <- Replica2ToReplica1;;
 Callback.register "unisonRiSetLeft" unisonRiSetLeft;;
 let unisonRiSetRight ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Replica1ToReplica2;;
+  | Different diff -> diff.direction <- Replica1ToReplica2;;
 Callback.register "unisonRiSetRight" unisonRiSetRight;;
 let unisonRiSetConflict ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Conflict;;
+  | Different diff -> diff.direction <- Conflict;;
 Callback.register "unisonRiSetConflict" unisonRiSetConflict;;
 let unisonRiSetMerge ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Merge;;
+  | Different diff -> diff.direction <- Merge;;
 Callback.register "unisonRiSetMerge" unisonRiSetMerge;;
 let unisonRiForceOlder ri =
   Recon.setDirection ri.ri `Older `Force;;
@@ -403,15 +441,15 @@ Callback.register "unisonRiForceNewer" unisonRiForceNewer;;
 let unisonRiToProgress ri =
   match (ri.statusMessage, ri.whatHappened,ri.ri.replicas) with
     (None,None,_) -> ""
-  | (Some s,None,_) -> s
-  | (_,_,Different(_,_,{contents=Conflict},_)) -> ""
+  | (Some s,None,_) -> Unicode.protect s
+  | (_,_,Different {direction = Conflict}) -> ""
   | (_,_,Problem _) -> ""
   | (_,Some Util.Succeeded,_) -> "done"
   | (_,Some (Util.Failed s),_) -> "FAILED";;
 Callback.register "unisonRiToProgress" unisonRiToProgress;;
 
 let unisonRiToBytesTransferred ri =
-  Uutil.Filesize.toInt ri.bytesTransferred;;
+  Uutil.Filesize.toFloat ri.bytesTransferred;;
 Callback.register "unisonRiToBytesTransferred" unisonRiToBytesTransferred;;
 
 (* --------------------------------------------------- *)
@@ -419,6 +457,9 @@ Callback.register "unisonRiToBytesTransferred" unisonRiToBytesTransferred;;
 (* Defined in MyController.m, used to show diffs *)
 external displayDiff : string -> string -> unit = "displayDiff";;
 external displayDiffErr : string -> unit = "displayDiffErr";;
+let displayDiff title text =
+  displayDiff (Unicode.protect title) (Unicode.protect text);;
+let displayDiffErr err = displayDiffErr (Unicode.protect err)
 
 (* If only properties have changed, we can't diff or merge.
    'Can't diff' is produced (uicommon.ml) if diff is attemped
@@ -434,7 +475,8 @@ let filesAreDifferent status1 status2 =
 let canDiff ri = 
   match ri.ri.replicas with
     Problem _ -> false
-  | Different((`FILE, status1, _, _),(`FILE, status2, _, _), _, _) ->
+  | Different {rc1 = {typ = `FILE; status = status1};
+               rc2 = {typ = `FILE; status = status2}} ->
       filesAreDifferent status1 status2
   | Different _ -> false;;
 Callback.register "canDiff" canDiff;;
@@ -442,16 +484,17 @@ Callback.register "canDiff" canDiff;;
 (* from Uicommon *)
 (* precondition: uc = File (Updates(_, ..) on both sides *)
 let showDiffs ri printer errprinter id =
-  let p = ri.path in
   match ri.replicas with
     Problem _ ->
       errprinter
         "Can't diff files: there was a problem during update detection"
-  | Different((`FILE, status1, _, ui1), (`FILE, status2, _, ui2), _, _) ->
+  | Different
+        {rc1 = {typ = `FILE; status = status1; ui = ui1};
+         rc2 = {typ = `FILE; status = status2; ui = ui2}} ->
       if filesAreDifferent status1 status2 then
         (let (root1,root2) = Globals.roots() in
          begin
-           try Files.diff root1 p ui1 root2 p ui2 printer id
+           try Files.diff root1 ri.path1 ui1 root2 ri.path2 ui2 printer id
            with Util.Transient e -> errprinter e
          end)
   | Different _ ->
@@ -472,9 +515,15 @@ let do_unisonSynchronize () =
     Transport.logStart ();
     let totalLength =
       Array.fold_left
-        (fun l si -> Uutil.Filesize.add l (Common.riLength si.ri))
+        (fun l si ->
+           si.bytesTransferred <- Uutil.Filesize.zero;
+           let len =
+             if si.whatHappened = None then Common.riLength si.ri else
+             Uutil.Filesize.zero
+           in
+           si.bytesToTransfer <- len;
+           Uutil.Filesize.add l len)
         Uutil.Filesize.zero !theState in
-    displayGlobalProgress 0.;
     initGlobalProgress totalLength;
     let t = Trace.startTimer "Propagating changes" in
     let im = Array.length !theState in
@@ -503,6 +552,12 @@ let do_unisonSynchronize () =
                          | _ ->
                              fail e)
                   >>= (fun res ->
+                let rem =
+                  Uutil.Filesize.sub
+                    theSI.bytesToTransfer theSI.bytesTransferred
+                in
+                if rem <> Uutil.Filesize.zero then
+                  showProgress (Uutil.File.ofLine i) rem "done";
                 theSI.whatHappened <- Some res;
                 return ())
           | Some _ ->
@@ -520,10 +575,7 @@ let do_unisonSynchronize () =
         Lwt_util.join actions));
     Transport.logFinish ();
     Trace.showTimer t;
-    Trace.status "Updating synchronizer state";
-    let t = Trace.startTimer "Updating synchronizer state" in
-    Update.commitUpdates();
-    Trace.showTimer t;
+    commitUpdates ();
 
     let failures =
       let count =
@@ -531,30 +583,43 @@ let do_unisonSynchronize () =
           (fun l si ->
              l + (match si.whatHappened with Some(Util.Failed(_)) -> 1 | _ -> 0))
           0 !theState in
-      if count = 0 then "" else
-        Printf.sprintf "%d failure%s" count (if count=1 then "" else "s") in
+      if count = 0 then [] else
+        [Printf.sprintf "%d failure%s" count (if count=1 then "" else "s")] in
+    let partials =
+      let count =
+        Array.fold_left
+          (fun l si ->
+             l + match si.whatHappened with
+                   Some Util.Succeeded
+                   when partiallyProblematic si.ri &&
+                        not (problematic si.ri) ->
+                     1
+                 | _ ->
+                     0)
+          0 !theState in
+      if count = 0 then [] else
+        [Printf.sprintf "%d partially transferred" count] in
     let skipped =
       let count =
         Array.fold_left
           (fun l si ->
              l + (if problematic si.ri then 1 else 0))
           0 !theState in
-      if count = 0 then "" else
-        Printf.sprintf "%d skipped" count in
+      if count = 0 then [] else
+        [Printf.sprintf "%d skipped" count] in
     Trace.status
-      (Printf.sprintf "Synchronization complete         %s%s%s"
-         failures (if failures=""||skipped="" then "" else ", ") skipped);
-    initGlobalProgress Uutil.Filesize.zero;
+      (Printf.sprintf "Synchronization complete         %s"
+         (String.concat ", " (failures @ partials @ skipped)));
+    initGlobalProgress Uutil.Filesize.dummy;
   end;;
 external syncComplete : unit -> unit = "syncComplete";;
 
 (* Do this in another thread and return immedidately to free up main thread in cocoa *)
 let unisonSynchronize () =
-	let doIt () =
-		do_unisonSynchronize ();
-		syncComplete ();
-	in 
-	Thread.create doIt();
+  doInOtherThread
+    (fun () ->
+       do_unisonSynchronize ();
+       syncComplete ())
 ;;
 Callback.register "unisonSynchronize" unisonSynchronize;;
 
@@ -577,7 +642,7 @@ let unisonUpdateForIgnore i =
   let num = ref(-1) in
   let newI = ref None in
   (* FIX: we should actually test whether any prefix is now ignored *)
-  let keep s = not (Globals.shouldIgnore s.ri.path) in
+  let keep s = not (Globals.shouldIgnore s.ri.path1) in
   for j = 0 to (Array.length !theState - 1) do
     let s = !theState.(j) in
     if keep s then begin
@@ -606,10 +671,10 @@ let roots2niceStrings length = function
  | _ -> assert false  (* BOGUS? *);;
 let unisonFirstRootString() =
   let replica1, replica2 = roots2niceStrings 32 (Globals.roots()) in
-  replica1;;
+  Unicode.protect replica1;;
 let unisonSecondRootString() =
   let replica1, replica2 = roots2niceStrings 32 (Globals.roots()) in
-  replica2;;
+  Unicode.protect replica2;;
 Callback.register "unisonFirstRootString" unisonFirstRootString;;
 Callback.register "unisonSecondRootString" unisonSecondRootString;;
 
@@ -618,7 +683,7 @@ Callback.register "unisonSecondRootString" unisonSecondRootString;;
    the current setting is Conflict *)
 let unisonRiIsConflict ri =
   match ri.ri.replicas with
-  | Different(_,_,_,Conflict) -> true
+  | Different {default_direction = Conflict} -> true
   | _ -> false;;
 Callback.register "unisonRiIsConflict" unisonRiIsConflict;;
 
@@ -627,13 +692,13 @@ Callback.register "unisonRiIsConflict" unisonRiIsConflict;;
    the reconItems table *)
 let changedFromDefault ri = 
   match ri.ri.replicas with
-    Different(_,_,{contents=curr},default) -> curr<>default
+    Different diff -> diff.direction <> diff.default_direction
    | _ -> false;;
 Callback.register "changedFromDefault" changedFromDefault;;
 
 let unisonRiRevert ri =
   match ri.ri.replicas with
-  | Different(_,_,d,d0) -> d := d0
+  | Different diff -> diff.direction <- diff.default_direction
   | _ -> ();;
 Callback.register "unisonRiRevert" unisonRiRevert;;
 
@@ -656,5 +721,6 @@ let unisonExnInfo e =
   | Unix.Unix_error(ue,s1,s2) ->
       Printf.sprintf "Unix error(%s,%s,%s)" (Unix.error_message ue) s1 s2
   | _ -> Printexc.to_string e;;
-Callback.register "unisonExnInfo" unisonExnInfo;;
+Callback.register "unisonExnInfo"
+  (fun e -> Unicode.protect (unisonExnInfo e));;
 

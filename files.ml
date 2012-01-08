@@ -28,15 +28,15 @@ let debugverbose = Trace.debug "files+"
 let commitLogName = Util.fileInHomeDir "DANGER.README"
     
 let writeCommitLog source target tempname =
-  let sourcename = Fspath.toString source in
-  let targetname = Fspath.toString target in
+  let sourcename = Fspath.toDebugString source in
+  let targetname = Fspath.toDebugString target in
   debug (fun() -> Util.msg "Writing commit log: renaming %s to %s via %s\n"
     sourcename targetname tempname);
   Util.convertUnixErrorsToFatal
     "writing commit log"
     (fun () ->
        let c =
-         open_out_gen [Open_wronly; Open_creat; Open_trunc; Open_excl]
+         System.open_out_gen [Open_wronly; Open_creat; Open_trunc; Open_excl]
            0o600 commitLogName in
        Printf.fprintf c "Warning: the last run of %s terminated abnormally "
          Uutil.myName;
@@ -50,16 +50,16 @@ let clearCommitLog () =
   debug (fun() -> (Util.msg "Deleting commit log\n"));
   Util.convertUnixErrorsToFatal
     "clearing commit log"
-      (fun () -> Unix.unlink commitLogName)
+      (fun () -> System.unlink commitLogName)
     
 let processCommitLog () =
-  if Sys.file_exists commitLogName then begin
+  if System.file_exists commitLogName then begin
     raise(Util.Fatal(
           Printf.sprintf
             "Warning: the previous run of %s terminated in a dangerous state.
             Please consult the file %s, delete it, and try again."
                 Uutil.myName
-                commitLogName))
+                (System.fspathToPrintString commitLogName)))
   end else
     Lwt.return ()
       
@@ -69,78 +69,78 @@ let processCommitLogOnHost =
 let processCommitLogs() =
   Lwt_unix.run
     (Globals.allHostsIter (fun h -> processCommitLogOnHost h ()))
-    
+
 (* ------------------------------------------------------------ *)
-    
-let deleteLocal (fspath, (workingDirOpt, path)) =
-  (* when the workingDirectory is set, we are dealing with a temporary file *)
-  (* so we don't call the stasher in this case.                             *)
-  begin match workingDirOpt with
-    Some p -> 
-      debug (fun () -> Util.msg  "deleteLocal [%s] (%s, %s)\n" (Fspath.toString fspath) (Fspath.toString p) (Path.toString path));
-      Os.delete p path
-  | None ->
-      debug (fun () -> Util.msg "deleteLocal [%s] (None, %s)\n" (Fspath.toString fspath) (Path.toString path));
-      Stasher.backup fspath path `AndRemove
-  end;
+
+let deleteLocal (fspathTo, (pathTo, ui)) =
+  debug (fun () ->
+     Util.msg "deleteLocal [%s] (None, %s)\n"
+       (Fspath.toDebugString fspathTo) (Path.toString pathTo));
+  let localPathTo = Update.translatePathLocal fspathTo pathTo in
+  (* Make sure the target is unchanged first *)
+  (* (There is an unavoidable race condition here.) *)
+  let prevArch = Update.checkNoUpdates fspathTo localPathTo ui in
+  Stasher.backup fspathTo localPathTo `AndRemove prevArch;
+  (* Archive update must be done last *)
+  Update.replaceArchiveLocal fspathTo localPathTo Update.NoArchive;
   Lwt.return ()
-    
-let performDelete = Remote.registerRootCmd "delete" deleteLocal
-    
-(* FIX: maybe we should rename the destination before making any check ? *)
+
+let deleteOnRoot = Remote.registerRootCmd "delete" deleteLocal
+
 let delete rootFrom pathFrom rootTo pathTo ui =
-  Update.transaction (fun id ->
-    Update.replaceArchive rootFrom pathFrom None Update.NoArchive id true false
-      >>= (fun _ ->
-    (* Unison do the next line cause we want to keep a backup of the file.
-       FIX: We only need this when we are making backups *)
-	Update.updateArchive rootTo pathTo ui id >>= (fun _ ->
-	  Update.replaceArchive
-	    rootTo pathTo None Update.NoArchive id true false
-        >>= (fun localPathTo ->
-    (* Make sure the target is unchanged *)
-    (* (There is an unavoidable race condition here.) *)
-	      Update.checkNoUpdates rootTo pathTo ui >>= (fun () ->
-		performDelete rootTo (None, localPathTo))))))
-    
+  deleteOnRoot rootTo (pathTo, ui) >>= fun _ ->
+  Update.replaceArchive rootFrom pathFrom Update.NoArchive
+
 (* ------------------------------------------------------------ *)
-    
-let setPropRemote =
+
+let fileUpdated ui =
+  match ui with
+    Updates (File (_, ContentsUpdated _), _) -> true
+  | _                                        -> false
+
+let setPropLocal (fspath, (path, ui, newDesc, oldDesc)) =
+  (* [ui] provides the modtime while [newDesc] provides the other
+     file properties *)
+  let localPath = Update.translatePathLocal fspath path in
+  let (workingDir,realPath) = Fspath.findWorkingDir fspath localPath in
+  Fileinfo.set workingDir realPath (`Update oldDesc) newDesc;
+  if fileUpdated ui then Stasher.stashCurrentVersion fspath localPath None;
+  (* Archive update must be done last *)
+  Update.updateProps fspath localPath (Some newDesc) ui;
+  Lwt.return ()
+
+let setPropOnRoot = Remote.registerRootCmd "setProp" setPropLocal
+
+let updatePropsOnRoot =
   Remote.registerRootCmd
-    "setProp"
-    (fun (fspath, (workingDir, path, kind, newDesc)) ->
-      Fileinfo.set workingDir path kind newDesc;
-      Lwt.return ())
-    
-let setPropRemote2 =
-  Remote.registerRootCmd
-    "setProp2"
-    (fun (fspath, (path, kind, newDesc)) ->
-       let (workingDir,realPath) = Fspath.findWorkingDir fspath path in
-       Fileinfo.set workingDir realPath kind newDesc;
-       Lwt.return ())
-    
+   "updateProps"
+     (fun (fspath, (path, propOpt, ui)) ->
+        let localPath = Update.translatePathLocal fspath path in
+        (* Archive update must be done first *)
+        Update.updateProps fspath localPath propOpt ui;
+        if fileUpdated ui then
+          Stasher.stashCurrentVersion fspath localPath None;
+        Lwt.return ())
+
+let updateProps root path propOpt ui =
+  updatePropsOnRoot root (path, propOpt, ui)
+
 (* FIX: we should check there has been no update before performing the
    change *)
-let setProp fromRoot fromPath toRoot toPath newDesc oldDesc uiFrom uiTo =
+let setProp rootFrom pathFrom rootTo pathTo newDesc oldDesc uiFrom uiTo =
   debug (fun() ->
     Util.msg
       "setProp %s %s %s\n   %s %s %s\n"
-      (root2string fromRoot) (Path.toString fromPath)
+      (root2string rootFrom) (Path.toString pathFrom)
       (Props.toString newDesc)
-      (root2string toRoot) (Path.toString toPath)
+      (root2string rootTo) (Path.toString pathTo)
       (Props.toString oldDesc));
-  Update.transaction (fun id ->
-    Update.updateProps fromRoot fromPath None uiFrom id >>= (fun _ ->
-    (* [uiTo] provides the modtime while [desc] provides the other
-       file properties *)
-    Update.updateProps toRoot toPath (Some newDesc) uiTo id >>=
-      (fun toLocalPath ->
-	setPropRemote2 toRoot (toLocalPath, `Update oldDesc, newDesc))))
-    
+  setPropOnRoot rootTo (pathTo, uiTo, newDesc, oldDesc) >>= fun _ ->
+  updateProps rootFrom pathFrom None uiFrom
+
 (* ------------------------------------------------------------ *)
 
-let mkdirRemote =
+let mkdirOnRoot =
   Remote.registerRootCmd
     "mkdir"
     (fun (fspath,(workingDir,path)) ->
@@ -148,32 +148,46 @@ let mkdirRemote =
        if info.Fileinfo.typ = `DIRECTORY then begin
          begin try
            (* Make sure the directory is writable *)
-           Unix.chmod (Fspath.concatToString workingDir path)
+           Fs.chmod (Fspath.concat workingDir path)
              (Props.perms info.Fileinfo.desc lor 0o700)
          with Unix.Unix_error _ -> () end;
-         Lwt.return info.Fileinfo.desc
+         Lwt.return (true, info.Fileinfo.desc)
        end else begin
          if info.Fileinfo.typ <> `ABSENT then
            Os.delete workingDir path;
          Os.createDir workingDir path Props.dirDefault;
-         Lwt.return (Fileinfo.get false workingDir path).Fileinfo.desc
+         Lwt.return (false, (Fileinfo.get false workingDir path).Fileinfo.desc)
        end)
 
-let mkdir onRoot workingDir path = mkdirRemote onRoot (workingDir,path)
+let setDirPropOnRoot =
+  Remote.registerRootCmd
+    "setDirProp"
+    (fun (_, (workingDir, path, initialDesc, newDesc)) ->
+      Fileinfo.set workingDir path (`Set initialDesc) newDesc;
+      Lwt.return ())
+
+let makeSymlink =
+  Remote.registerRootCmd
+    "makeSymlink"
+    (fun (fspath, (workingDir, path, l)) ->
+       if Os.exists workingDir path then
+         Os.delete workingDir path;
+       Os.symlink workingDir path l;
+       Lwt.return ())
 
 (* ------------------------------------------------------------ *)
-    
-let renameLocal (root, (localTargetPath, fspath, pathFrom, pathTo)) =
-  debug (fun () -> Util.msg "Renaming %s to %s in %s; root is %s\n" 
-      (Path.toString pathFrom) 
-      (Path.toString pathTo) 
-      (Fspath.toString fspath) 
-      (Fspath.toString root));
-  let source = Fspath.concat fspath pathFrom in
-  let target = Fspath.concat fspath pathTo in
+
+let performRename fspathTo localPathTo workingDir pathFrom pathTo prevArch =
+  debug (fun () -> Util.msg "Renaming %s to %s in %s; root is %s\n"
+      (Path.toString pathFrom)
+      (Path.toString pathTo)
+      (Fspath.toDebugString workingDir)
+      (Fspath.toDebugString fspathTo));
+  let source = Fspath.concat workingDir pathFrom in
+  let target = Fspath.concat workingDir pathTo in
   Util.convertUnixErrorsToTransient
     (Printf.sprintf "renaming %s to %s"
-       (Fspath.toString source) (Fspath.toString target))
+       (Fspath.toDebugString source) (Fspath.toDebugString target))
     (fun () ->
       debugverbose (fun() ->
         Util.msg "calling Fileinfo.get from renameLocal\n");
@@ -183,10 +197,9 @@ let renameLocal (root, (localTargetPath, fspath, pathFrom, pathTo)) =
         Util.msg "back from Fileinfo.get from renameLocal\n");
       if filetypeFrom = `ABSENT then raise (Util.Transient (Printf.sprintf
            "Error while renaming %s to %s -- source file has disappeared!"
-	   (Fspath.toString source) (Fspath.toString target)));
-      let filetypeTo =
-        (Fileinfo.get false target Path.empty).Fileinfo.typ in
-      
+	   (Fspath.toPrintString source) (Fspath.toPrintString target)));
+      let filetypeTo = (Fileinfo.get false target Path.empty).Fileinfo.typ in
+
        (* Windows and Unix operate differently if the target path of a
           rename already exists: in Windows an exception is raised, in
           Unix the file is clobbered.  In both Windows and Unix, if
@@ -194,7 +207,7 @@ let renameLocal (root, (localTargetPath, fspath, pathFrom, pathTo)) =
           be raised.  We want to avoid doing the move first, if possible,
           because this opens a "window of danger" during which the contents of
           the path is nothing. *)
-      let moveFirst = 
+      let moveFirst =
         match (filetypeFrom, filetypeTo) with
         | (_, `ABSENT)            -> false
         | ((`FILE | `SYMLINK),
@@ -202,12 +215,13 @@ let renameLocal (root, (localTargetPath, fspath, pathFrom, pathTo)) =
         | _                       -> true (* Safe default *) in
       if moveFirst then begin
         debug (fun() -> Util.msg "rename: moveFirst=true\n");
-        let tmpPath = Os.tempPath fspath pathTo in
-        let temp = Fspath.concat fspath tmpPath in
-        let temp' = Fspath.toString temp in
+        let tmpPath = Os.tempPath workingDir pathTo in
+        let temp = Fspath.concat workingDir tmpPath in
+        let temp' = Fspath.toDebugString temp in
 
-        debug (fun() -> Util.msg "moving %s to %s\n" (Fspath.toString target) temp');
-        Stasher.backup root localTargetPath `ByCopying;
+        debug (fun() ->
+          Util.msg "moving %s to %s\n" (Fspath.toDebugString target) temp');
+        Stasher.backup fspathTo localPathTo `ByCopying prevArch;
         writeCommitLog source target temp';
         Util.finalize (fun() ->
           (* If the first rename fails, the log can be removed: the
@@ -221,7 +235,8 @@ let renameLocal (root, (localTargetPath, fspath, pathFrom, pathTo)) =
           Util.convertUnixErrorsToFatal "renaming with commit log"
             (fun () ->
               debug (fun() -> Util.msg "rename %s to %s\n"
-                       (Fspath.toString source) (Fspath.toString target));
+                       (Fspath.toDebugString source)
+                       (Fspath.toDebugString target));
               Os.rename "renameLocal(2)"
                 source Path.empty target Path.empty))
           (fun _ -> clearCommitLog());
@@ -230,22 +245,20 @@ let renameLocal (root, (localTargetPath, fspath, pathFrom, pathTo)) =
         Os.delete temp Path.empty
       end else begin
         debug (fun() -> Util.msg "rename: moveFirst=false\n");
-        Stasher.backup root localTargetPath `ByCopying;
+        Stasher.backup fspathTo localPathTo `ByCopying prevArch;
         Os.rename "renameLocal(3)" source Path.empty target Path.empty;
-        debug (fun() -> 
+        debug (fun() ->
 	  if filetypeFrom = `FILE then
             Util.msg
-              "Contents of %s after renaming = %s\n" 
-              (Fspath.toString target)
+              "Contents of %s after renaming = %s\n"
+              (Fspath.toDebugString target)
     	      (Fingerprint.toString (Fingerprint.file target Path.empty)));
-      end;
-      Lwt.return ())
-    
-let renameOnHost = Remote.registerRootCmd "rename" renameLocal
-    
+      end)
+
 (* FIX: maybe we should rename the destination before making any check ? *)
-(* FIX: When this code was originally written, we assumed that the
-   checkNoUpdates would happen immediately before the renameOnHost, so that
+(* JV (6/09): the window is small again...
+   FIX: When this code was originally written, we assumed that the
+   checkNoUpdates would happen immediately before the rename, so that
    the window of danger where other processes could invalidate the thing we
    just checked was very small.  But now that transport is multi-threaded,
    this window of danger could get very long because other transfers are
@@ -254,59 +267,30 @@ let renameOnHost = Remote.registerRootCmd "rename" renameLocal
    check that their assumptions had not been violated and then switch the
    temp file into place, but remain able to roll back if something fails
    either locally or on the other side. *)
-let rename root pathInArchive localPath workingDir pathOld pathNew ui =
+let renameLocal
+      (fspathTo, (localPathTo, workingDir, pathFrom, pathTo, ui, archOpt)) =
+  (* Make sure the target is unchanged, then do the rename.
+     (Note that there is an unavoidable race condition here...) *)
+  let prevArch = Update.checkNoUpdates fspathTo localPathTo ui in
+  performRename fspathTo localPathTo workingDir pathFrom pathTo prevArch;
+  begin match archOpt with
+    Some archTo -> Stasher.stashCurrentVersion fspathTo localPathTo None;
+                   Update.iterFiles fspathTo localPathTo archTo
+                     Xferhint.insertEntry;
+                   (* Archive update must be done last *)
+                   Update.replaceArchiveLocal fspathTo localPathTo archTo
+  | None        -> ()
+  end;
+  Lwt.return ()
+
+let renameOnHost = Remote.registerRootCmd "rename" renameLocal
+
+let rename root localPath workingDir pathOld pathNew ui archOpt =
   debug (fun() ->
     Util.msg "rename(root=%s, pathOld=%s, pathNew=%s)\n"
       (root2string root)
       (Path.toString pathOld) (Path.toString pathNew));
-  (* Make sure the target is unchanged, then do the rename.
-     (Note that there is an unavoidable race condition here...) *)
-  Update.checkNoUpdates root pathInArchive ui >>= (fun () ->
-    renameOnHost root (localPath, workingDir, pathOld, pathNew))
-
-(* ------------------------------------------------------------ *)
-
-let checkContentsChangeLocal
-      currfspath path archDesc archDig archStamp archRess =
-  let info = Fileinfo.get true currfspath path in
-  if Props.length archDesc <> Props.length info.Fileinfo.desc then
-    raise (Util.Transient (Printf.sprintf
-      "The file %s\nhas been modified during synchronization.  \
-       Transfer aborted."
-      (Fspath.concatToString currfspath path)));
-  match archStamp with
-    Fileinfo.InodeStamp inode
-    when info.Fileinfo.inode = inode
-         && Props.same_time info.Fileinfo.desc archDesc ->
-      ()
-  | _ ->
-      (* Note that we fall back to the paranoid check (using a fingerprint)
-         even if a CtimeStamp was provided, since we do not trust them
-         completely. *)
-      let (info, newDig) = Os.safeFingerprint currfspath path info None in
-      if archDig <> newDig then
-        raise (Util.Transient (Printf.sprintf
-          "The file %s\nhas been modified during synchronization.  \
-           Transfer aborted.%s"
-          (Fspath.concatToString currfspath path)
-          (if    Update.useFastChecking () 
-              && Props.same_time info.Fileinfo.desc archDesc
-           then
-             "  If this happens repeatedly, try running once with the \
-              fastcheck option set to 'no'"
-           else
-             "")))
-
-let checkContentsChangeOnHost =
-  Remote.registerRootCmd
-    "checkContentsChange"
-    (fun (currfspath, (path, archDesc, archDig, archStamp, archRess)) ->
-      checkContentsChangeLocal
-        currfspath path archDesc archDig archStamp archRess;
-      Lwt.return ())
-    
-let checkContentsChange root path archDesc archDig archStamp archRess =
-  checkContentsChangeOnHost root (path, archDesc, archDig, archStamp, archRess)
+  renameOnHost root (localPath, workingDir, pathOld, pathNew, ui, archOpt)
 
 (* ------------------------------------------------------------ *)
 
@@ -335,16 +319,103 @@ let setupTargetPathsLocal (fspath, path) =
 let setupTargetPaths =
   Remote.registerRootCmd "setupTargetPaths" setupTargetPathsLocal
 
+let rec createDirectories fspath localPath props =
+  match props with
+    [] ->
+      ()
+  | desc :: rem ->
+      match Path.deconstructRev localPath with
+        None ->
+          assert false
+      | Some (_, parentPath) ->
+          createDirectories fspath parentPath rem;
+          try
+            let absolutePath = Fspath.concat fspath parentPath in
+             Fs.mkdir absolutePath (Props.perms desc)
+            (* The directory may have already been created
+               if there are several paths with the same prefix *)
+          with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
+
+let setupTargetPathsAndCreateParentDirectoryLocal (fspath, (path, props)) =
+  let localPath = Update.translatePathLocal fspath path in
+  Util.convertUnixErrorsToTransient
+    "creating parent directories"
+    (fun () -> createDirectories fspath localPath props);
+  let (workingDir,realPath) = Fspath.findWorkingDir fspath localPath in
+  let tempPath = Os.tempPath ~fresh:false workingDir realPath in
+  Lwt.return (workingDir, realPath, tempPath, localPath)
+
+let setupTargetPathsAndCreateParentDirectory =
+  Remote.registerRootCmd "setupTargetPathsAndCreateParentDirectory"
+    setupTargetPathsAndCreateParentDirectoryLocal
+
 (* ------------------------------------------------------------ *)
 
-let makeSymlink =
-  Remote.registerRootCmd
-    "makeSymlink"
-    (fun (fspath, (workingDir, path, l)) ->
-       if Os.exists workingDir path then
-         Os.delete workingDir path;
-       Os.symlink workingDir path l;
-       Lwt.return ())
+let updateSourceArchiveLocal (fspathFrom, (localPathFrom, uiFrom, errPaths)) =
+  (* Archive update must be done first (before Stasher call) *)
+  let newArch = Update.updateArchive fspathFrom localPathFrom uiFrom in
+  (* We update the archive with what we were expected to copy *)
+  Update.replaceArchiveLocal fspathFrom localPathFrom newArch;
+  (* Then, we remove all pieces of which the copy failed *)
+  List.iter
+    (fun p ->
+       debug (fun () ->
+         Util.msg "Copy under %s/%s was aborted\n"
+           (Fspath.toDebugString fspathFrom) (Path.toString p));
+       Update.replaceArchiveLocal fspathFrom p Update.NoArchive)
+    errPaths;
+  Stasher.stashCurrentVersion fspathFrom localPathFrom None;
+  Lwt.return ()
+
+let updateSourceArchive =
+  Remote.registerRootCmd "updateSourceArchive" updateSourceArchiveLocal
+
+(* ------------------------------------------------------------ *)
+
+let deleteSpuriousChild fspathTo pathTo nm =
+  (* FIX: maybe we should turn them into Unison temporary files? *)
+  let path = (Path.child pathTo nm) in
+  debug (fun() -> Util.msg "Deleting spurious file %s/%s\n"
+                    (Fspath.toDebugString fspathTo) (Path.toString path));
+  Os.delete fspathTo path
+
+let rec deleteSpuriousChildrenRec fspathTo pathTo archChildren children =
+  match archChildren, children with
+    archNm :: archRem, nm :: rem ->
+      let c = Name.compare archNm nm in
+      if c < 0 then
+        deleteSpuriousChildrenRec fspathTo pathTo archRem children
+      else if c = 0 then
+        deleteSpuriousChildrenRec fspathTo pathTo archChildren rem
+      else begin
+        deleteSpuriousChild fspathTo pathTo nm;
+        deleteSpuriousChildrenRec fspathTo pathTo archChildren rem
+      end
+  | [], nm :: rem ->
+      deleteSpuriousChild fspathTo pathTo nm;
+      deleteSpuriousChildrenRec fspathTo pathTo [] rem
+  | _, [] ->
+      ()
+
+let deleteSpuriousChildrenLocal (_, (fspathTo, pathTo, archChildren)) =
+  deleteSpuriousChildrenRec
+    fspathTo pathTo archChildren
+    (List.sort Name.compare (Os.childrenOf fspathTo pathTo));
+  Lwt.return ()
+
+let deleteSpuriousChildren =
+  Remote.registerRootCmd "deleteSpuriousChildren" deleteSpuriousChildrenLocal
+
+let rec normalizePropsRec propsFrom propsTo =
+  match propsFrom, propsTo with
+    d :: r, d' :: r' -> normalizePropsRec r r'
+  | _, []            -> propsFrom
+  | [], _ :: _       -> assert false
+
+let normalizeProps propsFrom propsTo =
+  normalizePropsRec (Safelist.rev propsFrom) (Safelist.rev propsTo)
+
+(* ------------------------------------------------------------ *)
 
 let copyReg = Lwt_util.make_region 50
 
@@ -353,10 +424,13 @@ let copy
       rootFrom pathFrom   (* copy from here... *)
       uiFrom              (* (and then check that this updateItem still
                              describes the current state of the src replica) *)
+      propsFrom           (* the properties of the parent directories, in
+                             case we need to propagate them *)
       rootTo pathTo       (* ...to here *)
       uiTo                (* (but, before committing the copy, check that
                              this updateItem still describes the current
                              state of the target replica) *)
+      propsTo             (* the properties of the parent directories *)
       id =                (* for progress display *)
   debug (fun() ->
     Util.msg
@@ -364,8 +438,25 @@ let copy
       (root2string rootFrom) (Path.toString pathFrom)
       (root2string rootTo) (Path.toString pathTo));
   (* Calculate target paths *)
-  setupTargetPaths rootTo pathTo
-     >>= (fun (workingDir, realPathTo, tempPathTo, localPathTo) ->
+  setupTargetPathsAndCreateParentDirectory rootTo
+    (pathTo, normalizeProps propsFrom propsTo)
+     >>= fun (workingDir, realPathTo, tempPathTo, localPathTo) ->
+  (* When in Unicode case-insensitive mode, we want to create files
+     with NFC normal-form filenames. *)
+  let realPathTo =
+    match update with
+      `Update _ ->
+        realPathTo
+    | `Copy ->
+        match Path.deconstructRev realPathTo with
+          None ->
+            assert false
+        | Some (name, parentPath) ->
+            Path.child parentPath (Name.normalize name)
+  in
+  (* Calculate source path *)
+  Update.translatePath rootFrom pathFrom >>= fun localPathFrom ->
+  let errors = ref [] in
   (* Inner loop for recursive copy... *)
   let rec copyRec pFrom      (* Path to copy from *)
                   pTo        (* (Temp) path to copy to *)
@@ -377,92 +468,111 @@ let copy
       Util.msg "copyRec %s --> %s  (really to %s)\n"
         (Path.toString pFrom) (Path.toString pTo)
         (Path.toString realPTo));
-    match f with
-      Update.ArchiveFile (desc, dig, stamp, ress) ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          Abort.check id;
-          Copy.file
-            rootFrom pFrom rootTo workingDir pTo realPTo
-            update desc dig ress id
-            >>= (fun () ->
-          checkContentsChange rootFrom pFrom desc dig stamp ress))
-    | Update.ArchiveSymlink l ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          debug (fun() -> Util.msg "Making symlink %s/%s -> %s\n"
-                            (root2string rootTo) (Path.toString pTo) l);
-          Abort.check id;
-          makeSymlink rootTo (workingDir, pTo, l))
-    | Update.ArchiveDir (desc, children) ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          debug (fun() -> Util.msg "Creating directory %s/%s\n"
-            (root2string rootTo) (Path.toString pTo));
-          mkdir rootTo workingDir pTo) >>= (fun initialDesc ->
-        Abort.check id;
-        let runningThreads = ref [] in
-        Lwt.catch
-          (fun () ->
-             Update.NameMap.iter
-               (fun name child ->
-                  let thread =
+    Lwt.catch
+      (fun () ->
+         match f with
+           Update.ArchiveFile (desc, dig, stamp, ress) ->
+             Lwt_util.run_in_region copyReg 1 (fun () ->
+               Abort.check id;
+               let stmp =
+                 if Update.useFastChecking () then Some stamp else None in
+               Copy.file
+                 rootFrom pFrom rootTo workingDir pTo realPTo
+                 update desc dig stmp ress id
+                 >>= fun info ->
+               let ress' = Osx.stamp info.Fileinfo.osX in
+               Lwt.return
+                 (Update.ArchiveFile (Props.override info.Fileinfo.desc desc,
+                                      dig, Fileinfo.stamp info, ress'),
+                  []))
+         | Update.ArchiveSymlink l ->
+             Lwt_util.run_in_region copyReg 1 (fun () ->
+               debug (fun() -> Util.msg "Making symlink %s/%s -> %s\n"
+                                 (root2string rootTo) (Path.toString pTo) l);
+               Abort.check id;
+               makeSymlink rootTo (workingDir, pTo, l) >>= fun () ->
+               Lwt.return (f, []))
+         | Update.ArchiveDir (desc, children) ->
+             Lwt_util.run_in_region copyReg 1 (fun () ->
+               debug (fun() -> Util.msg "Creating directory %s/%s\n"
+                 (root2string rootTo) (Path.toString pTo));
+               mkdirOnRoot rootTo (workingDir, pTo))
+                 >>= fun (dirAlreadyExisting, initialDesc) ->
+             Abort.check id;
+             (* We start a thread for each child *)
+             let childThreads =
+               Update.NameMap.mapi
+                 (fun name child ->
+                    let nameTo = Name.normalize name in
                     copyRec (Path.child pFrom name)
-                            (Path.child pTo name)
-                            (Path.child realPTo name)
-                            child
+                            (Path.child pTo nameTo)
+                            (Path.child realPTo nameTo)
+                            child)
+                 children
+             in
+             (* We collect the thread results *)
+             Update.NameMap.fold
+               (fun nm childThr remThr ->
+                  childThr >>= fun (arch, paths) ->
+                  remThr >>= fun (children, pathl, error) ->
+                  let childErr = arch = Update.NoArchive in
+                  let children =
+                    if childErr then children else
+                    Update.NameMap.add nm arch children
                   in
-                  runningThreads := thread :: !runningThreads)
-               children;
-             Lwt_util.join !runningThreads)
-          (fun e ->
-             (* If one thread fails (in a non-fatal way), we wait for
-                all other threads to terminate before continuing *)
-             if not (Abort.testException e) then Abort.file id;
-             match e with
-               Util.Transient _ ->
-                 let e = ref e in
-                 Lwt_util.iter
-                   (fun act ->
-                      Lwt.catch
-                         (fun () -> act)
-                         (fun e' ->
-                            match e' with
-                              Util.Transient _ ->
-                                if Abort.testException !e then e := e';
-                                Lwt.return ()
-                            | _                ->
-                                Lwt.fail e'))
-                   !runningThreads >>= (fun () ->
-                 Lwt.fail !e)
-             | _ ->
-                 Lwt.fail e) >>= (fun () ->
-        Lwt_util.run_in_region copyReg 1 (fun () ->
-          (* We use the actual file permissions so as to preserve
-             inherited bits *)
-          Abort.check id;
-          setPropRemote rootTo
-            (workingDir, pTo, `Set initialDesc, desc))))
-    | Update.NoArchive ->
-        assert false
+                  Lwt.return (children, paths :: pathl, error || childErr))
+               childThreads
+               (Lwt.return (Update.NameMap.empty, [], false))
+               >>= fun (newChildren, pathl, childError) ->
+             begin if dirAlreadyExisting || childError then
+               let childNames =
+                 Update.NameMap.fold (fun nm _ l -> nm :: l) newChildren [] in
+               deleteSpuriousChildren rootTo (workingDir, pTo, childNames)
+             else
+               Lwt.return ()
+             end >>= fun () ->
+             Lwt_util.run_in_region copyReg 1 (fun () ->
+               (* We use the actual file permissions so as to preserve
+                  inherited bits *)
+               setDirPropOnRoot rootTo
+                 (workingDir, pTo, initialDesc, desc)) >>= fun () ->
+             Lwt.return (Update.ArchiveDir (desc, newChildren),
+                         List.flatten pathl)
+         | Update.NoArchive ->
+             assert false)
+      (fun e ->
+         match e with
+           Util.Transient _ ->
+             if not (Abort.testException e) then begin
+               Abort.file id;
+               errors := e :: !errors
+             end;
+             Lwt.return (Update.NoArchive, [pFrom])
+         | _ ->
+             Lwt.fail e)
   in
-  (* BCP (6/08): We used to have an unwindProtect here that would *always* do the
-     final performDelete.  This was removed so that failed partial transfers can
-     be restarted.  We instead remove individual failing files (not
-     directories) inside replaceArchive. *)
-  Update.transaction (fun id ->
-  (* Update the archive on the source replica (but don't commit
-     the changes yet) and return the part of the new archive
-     corresponding to this path *)
-  Update.updateArchive rootFrom pathFrom uiFrom id
-    >>= (fun (localPathFrom, archFrom) ->
-  let make_backup =
-    (* Perform (asynchronously) a backup of the destination files *)
-    Update.updateArchive rootTo pathTo uiTo id
-  in
-  copyRec localPathFrom tempPathTo realPathTo archFrom >>= (fun () ->
-  make_backup >>= (fun _ ->
-  Update.replaceArchive
-    rootTo pathTo (Some (workingDir, tempPathTo))
-    archFrom id true true  >>= (fun _ ->
-  rename rootTo pathTo localPathTo workingDir tempPathTo realPathTo uiTo))))))
+  (* Compute locally what we need to propagate *)
+  let rootLocal = List.hd (Globals.rootsInCanonicalOrder ()) in
+  let localArch =
+    Update.updateArchive (snd rootLocal) localPathFrom uiFrom in
+  copyRec localPathFrom tempPathTo realPathTo localArch
+    >>= fun (archTo, errPaths) ->
+  if archTo = Update.NoArchive then
+    (* We were not able to transfer anything *)
+    Lwt.fail (List.hd !errors)
+  else begin
+    (* Rename the files to their final location and then update the
+       archive on the destination replica *)
+    rename rootTo localPathTo workingDir tempPathTo realPathTo uiTo
+      (Some archTo) >>= fun () ->
+    (* Update the archive on the source replica
+       FIX: we could reuse localArch if rootFrom is the same as rootLocal *)
+    updateSourceArchive rootFrom (localPathFrom, uiFrom, errPaths) >>= fun () ->
+    (* Return the first error, if any *)
+    match Safelist.rev !errors with
+      e :: _ -> Lwt.fail e
+    | []     -> Lwt.return ()
+  end
 
 (* ------------------------------------------------------------ *)
 
@@ -470,7 +580,7 @@ let (>>=) = Lwt.bind
 
 let diffCmd =
   Prefs.createString "diff" "diff -u CURRENT2 CURRENT1"
-    "!command for showing differences between files"
+    "!set command for showing differences between files"
     ("This preference can be used to control the name and command-line "
      ^ "arguments of the system "
      ^ "utility used to generate displays of file differences.  The default "
@@ -491,15 +601,13 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
     let cmd =
       if Util.findsubstring "CURRENT1" (Prefs.read diffCmd) = None then
           (Prefs.read diffCmd)
-        ^ " " ^ (Os.quotes (Fspath.toString fspath1))
-        ^ " " ^ (Os.quotes (Fspath.toString fspath2))
+        ^ " " ^ (Fspath.quotes fspath1)
+        ^ " " ^ (Fspath.quotes fspath2)
       else
         Util.replacesubstrings (Prefs.read diffCmd)
-          ["CURRENT1", Os.quotes (Fspath.toString fspath1);
-           "CURRENT2", Os.quotes (Fspath.toString fspath2)] in
-    (* Doesn't seem to work well on Windows! 
-       let c = Lwt_unix.run (Lwt_unix.open_process_in cmd) in *)
-    let c = Unix.open_process_in
+          ["CURRENT1", Fspath.quotes fspath1;
+           "CURRENT2", Fspath.quotes fspath2] in
+    let c = System.open_process_in
       (if Util.osType = `Win32 && not Util.isCygwin then
         (* BCP: Proposed by Karl M. to deal with the standard windows 
            command processor's weird treatment of spaces and quotes: *)
@@ -507,7 +615,7 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
        else
          cmd) in
     showDiff cmd (External.readChannelTillEof c);
-    ignore (Unix.close_process_in c) in
+    ignore (System.close_process_in c) in
   let (desc1, fp1, ress1, desc2, fp2, ress2) = Common.fileInfos ui1 ui2 in
   match root1,root2 with
     (Local,fspath1),(Local,fspath2) ->
@@ -531,7 +639,8 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
              (Update.translatePath root2 path2 >>= (fun path2 ->
               Copy.file root2 path2 root1 workingDir tmppath realPath
                 `Copy (Props.setLength Props.fileSafe (Props.length desc2))
-                 fp2 ress2 id));
+                 fp2 None ress2 id) >>= fun info ->
+              Lwt.return ());
            displayDiff
 	     (Fspath.concat workingDir realPath)
              (Fspath.concat workingDir tmppath);
@@ -549,7 +658,8 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
               (* Note that we don't need the resource fork *)
               Copy.file root1 path1 root2 workingDir tmppath realPath
                 `Copy (Props.setLength Props.fileSafe (Props.length desc1))
-                 fp1 ress1 id));
+                 fp1 None ress1 id >>= fun info ->
+              Lwt.return ()));
            displayDiff
              (Fspath.concat workingDir tmppath)
 	     (Fspath.concat workingDir realPath);
@@ -562,12 +672,12 @@ let rec diff root1 path1 ui1 root2 path2 ui2 showDiff id =
 
 (* Taken from ocamltk/jpf/fileselect.ml *)
 let get_files_in_directory dir =
-  let dirh = Fspath.opendir (Fspath.canonize (Some dir)) in
+  let dirh = System.opendir dir in
   let files = ref [] in
   begin try
-    while true do files := Unix.readdir dirh :: !files done
+    while true do files := dirh.System.readdir () :: !files done
   with End_of_file ->
-    Unix.closedir dirh
+    dirh.System.closedir ()
   end;
   Sort.list (<) !files
 
@@ -635,9 +745,9 @@ let copyBack fspathFrom pathFrom rootTo pathTo propsTo uiTo id =
   let newprops = Props.setLength propsTo (Props.length info.Fileinfo.desc) in
   Copy.file
     (Local, fspathFrom) pathFrom rootTo workingDirForCopy tempPathTo realPathTo
-    `Copy newprops fp stamp id >>= (fun () ->
-      rename rootTo pathTo localPathTo workingDirForCopy tempPathTo realPathTo
-        uiTo ))
+    `Copy newprops fp None stamp id >>= fun info ->
+  rename rootTo localPathTo workingDirForCopy tempPathTo realPathTo
+    uiTo None)
     
 let keeptempfilesaftermerge =   
   Prefs.createBool
@@ -648,20 +758,20 @@ let showStatus = function
   | Unix.WSIGNALED i -> Printf.sprintf "killed with signal %d" i
   | Unix.WSTOPPED i -> Printf.sprintf "stopped with signal %d" i
 
-let merge root1 root2 path id ui1 ui2 showMergeFn =
+let merge root1 path1 ui1 root2 path2 ui2 id showMergeFn =
   debug (fun () -> Util.msg "merge path %s between roots %s and %s\n"
-      (Path.toString path) (root2string root1) (root2string root2));
+      (Path.toString path1) (root2string root1) (root2string root2));
 
   (* The following assumes root1 is always local: switch them if needed to make this so *)
-  let (root1,root2) = 
+  let (root1,path1,ui1,root2,path2,ui2) = 
     match root1 with
-      (Local,fspath1) -> (root1,root2)
-    | _ -> (root2,root1) in
+      (Local,fspath1) -> (root1,path1,ui1,root2,path2,ui2)
+    | _ -> (root2,path2,ui2,root1,path1,ui1) in
 
   let (localPath1, (workingDirForMerge, basep), fspath1) =
     match root1 with
       (Local,fspath1) ->
-        let localPath1 = Update.translatePathLocal fspath1 path in
+        let localPath1 = Update.translatePathLocal fspath1 path1 in
         (localPath1, Fspath.findWorkingDir fspath1 localPath1, fspath1)
     | _ -> assert false in
   
@@ -700,12 +810,14 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
       Lwt_unix.run
 	(Copy.file
            root1 localPath1 root1 workingDirForMerge working1 basep
-           `Copy desc1 fp1 ress1 id);
+           `Copy desc1 fp1 None ress1 id >>= fun info ->
+         Lwt.return ());
       Lwt_unix.run
-	(Update.translatePath root2 path >>= (fun path ->
+	(Update.translatePath root2 path2 >>= (fun path2 ->
 	  Copy.file
-	    root2 path root1 workingDirForMerge working2 basep
-	    `Copy desc2 fp2 ress2 id));
+	    root2 path2 root1 workingDirForMerge working2 basep
+	    `Copy desc2 fp2 None ress2 id) >>= fun info ->
+         Lwt.return ());
       
       (* retrieve the archive for this file, if any *)
       let arch =
@@ -752,16 +864,17 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
       let info2 = Fileinfo.get false workingDirForMerge working2 in
       let dig2 = Os.fingerprint workingDirForMerge working2 info2 in
       let cmd = formatMergeCmd
-          path
-          (Os.quotes (Fspath.concatToString workingDirForMerge working1))
-          (Os.quotes (Fspath.concatToString workingDirForMerge working2))
-          (match arch with None -> None | Some f -> Some(Os.quotes (Fspath.toString f)))
-          (Os.quotes (Fspath.concatToString workingDirForMerge new1))
-          (Os.quotes (Fspath.concatToString workingDirForMerge new2))
-          (Os.quotes (Fspath.concatToString workingDirForMerge newarch)) in
+          path1
+          (Fspath.quotes (Fspath.concat workingDirForMerge working1))
+          (Fspath.quotes (Fspath.concat workingDirForMerge working2))
+          (match arch with None -> None | Some f -> Some(Fspath.quotes f))
+          (Fspath.quotes (Fspath.concat workingDirForMerge new1))
+          (Fspath.quotes (Fspath.concat workingDirForMerge new2))
+          (Fspath.quotes (Fspath.concat workingDirForMerge newarch)) in
       Trace.log (Printf.sprintf "Merge command: %s\n" cmd);
       
-      let returnValue, mergeResultLog = External.runExternalProgram cmd in
+      let returnValue, mergeResultLog =
+        Lwt_unix.run (External.runExternalProgram cmd) in
       
       Trace.log (Printf.sprintf "Merge result (%s):\n%s\n"
                    (showStatus returnValue) mergeResultLog);
@@ -775,7 +888,7 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
          the displaying from the querying... *)
       if not
           (showMergeFn
-             (Printf.sprintf "Results of merging %s" (Path.toString path))
+             (Printf.sprintf "Results of merging %s" (Path.toString path1))
              mergeResultLog) then
         raise (Util.Transient ("Merge command canceled by the user"));
       
@@ -785,10 +898,10 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
 
       (* Check which files got created by the merge command and do something appropriate
          with them *)
-      debug (fun()-> Util.msg "New file 1 = %s\n" (Fspath.concatToString workingDirForMerge new1));
-      let new1exists = Sys.file_exists (Fspath.concatToString workingDirForMerge new1) in
-      let new2exists = Sys.file_exists (Fspath.concatToString workingDirForMerge new2) in
-      let newarchexists = Sys.file_exists (Fspath.concatToString workingDirForMerge newarch) in
+      debug (fun()-> Util.msg "New file 1 = %s\n" (Fspath.toDebugString (Fspath.concat workingDirForMerge new1)));
+      let new1exists = Fs.file_exists (Fspath.concat workingDirForMerge new1) in
+      let new2exists = Fs.file_exists (Fspath.concat workingDirForMerge new2) in
+      let newarchexists = Fs.file_exists (Fspath.concat workingDirForMerge newarch) in
       
       if new1exists && new2exists then begin
         if newarchexists then 
@@ -831,8 +944,8 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
 	  
       else if (not new1exists) && (not new2exists) && (not newarchexists) then begin
         say (fun () -> Util.msg "No outputs detected \n");
-        let working1_still_exists = Sys.file_exists (Fspath.concatToString workingDirForMerge working1) in
-        let working2_still_exists = Sys.file_exists (Fspath.concatToString workingDirForMerge working2) in
+        let working1_still_exists = Fs.file_exists (Fspath.concat workingDirForMerge working1) in
+        let working2_still_exists = Fs.file_exists (Fspath.concat workingDirForMerge working2) in
 	
         if working1_still_exists && working2_still_exists then begin
           say (fun () -> Util.msg "No output from merge cmd and both original files are still present\n");
@@ -893,32 +1006,26 @@ let merge root1 root2 path id ui1 ui2 showMergeFn =
 
       Lwt_unix.run
 	(debug (fun () -> Util.msg "Committing results of merge\n");
-         copyBack workingDirForMerge working1 root1 path desc1 ui1 id >>= (fun () ->
-         copyBack workingDirForMerge working2 root2 path desc2 ui2 id >>= (fun () ->
+         copyBack workingDirForMerge working1 root1 path1 desc1 ui1 id >>= (fun () ->
+         copyBack workingDirForMerge working2 root2 path2 desc2 ui2 id >>= (fun () ->
          let arch_fspath = Fspath.concat workingDirForMerge workingarch in
-         if (Sys.file_exists (Fspath.toString arch_fspath)) then begin
+         if Fs.file_exists arch_fspath then begin
            debug (fun () -> Util.msg "Updating unison archives for %s to reflect results of merge\n"
-                   (Path.toString path));
-           if not (Stasher.shouldBackupCurrent path) then
-             Util.msg "Warning: 'backupcurrent' is not set for path %s\n" (Path.toString path);
+                   (Path.toString path1));
+           if not (Stasher.shouldBackupCurrent path1) then
+             Util.msg "Warning: 'backupcurrent' is not set for path %s\n" (Path.toString path1);
            Stasher.stashCurrentVersion workingDirForMerge localPath1 (Some workingarch);
            let infoarch = Fileinfo.get false workingDirForMerge workingarch in
            let dig = Os.fingerprint arch_fspath Path.empty infoarch in
            debug (fun () -> Util.msg "New digest is %s\n" (Os.fullfingerprint_to_string dig));
            let new_archive_entry =
              Update.ArchiveFile
-               (Props.get (Fspath.stat arch_fspath) infoarch.osX, dig,
+               (Props.get (Fs.stat arch_fspath) infoarch.osX, dig,
                 Fileinfo.stamp (Fileinfo.get true arch_fspath Path.empty),
                 Osx.stamp infoarch.osX) in
-           Update.transaction
-             (fun transid ->
-                Update.replaceArchive root1 path
-                 (Some(workingDirForMerge, workingarch))
-                 new_archive_entry transid false false >>= (fun _ ->
-                Update.replaceArchive root2 path
-                  (Some(workingDirForMerge, workingarch))
-                  new_archive_entry transid false false >>= (fun _ ->
-                Lwt.return ())))
+           Update.replaceArchive root1 path1 new_archive_entry >>= fun _ ->
+           Update.replaceArchive root2 path2 new_archive_entry >>= fun _ ->
+           Lwt.return ()
          end else 
            (Lwt.return ()) )))) )
     (fun _ ->

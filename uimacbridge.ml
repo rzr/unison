@@ -18,7 +18,7 @@ type stateItem = { mutable ri : reconItem;
                    mutable statusMessage : string option };;
 let theState = ref [| |];;
 
-let unisonDirectory() = Fspath.toString Os.unisonDir
+let unisonDirectory() = System.fspathToPrintString Os.unisonDir
 ;;
 Callback.register "unisonDirectory" unisonDirectory;;
  
@@ -61,7 +61,7 @@ let unisonInit0() =
      this in Util just because the Prefs module lives below the Os module in the
      dependency hierarchy, so Prefs can't call Os directly.) *)
   Util.supplyFileInUnisonDirFn 
-    (fun n -> Fspath.toString (Os.fileInUnisonDir(n)));
+    (fun n -> Os.fileInUnisonDir(n));
   (* Display status in GUI instead of on stderr *)
   let formatStatus major minor = (Util.padto 30 (major ^ "  ")) ^ minor in
   Trace.messageDisplayer := displayStatus;
@@ -79,8 +79,8 @@ let unisonInit0() =
       match Util.StringMap.find "rest" args with
         [] -> ()
       | [profile] -> clprofile := Some profile
-      | [root1;root2] -> Globals.setRawRoots [root1;root2]
-      | [root1;root2;profile] ->
+      | [root2;root1] -> Globals.setRawRoots [root1;root2]
+      | [root2;root1;profile] ->
           Globals.setRawRoots [root1;root2];
           clprofile := Some profile
       | _ ->
@@ -107,8 +107,9 @@ let unisonInit0() =
     None -> ()
   | Some n ->
       let f = Prefs.profilePathname n in
-      if not(Sys.file_exists f)
-      then (Printf.eprintf "Profile %s does not exist" f;
+      if not(System.file_exists f)
+      then (Printf.eprintf "Profile %s does not exist"
+              (System.fspathToPrintString f);
             exit 1)
   end;
   !clprofile
@@ -132,7 +133,7 @@ let unisonInit1 profileName =
   (* If the profile does not exist, create an empty one (this should only
      happen if the profile is 'default', since otherwise we will already
      have checked that the named one exists). *)
-   if not(Sys.file_exists (Prefs.profilePathname profileName)) then
+   if not(System.file_exists (Prefs.profilePathname profileName)) then
      Prefs.addComment "Unison preferences file";
 
   (* Load the profile *)
@@ -152,6 +153,9 @@ let unisonInit1 profileName =
   Trace.debug "" (fun() -> Prefs.dumpPrefsToStderr() );
 
   (* FIX: if no roots, ask the user *)
+
+  Recon.checkThatPreferredRootIsValid();
+
   let localRoots,remoteRoots =
     Safelist.partition
       (function Clroot.ConnectLocal _ -> true | _ -> false)
@@ -206,10 +210,8 @@ let unisonInit2 () =
        Printf.eprintf "\n"
     );
 
-  Recon.checkThatPreferredRootIsValid();
-
   Lwt_unix.run
-    (Uicommon.checkCaseSensitivity () >>=
+    (Uicommon.validateAndFixupPrefs () >>=
      Globals.propagatePrefs);
 
   (* Initializes some backups stuff according to the preferences just loaded from the profile.
@@ -260,15 +262,15 @@ Callback.register "unisonInit2" unisonInit2;;
 
 let unisonRiToDetails ri =
   match ri.whatHappened with
-    Some (Util.Failed s) -> (Path.toString ri.ri.path) ^ "\n" ^ s
-  | _ -> (Path.toString ri.ri.path) ^ "\n" ^ (Uicommon.details2string ri.ri "  ");;
+    Some (Util.Failed s) -> (Path.toString ri.ri.path1) ^ "\n" ^ s
+  | _ -> (Path.toString ri.ri.path1) ^ "\n" ^ (Uicommon.details2string ri.ri "  ");;
 Callback.register "unisonRiToDetails" unisonRiToDetails;;
 
-let unisonRiToPath ri = Path.toString ri.ri.path;;
+let unisonRiToPath ri = Path.toString ri.ri.path1;;
 Callback.register "unisonRiToPath" unisonRiToPath;;
 
-let rcToString (_,status,_,_) =
-  match status with
+let rcToString rc =
+  match rc.status with
     `Deleted      -> "Deleted"
   | `Modified     -> "Modified"
   | `PropsChanged -> "PropsChanged"
@@ -277,12 +279,12 @@ let rcToString (_,status,_,_) =
 let unisonRiToLeft ri =
   match ri.ri.replicas with
     Problem _ -> ""
-  | Different(rc,_,_,_) -> rcToString rc;;
+  | Different diff -> rcToString diff.rc1;;
 Callback.register "unisonRiToLeft" unisonRiToLeft;;
 let unisonRiToRight ri =
   match ri.ri.replicas with
     Problem _ -> ""
-  | Different(_,rc,_,_) -> rcToString rc;;
+  | Different diff -> rcToString diff.rc2;;
 Callback.register "unisonRiToRight" unisonRiToRight;;
 
 let direction2niceString = function (* from Uicommon where it's not exported *)
@@ -293,28 +295,28 @@ let direction2niceString = function (* from Uicommon where it's not exported *)
 let unisonRiToDirection ri =
   match ri.ri.replicas with
     Problem _ -> "XXXXX"
-  | Different(_,_,d,_) -> direction2niceString !d;;
+  | Different diff -> direction2niceString diff.direction;;
 Callback.register "unisonRiToDirection" unisonRiToDirection;;
 
 let unisonRiSetLeft ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Replica2ToReplica1;;
+  | Different diff -> diff.direction <- Replica2ToReplica1;;
 Callback.register "unisonRiSetLeft" unisonRiSetLeft;;
 let unisonRiSetRight ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Replica1ToReplica2;;
+  | Different diff -> diff.direction <- Replica1ToReplica2;;
 Callback.register "unisonRiSetRight" unisonRiSetRight;;
 let unisonRiSetConflict ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Conflict;;
+  | Different diff -> diff.direction <- Conflict;;
 Callback.register "unisonRiSetConflict" unisonRiSetConflict;;
 let unisonRiSetMerge ri =
   match ri.ri.replicas with
     Problem _ -> ()
-  | Different(_,_,d,_) -> d := Merge;;
+  | Different diff -> diff.direction <- Merge;;
 Callback.register "unisonRiSetMerge" unisonRiSetMerge;;
 let unisonRiForceOlder ri =
   Recon.setDirection ri.ri `Older `Force;;
@@ -327,7 +329,7 @@ let unisonRiToProgress ri =
   match (ri.statusMessage, ri.whatHappened,ri.ri.replicas) with
     (None,None,_) -> ""
   | (Some s,None,_) -> s
-  | (_,_,Different(_,_,{contents=Conflict},_)) -> ""
+  | (_,_,Different {direction = Conflict}) -> ""
   | (_,_,Problem _) -> ""
   | (_,Some Util.Succeeded,_) -> "done"
   | (_,Some (Util.Failed s),_) -> "FAILED";;
@@ -409,11 +411,11 @@ let unisonSynchronize () =
 Callback.register "unisonSynchronize" unisonSynchronize;;
 
 let unisonIgnorePath si =
-  Uicommon.addIgnorePattern (Uicommon.ignorePath si.ri.path);;
+  Uicommon.addIgnorePattern (Uicommon.ignorePath si.ri.path1);;
 let unisonIgnoreExt si =
-  Uicommon.addIgnorePattern (Uicommon.ignoreExt si.ri.path);;
+  Uicommon.addIgnorePattern (Uicommon.ignoreExt si.ri.path1);;
 let unisonIgnoreName si =
-  Uicommon.addIgnorePattern (Uicommon.ignoreName si.ri.path);;
+  Uicommon.addIgnorePattern (Uicommon.ignoreName si.ri.path1);;
 Callback.register "unisonIgnorePath" unisonIgnorePath;;
 Callback.register "unisonIgnoreExt"  unisonIgnoreExt;;
 Callback.register "unisonIgnoreName" unisonIgnoreName;;
@@ -427,7 +429,7 @@ let unisonUpdateForIgnore i =
   let num = ref(-1) in
   let newI = ref None in
   (* FIX: we should actually test whether any prefix is now ignored *)
-  let keep s = not (Globals.shouldIgnore s.ri.path) in
+  let keep s = not (Globals.shouldIgnore s.ri.path1) in
   for j = 0 to (Array.length !theState - 1) do
     let s = !theState.(j) in
     if keep s then begin
@@ -468,12 +470,12 @@ Callback.register "unisonSecondRootString" unisonSecondRootString;;
    the current setting is Conflict *)
 let unisonRiIsConflict ri =
   match ri.ri.replicas with
-  | Different(_,_,_,Conflict) -> true
+  | Different {default_direction = Conflict} -> true
   | _ -> false;;
 Callback.register "unisonRiIsConflict" unisonRiIsConflict;;
 let unisonRiRevert ri =
   match ri.ri.replicas with
-  | Different(_,_,d,d0) -> d := d0
+  | Different diff -> diff.direction <- diff.default_direction
   | _ -> ();;
 Callback.register "unisonRiRevert" unisonRiRevert;;
 

@@ -26,9 +26,11 @@ val copy :
   -> Common.root                (* from what root *)
   -> Path.t                     (* from what path *)
   -> Common.updateItem          (* source updates *)
+  -> Props.t list               (* properties of parent directories *)
   -> Common.root                (* to what root *)
   -> Path.t                     (* to what path *)
   -> Common.updateItem          (* dest. updates *)
+  -> Props.t list               (* properties of parent directories *)
   -> Uutil.File.t               (* id for showing progress of transfer *)
   -> unit Lwt.t
 
@@ -63,19 +65,17 @@ val diff :
 (* terminated) synchronizations                                              *)
 val processCommitLogs : unit -> unit
 
-(* List the files in a directory matching a pattern.  (It would be better
-   to use fspath, etc., here instead of string) *)
-val ls : string -> string -> string list
-
-val get_files_in_directory : string -> string list
+(* List the files in a directory matching a pattern. *)
+val ls : System.fspath -> string -> string list
 
 val merge :
      Common.root                  (* first root *)
+  -> Path.t                       (* path to merge *)
+  -> Common.updateItem            (* differences from the archive *)
   -> Common.root                  (* second root *)
   -> Path.t                       (* path to merge *)
-  -> Uutil.File.t                 (* id for showing progress of transfer *)
   -> Common.updateItem            (* differences from the archive *)
-  -> Common.updateItem            (* ... *)
+  -> Uutil.File.t                 (* id for showing progress of transfer *)
   -> (string->string->bool)       (* function to display the (title and) result 
 				     and ask user for confirmation (when -batch 
 				     is true, the function should not ask any 

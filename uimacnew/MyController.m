@@ -11,6 +11,11 @@
 #import "ProgressCell.h"
 #import "Bridge.h"
 
+/* The following two define are a workaround for an incompatibility between
+ Ocaml 3.11.2 (and older) and the Mac OS X header files */
+#define uint64 uint64_caml
+#define int64 int64_caml
+
 #define CAML_NAME_SPACE
 #include <caml/callback.h>
 #include <caml/alloc.h>
@@ -28,6 +33,12 @@ static MyController *me; // needed by reloadTable and displayStatus, below
 static int unset = 0;
 static int dontAsk = 1;
 static int doAsk = 2;
+
+// BCP (11/09): Added per Onne Gorter:
+// if user closes main window, terminate app, instead of keeping an empty app around with no window
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)theApplication {
+  return YES;
+}
 
 - (id)init
 {
@@ -68,7 +79,7 @@ static int doAsk = 2;
     [[tableView tableColumnWithIdentifier:@"path"] setDataCell:[[[ImageAndTextCell alloc] init] autorelease]];
 
 	// Custom progress cell
-	ProgressCell *progressCell = [[ProgressCell alloc] init];
+	ProgressCell *progressCell = [[[ProgressCell alloc] init] autorelease];
 	[[tableView tableColumnWithIdentifier:@"percentTransferred"] setDataCell:progressCell];
 	
     /* Set up the version string in the about box.  We use a custom
@@ -162,8 +173,7 @@ static int doAsk = 2;
 }
 
 /* Only valid once a profile has been selected */
-- (NSString *)profile
-{
+- (NSString *)profile {
     return myProfile;
 }
 
@@ -172,8 +182,7 @@ static int doAsk = 2;
     [aProfile retain];
     [myProfile release];
     myProfile = aProfile;
-    [mainWindow setTitle:
-        [NSString stringWithFormat:@"Unison: %@", myProfile]];
+    [mainWindow setTitle: [NSString stringWithFormat:@"Unison: %@", myProfile]];
 }
 
 - (IBAction)restartButton:(id)sender
@@ -213,7 +222,7 @@ static int doAsk = 2;
 {
 	[tableView reloadData]; 
 	if (shouldResetSelection) {
-		[tableView selectRow:0 byExtendingSelection:NO];
+		[tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
 		shouldResetSelection = NO;
 	}
 	[updatesView setNeedsDisplay:YES];	    
@@ -264,6 +273,7 @@ static int doAsk = 2;
 
 CAMLprim value unisonInit1Complete(value v)
 {
+  id pool = [[NSAutoreleasePool alloc] init];
     if (v == Val_unit) {
         NSLog(@"Connected.");
 		[me->preconn release];
@@ -274,7 +284,7 @@ CAMLprim value unisonInit1Complete(value v)
 		me->preconn = [[OCamlValue alloc] initWithValue:Field(v,0)]; // value of Some
 		[me performSelectorOnMainThread:@selector(unisonInit1Complete:) withObject:nil waitUntilDone:FALSE]; 
 	}
-
+  [pool release];
     return Val_unit;
 }
 
@@ -306,7 +316,7 @@ CAMLprim value unisonInit1Complete(value v)
 {
     // FIX: some prompts don't ask for password, need to look at it
     NSLog(@"Got the prompt: '%@'",prompt);
-    if ((int)ocamlCall("iS", "unisonPasswordMsg", prompt)) {
+    if ((long)ocamlCall("iS", "unisonPasswordMsg", prompt)) {
         [passwordPrompt setStringValue:@"Please enter your password"];
         [NSApp beginSheet:passwordWindow
             modalForWindow:mainWindow
@@ -315,7 +325,7 @@ CAMLprim value unisonInit1Complete(value v)
             contextInfo:nil];
         return;
     }
-    if ((int)ocamlCall("iS", "unisonPassphraseMsg", prompt)) {
+    if ((long)ocamlCall("iS", "unisonPassphraseMsg", prompt)) {
         [passwordPrompt setStringValue:@"Please enter your passphrase"];
         [NSApp beginSheet:passwordWindow
             modalForWindow:mainWindow
@@ -324,7 +334,7 @@ CAMLprim value unisonInit1Complete(value v)
             contextInfo:nil];
         return;
     }
-    if ((int)ocamlCall("iS", "unisonAuthenticityMsg", prompt)) {
+    if ((long)ocamlCall("iS", "unisonAuthenticityMsg", prompt)) {
         int i = NSRunAlertPanel(@"New host",prompt,@"Yes",@"No",nil);
         if (i == NSAlertDefaultReturn) {
 			ocamlCall("x@s", "openConnectionReply", preconn, "yes");
@@ -462,7 +472,9 @@ CAMLprim value unisonInit1Complete(value v)
 
 CAMLprim value unisonInit2Complete(value v)
 {
+  id pool = [[NSAutoreleasePool alloc] init];
     [me performSelectorOnMainThread:@selector(afterUpdate:) withObject:[[OCamlValue alloc] initWithValue:v] waitUntilDone:FALSE]; 
+  [pool release];
     return Val_unit;
 }
 
@@ -498,7 +510,9 @@ CAMLprim value unisonInit2Complete(value v)
 
 CAMLprim value syncComplete()
 {
+  id pool = [[NSAutoreleasePool alloc] init];
     [me performSelectorOnMainThread:@selector(afterSync:) withObject:nil waitUntilDone:FALSE]; 
+  [pool release];
     return Val_unit;
 }
 
@@ -513,10 +527,12 @@ CAMLprim value syncComplete()
 
 CAMLprim value reloadTable(value row)
 {
+  id pool = [[NSAutoreleasePool alloc] init];
 	// NSLog(@"OCaml says... ReloadTable: %i", Int_val(row));
 	NSNumber *num = [[NSNumber alloc] initWithInt:Int_val(row)];
     [me performSelectorOnMainThread:@selector(reloadTable:) withObject:num waitUntilDone:FALSE]; 
 	[num release];
+  [pool release];
     return Val_unit;
 }
 
@@ -552,9 +568,9 @@ static NSDictionary *_SmallGreyAttributes = nil;
 		[(ImageAndTextCell*)cell setImage:[item fileIcon]];
 		
 		// For parents, format the file count into the text
-		int fileCount = [item fileCount];
+		long fileCount = [item fileCount];
 		if (fileCount > 1) {
-			NSString *countString = [NSString stringWithFormat:@"  (%i files)", fileCount];
+			NSString *countString = [NSString stringWithFormat:@"  (%ld files)", fileCount];
 			NSString *fullString = [(NSString *)[cell objectValue] stringByAppendingString:countString];
 			NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:fullString];
 
@@ -619,7 +635,7 @@ static NSDictionary *_SmallGreyAttributes = nil;
 {
     [reconItems release];
     reconItems = [[NSMutableArray alloc] init];
-	int i, n =[caml_reconItems count];
+	long i, n =[caml_reconItems count];
     for (i=0; i<n; i++) {
 		LeafReconItem *item = [[LeafReconItem alloc] initWithRiAndIndex:(id)[caml_reconItems getField:i withType:'@'] index:i];
         [reconItems addObject:item];
@@ -708,7 +724,7 @@ static NSDictionary *_SmallGreyAttributes = nil;
 
 - (id)updateForIgnore:(id)item
 {
-    int j = (int)ocamlCall("ii", "unisonUpdateForIgnore", [reconItems indexOfObjectIdenticalTo:item]);
+    long j = (long)ocamlCall("ii", "unisonUpdateForIgnore", [reconItems indexOfObjectIdenticalTo:item]);
 	NSLog(@"Updating for ignore...");
     [self updateReconItems:(OCamlValue *)ocamlCall("@", "unisonState")];
     return [reconItems objectAtIndex:j];
@@ -717,10 +733,12 @@ static NSDictionary *_SmallGreyAttributes = nil;
 // A function called from ocaml
 CAMLprim value displayStatus(value s)
 {
+  id pool = [[NSAutoreleasePool alloc] init];
 	NSString *str = [[NSString alloc] initWithUTF8String:String_val(s)];
     // NSLog(@"displayStatus: %@", str);
     [me performSelectorOnMainThread:@selector(statusTextSet:) withObject:str waitUntilDone:FALSE];
 	[str release];
+  [pool release];
     return Val_unit;
 }
 
@@ -734,31 +752,36 @@ CAMLprim value displayStatus(value s)
 // Called from ocaml to dislpay progress bar
 CAMLprim value displayGlobalProgress(value p)
 {
+  id pool = [[NSAutoreleasePool alloc] init];
 	NSNumber *num = [[NSNumber alloc] initWithDouble:Double_val(p)];
     [me performSelectorOnMainThread:@selector(updateProgressBar:) 
 		withObject:num waitUntilDone:FALSE]; 
 	[num release];
+  [pool release];
     return Val_unit;
 }
 
 // Called from ocaml to display diff
 CAMLprim value displayDiff(value s, value s2)
 {
+  id pool = [[NSAutoreleasePool alloc] init];
     [me performSelectorOnMainThread:@selector(diffViewTextSet:) 
 						withObject:[NSArray arrayWithObjects:[NSString stringWithUTF8String:String_val(s)],
 											[NSString stringWithUTF8String:String_val(s2)], nil]
 						waitUntilDone:FALSE]; 
+  [pool release];
     return Val_unit;
 }
 
 // Called from ocaml to display diff error messages
 CAMLprim value displayDiffErr(value s)
 {
+  id pool = [[NSAutoreleasePool alloc] init];
     NSString * str = [NSString stringWithUTF8String:String_val(s)];
-    str = [[str componentsSeparatedByString:@"\n"] 
-        componentsJoinedByString:@" "];
+  str = [[str componentsSeparatedByString:@"\n"] componentsJoinedByString:@" "];
 	[me->statusText performSelectorOnMainThread:@selector(setStringValue:) 
 				withObject:str waitUntilDone:FALSE]; 
+  [pool release];
     return Val_unit;
 }
 
@@ -993,6 +1016,20 @@ CAMLprim value displayDiffErr(value s)
             - NSHeight([[window contentView] frame]);
     }
     return toolbarHeight;
+}
+
+CAMLprim value fatalError(value s)
+{
+	NSString *str = [[NSString alloc] initWithUTF8String:String_val(s)];
+
+        [me performSelectorOnMainThread:@selector(fatalError:) withObject:str waitUntilDone:FALSE];
+	[str release];
+    return Val_unit;
+}
+
+- (void)fatalError:(NSString *)msg {
+        NSRunAlertPanel(@"Fatal error", msg, @"Exit", nil, nil);
+        exit(1);
 }
 
 @end

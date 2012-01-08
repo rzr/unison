@@ -25,39 +25,38 @@ let debug = Trace.debug "recon"
 
 let setDirection ri dir force =
   match ri.replicas with
-    Different(rc1,rc2,d,default) when force=`Force || default=Conflict ->
+    Different
+      ({rc1 = rc1; rc2 = rc2; direction = d; default_direction = default } as diff)
+          when force=`Force || default=Conflict ->
       if dir=`Replica1ToReplica2 then
-        d := Replica1ToReplica2
+        diff.direction <- Replica1ToReplica2
       else if dir=`Replica2ToReplica1 then
-        d := Replica2ToReplica1
-      else if dir=`Merge then
-        if Globals.shouldMerge ri.path then d := Merge else () 
-      else  (* dir = `Older or dir = `Newer *)
-        let (_,s1,p1,_) = rc1 in
-        let (_,s2,p2,_) = rc2 in
-        if s1<>`Deleted && s2<>`Deleted then begin
-          let comp = (Props.time p1) -. (Props.time p2) in
-          let comp = if dir=`Newer then -. comp else comp in
-          if comp = 0.0 then
-            ()
-          else if comp<0.0 then
-            d := Replica1ToReplica2
-          else
-            d := Replica2ToReplica1
-        end else if s1=`Deleted && dir=`Newer then begin
-          d := Replica2ToReplica1
-        end else if s2=`Deleted && dir=`Newer then begin
-          d := Replica1ToReplica2
-        end
+        diff.direction <- Replica2ToReplica1
+      else if dir=`Merge then begin
+        if Globals.shouldMerge ri.path1 then diff.direction <- Merge
+      end else begin  (* dir = `Older or dir = `Newer *)
+        match rc1.status, rc2.status with
+          `Deleted, _ ->
+            if default=Conflict then
+              diff.direction <- Replica2ToReplica1
+        | _, `Deleted ->
+            if default=Conflict then
+              diff.direction <- Replica1ToReplica2
+        | _ ->
+            let comp = Props.time rc1.desc -. Props.time rc2.desc in
+            let comp = if dir=`Newer then -. comp else comp in
+            if comp<0.0 then
+              diff.direction <- Replica1ToReplica2
+            else
+              diff.direction <- Replica2ToReplica1
+      end
   | _ ->
       ()
 
 let revertToDefaultDirection ri =
   match ri.replicas with
-    Different(_,_,d,default) ->
-      d := default
-  | _ ->
-      ()
+    Different diff -> diff.direction <- diff.default_direction
+  | _              -> ()
 
 (* Find out which direction we need to propagate changes if we want to       *)
 (* consider the given root to be the "truth"                                 *)
@@ -70,9 +69,7 @@ let root2direction root =
   if      root="older" then `Older
   else if root="newer" then `Newer
   else
-    let roots = Safelist.rev (Globals.rawRoots()) in
-    let r1 = Safelist.nth roots 0 in
-    let r2 = Safelist.nth roots 1 in
+    let (r1, r2) = Globals.rawRootPair () in
     debug (fun() ->
        Printf.eprintf "root2direction called to choose %s from %s and %s\n"
          root r1 r2);
@@ -84,7 +81,7 @@ let root2direction root =
 
 let forceRoot: string Prefs.t =
   Prefs.createString "force" ""
-    "force changes from this replica to the other"
+    "!force changes from this replica to the other"
     ("Including the preference \\texttt{-force \\ARG{root}} causes Unison to "
      ^ "resolve all differences (even non-conflicting changes) in favor of "
      ^ "\\ARG{root}.  "
@@ -100,7 +97,7 @@ let forceRoot: string Prefs.t =
 
 let forceRootPartial: Pred.t =
   Pred.create "forcepartial" ~advanced:true
-    ("Including the preference \\texttt{forcepartial \\ARG{PATHSPEC} -> \\ARG{root}} causes Unison to "
+    ("Including the preference \\texttt{forcepartial = \\ARG{PATHSPEC} -> \\ARG{root}} causes Unison to "
      ^ "resolve all differences (even non-conflicting changes) in favor of "
      ^ "\\ARG{root} for the files in \\ARG{PATHSPEC} (see \\sectionref{pathspec}{Path Specification} "
      ^ "for more information).  "
@@ -116,7 +113,7 @@ let forceRootPartial: Pred.t =
 
 let preferRoot: string Prefs.t =
   Prefs.createString "prefer" ""
-    "choose this replica's version for conflicting changes"
+    "!choose this replica's version for conflicting changes"
     ("Including the preference \\texttt{-prefer \\ARG{root}} causes Unison always to "
      ^ "resolve conflicts in favor of \\ARG{root}, rather than asking for "
      ^ "guidance from the user.  (The syntax of \\ARG{root} is the same as "
@@ -128,7 +125,7 @@ let preferRoot: string Prefs.t =
 
 let preferRootPartial: Pred.t =
   Pred.create "preferpartial" ~advanced:true
-    ("Including the preference \\texttt{preferpartial \\ARG{PATHSPEC} -> \\ARG{root}} "
+    ("Including the preference \\texttt{preferpartial = \\ARG{PATHSPEC} -> \\ARG{root}} "
      ^ "causes Unison always to "
      ^ "resolve conflicts in favor of \\ARG{root}, rather than asking for "
      ^ "guidance from the user, for the files in \\ARG{PATHSPEC} (see "
@@ -160,6 +157,110 @@ let lookupPreferredRootPartial p =
   else
     ("",`Prefer)
 
+let noDeletion =
+  Prefs.createStringList "nodeletion"
+    "prevent file deletions on one replica"
+    ("Including the preference \\texttt{-nodeletion \\ARG{root}} prevents \
+      Unison from performing any file deletion on root \\ARG{root}.\n\n\
+      This preference can be included twice, once for each root, if you \
+      want to prevent any deletion.")
+
+let noUpdate =
+  Prefs.createStringList "noupdate"
+    "prevent file updates and deletions on one replica"
+    ("Including the preference \\texttt{-noupdate \\ARG{root}} prevents \
+      Unison from performing any file update or deletion on root \
+      \\ARG{root}.\n\n\
+      This preference can be included twice, once for each root, if you \
+      want to prevent any update.")
+
+let noCreation =
+  Prefs.createStringList "nocreation"
+    "prevent file creations on one replica"
+    ("Including the preference \\texttt{-nocreation \\ARG{root}} prevents \
+      Unison from performing any file creation on root \\ARG{root}.\n\n\
+      This preference can be included twice, once for each root, if you \
+      want to prevent any creation.")
+
+let noDeletionPartial =
+  Pred.create "nodeletionpartial" ~advanced:true
+    ("Including the preference \
+      \\texttt{nodeletionpartial = \\ARG{PATHSPEC} -> \\ARG{root}} prevents \
+      Unison from performing any file deletion in \\ARG{PATHSPEC} \
+      on root \\ARG{root} (see \\sectionref{pathspec}{Path Specification} \
+      for more information).  It is recommended to use {\\tt BelowPath} \
+      patterns when selecting a directory and all its contents.")
+
+let noUpdatePartial =
+  Pred.create "noupdatepartial" ~advanced:true
+    ("Including the preference \
+      \\texttt{noupdatepartial = \\ARG{PATHSPEC} -> \\ARG{root}} prevents \
+      Unison from performing any file update or deletion in \
+      \\ARG{PATHSPEC} on root \\ARG{root} (see \
+      \\sectionref{pathspec}{Path Specification} for more information). \
+      It is recommended to use {\\tt BelowPath} \
+      patterns when selecting a directory and all its contents.")
+
+let noCreationPartial =
+  Pred.create "nocreationpartial" ~advanced:true
+    ("Including the preference \
+      \\texttt{nocreationpartial = \\ARG{PATHSPEC} ->  \\ARG{root}} prevents \
+      Unison from performing any file creation in \\ARG{PATHSPEC} \
+      on root \\ARG{root} (see \\sectionref{pathspec}{Path Specification} \
+      for more information). \
+      It is recommended to use {\\tt BelowPath} \
+      patterns when selecting a directory and all its contents.")
+
+let partialCancelPref actionKind =
+  match actionKind with
+    `DELETION -> noDeletionPartial
+  | `UPDATE   -> noUpdatePartial
+  | `CREATION -> noCreationPartial
+
+let cancelPref actionKind =
+  match actionKind with
+    `DELETION -> noDeletion
+  | `UPDATE   -> noUpdate
+  | `CREATION -> noCreation
+
+let actionKind fromRc toRc =
+  let fromTyp = fromRc.typ in
+  let toTyp = toRc.typ in
+  if fromTyp = toTyp then `UPDATE else
+  if toTyp = `ABSENT then `CREATION else
+  `DELETION
+
+let shouldCancel path rc1 rc2 root2 =
+  let test kind =
+    List.mem root2 (Prefs.read (cancelPref kind))
+      ||
+    List.mem root2 (Pred.assoc_all (partialCancelPref kind) path)
+  in
+  match actionKind rc1 rc2 with
+    `UPDATE   -> test `UPDATE
+  | `DELETION -> test `UPDATE || test `DELETION
+  | `CREATION -> test `CREATION
+
+let filterRi root1 root2 ri =
+  match ri.replicas with
+    Problem _ ->
+      ()
+  | Different diff ->
+      if
+        match diff.direction with
+          Replica1ToReplica2 ->
+            shouldCancel (Path.toString ri.path1) diff.rc1 diff.rc2 root2
+        | Replica2ToReplica1 ->
+            shouldCancel (Path.toString ri.path1) diff.rc2 diff.rc1 root1
+        | Conflict | Merge ->
+            false
+      then
+        diff.direction <- Conflict
+
+let filterRis ris =
+  let (root1, root2) = Globals.rawRootPair () in
+  Safelist.iter (fun ri -> filterRi root1 root2 ri) ris
+
 (* Use the current values of the '-prefer <ROOT>' and '-force <ROOT>'        *)
 (* preferences to override the reconciler's choices                          *)
 let overrideReconcilerChoices ris =
@@ -169,21 +270,20 @@ let overrideReconcilerChoices ris =
     Safelist.iter (fun ri -> setDirection ri dir force) ris
   end;
   Safelist.iter (fun ri ->
-                   let (rootp,forcep) = lookupPreferredRootPartial ri.path in
+                   let (rootp,forcep) = lookupPreferredRootPartial ri.path1 in
                    if rootp<>"" then begin
                      let dir = root2direction rootp in
                        setDirection ri dir forcep
-                   end) ris
+                   end) ris;
+  filterRis ris
 
 (* Look up the preferred root and verify that it is OK (this is called at    *)
 (* the beginning of the run, so that we don't have to wait to hear about     *)
 (* errors                                                                    *)
-(* This should also check for the partial version, but this needs a way to   *)
-(* extract the associated values from a Pred.t                               *)
 let checkThatPreferredRootIsValid () =
   let test_root predname = function
-    | "" -> ()
-    | ("newer" | "older") as r -> 
+    | "" | "newer" -> ()
+    | "older" as r -> 
         if not (Prefs.read Props.syncModtimes) then
           raise (Util.Transient (Printf.sprintf
                                    "The '%s=%s' preference can only be used with 'times=true'"
@@ -192,7 +292,26 @@ let checkThatPreferredRootIsValid () =
   let (root,pred) = lookupPreferredRoot() in
   if root<>"" then test_root (match pred with `Force -> "force" | `Prefer -> "prefer") root;
   Safelist.iter (test_root "forcepartial") (Pred.extern_associated_strings forceRootPartial);
-  Safelist.iter (test_root "preferpartial") (Pred.extern_associated_strings preferRootPartial)
+  Safelist.iter (test_root "preferpartial") (Pred.extern_associated_strings preferRootPartial);
+  let checkPref extract (pref, prefName) =
+    try
+      let root =
+        List.find (fun r -> not (List.mem r (Globals.rawRoots ())))
+          (extract pref)
+      in
+      let (r1, r2) = Globals.rawRootPair () in
+      raise (Util.Fatal (Printf.sprintf
+        "%s (given as argument to '%s' preference)\n\
+         is not one of the current roots:\n  %s\n  %s" root prefName r1 r2))
+    with Not_found ->
+      ()
+  in
+  List.iter (checkPref Prefs.read)
+    [noDeletion, "nodeletion"; noUpdate, "noupdate"; noCreation, "nocreation"];
+  List.iter (checkPref Pred.extern_associated_strings)
+    [noDeletionPartial, "nodeletionpartial";
+     noUpdatePartial, "noupdatepartial";
+     noCreationPartial, "nocreationpartial"]
 
 (* ------------------------------------------------------------------------- *)
 (*                    Main Reconciliation stuff                              *)
@@ -213,16 +332,34 @@ let rec checkForError ui =
       | Absent | File _ | Symlink _ ->
           ()
 
+let rec collectErrors ui rem =
+  match ui with
+    NoUpdates ->
+      rem
+  | Error err ->
+      err :: rem
+  | Updates (uc, _) ->
+      match uc with
+        Dir (_, children, _, _) ->
+          Safelist.fold_right
+            (fun (_, uiSub) rem -> collectErrors uiSub rem) children rem
+      | Absent | File _ | Symlink _ ->
+          rem
+
 (* lifting errors in individual updates to replica problems                  *)
-let propagateErrors (rplc: Common.replicas): Common.replicas =
+let propagateErrors allowPartial (rplc: Common.replicas): Common.replicas =
   match rplc with
     Problem _ ->
       rplc
-  | Different ((_, _, _, ui1), (_, _, _, ui2), _, _) ->
+  | Different diff when allowPartial ->
+      Different { diff with
+                  errors1 = collectErrors diff.rc1.ui [];
+                  errors2 = collectErrors diff.rc2.ui [] }
+  | Different diff ->
       try
-        checkForError ui1;
+        checkForError diff.rc1.ui;
         try
-          checkForError ui2;
+          checkForError diff.rc2.ui;
           rplc
         with UpdateError err ->
           Problem ("[root 2]: " ^ err)
@@ -231,33 +368,44 @@ let propagateErrors (rplc: Common.replicas): Common.replicas =
 
 type singleUpdate = Rep1Updated | Rep2Updated
 
-let update2replicaContent (conflict: bool) ui ucNew oldType:
+let update2replicaContent path (conflict: bool) ui props ucNew oldType:
     Common.replicaContent =
+  let size = Update.updateSize path ui in
   match ucNew with
     Absent ->
-      (`ABSENT, `Deleted, Props.dummy, ui)
+      {typ = `ABSENT; status = `Deleted; desc = Props.dummy;
+       ui = ui; size = size; props = props}
   | File (desc, ContentsSame) ->
-      (`FILE, `PropsChanged, desc, ui)
+      {typ = `FILE; status = `PropsChanged; desc = desc;
+       ui = ui; size = size; props = props}
   | File (desc, _) when oldType <> `FILE ->
-      (`FILE, `Created, desc, ui)
+      {typ = `FILE; status = `Created; desc = desc;
+       ui = ui; size = size; props = props}
   | File (desc, ContentsUpdated _) ->
-      (`FILE, `Modified, desc, ui)
+      {typ = `FILE; status = `Modified; desc = desc;
+       ui = ui; size = size; props = props}
   | Symlink l when oldType <> `SYMLINK ->
-      (`SYMLINK, `Created, Props.dummy, ui)
+      {typ = `SYMLINK; status = `Created; desc = Props.dummy;
+       ui = ui; size = size; props = props}
   | Symlink l ->
-      (`SYMLINK, `Modified, Props.dummy, ui)
+      {typ = `SYMLINK; status = `Modified; desc = Props.dummy;
+       ui = ui; size = size; props = props}
   | Dir (desc, _, _, _) when oldType <> `DIRECTORY ->
-      (`DIRECTORY, `Created, desc, ui)
+      {typ = `DIRECTORY; status = `Created; desc = desc;
+       ui = ui; size = size; props = props}
   | Dir (desc, _, PropsUpdated, _) ->
-      (`DIRECTORY, `PropsChanged, desc, ui)
+      {typ = `DIRECTORY; status = `PropsChanged; desc = desc;
+       ui = ui; size = size; props = props}
   | Dir (desc, _, PropsSame, _) when conflict ->
       (* Special case: the directory contents has been modified and the      *)
       (* directory is in conflict.  (We don't want to display a conflict     *)
       (* between an unchanged directory and a file, for instance: this would *)
       (* be rather puzzling to the user)                                     *)
-      (`DIRECTORY, `Modified, desc, ui)
+      {typ = `DIRECTORY; status = `Modified; desc = desc;
+       ui = ui; size = size; props = props}
   | Dir (desc, _, PropsSame, _) ->
-      (`DIRECTORY, `Unchanged, desc, ui)
+      {typ = `DIRECTORY; status = `Unchanged; desc =desc;
+       ui = ui; size = size; props = props}
 
 let oldType (prev: Common.prevState): Fileinfo.typ =
   match prev with
@@ -270,31 +418,37 @@ let oldDesc (prev: Common.prevState): Props.t =
   | New                      -> Props.dummy
 
 (* [describeUpdate ui] returns the replica contents for both the case of     *)
-(* updating and the case of non-updatingd                                    *)
-let describeUpdate ui
+(* updating and the case of non-updating                                     *)
+let describeUpdate path props' ui props
     : Common.replicaContent * Common.replicaContent =
   match ui with
     Updates (ucNewStatus, prev) ->
       let typ = oldType prev in
-      (update2replicaContent false ui ucNewStatus typ,
-       (typ, `Unchanged, oldDesc prev, NoUpdates))
+      (update2replicaContent path false ui props ucNewStatus typ,
+       {typ = typ; status = `Unchanged; desc = oldDesc prev;
+        ui = NoUpdates; size = Update.updateSize path NoUpdates;
+        props = props'})
   | _  -> assert false
 
 (* Computes the reconItems when only one side has been updated.  (We split   *)
 (* this out into a separate function to avoid duplicating all the symmetric  *)
 (* cases.)                                                                   *)
-let rec reconcileNoConflict ui whatIsUpdated
-    (result: (Name.t, Common.replicas) Tree.u)
-    : (Name.t, Common.replicas) Tree.u =
+let rec reconcileNoConflict allowPartial path props' ui props whatIsUpdated
+    (result: (Name.t * Name.t, Common.replicas) Tree.u)
+    : (Name.t * Name.t, Common.replicas) Tree.u =
   let different() =
-    let rcUpdated, rcNotUpdated = describeUpdate ui in
+    let rcUpdated, rcNotUpdated = describeUpdate path props' ui props in
     match whatIsUpdated with
       Rep2Updated ->
-        Different(rcNotUpdated, rcUpdated,
-                  ref Replica2ToReplica1, Replica2ToReplica1)
+        Different {rc1 = rcNotUpdated; rc2 = rcUpdated;
+                   direction = Replica2ToReplica1;
+                   default_direction = Replica2ToReplica1;
+                   errors1 = []; errors2 = []}
     | Rep1Updated ->
-        Different(rcUpdated, rcNotUpdated,
-                  ref Replica1ToReplica2, Replica1ToReplica2) in
+        Different {rc1 = rcUpdated; rc2 = rcNotUpdated;
+                   direction = Replica1ToReplica2;
+                   default_direction = Replica1ToReplica2;
+                   errors1 = []; errors2 = []} in
   match ui with
   | NoUpdates -> result
   | Error err ->
@@ -307,11 +461,12 @@ let rec reconcileNoConflict ui whatIsUpdated
       Safelist.fold_left
         (fun result (theName, uiChild) ->
            Tree.leave
-             (reconcileNoConflict
-                uiChild whatIsUpdated (Tree.enter result theName)))
+             (reconcileNoConflict allowPartial (Path.child path theName)
+                [] uiChild [] whatIsUpdated
+                (Tree.enter result (theName, theName))))
         r children
   | Updates _ ->
-      Tree.add result (propagateErrors (different ()))
+      Tree.add result (propagateErrors allowPartial (different ()))
 
 (* [combineChildrn children1 children2] combines two name-sorted lists of    *)
 (* type [(Name.t * Common.updateItem) list] to a single list of type         *)
@@ -323,19 +478,19 @@ let combineChildren children1 children2 =
       [],_ ->
         Safelist.rev_append r
           (Safelist.map
-             (fun (name,ui) -> (name,NoUpdates,ui)) children2)
+             (fun (name,ui) -> (name,NoUpdates,name,ui)) children2)
     | _,[] ->
         Safelist.rev_append r
           (Safelist.map
-             (fun (name,ui) -> (name,ui,NoUpdates)) children1)
+             (fun (name,ui) -> (name,ui,name,NoUpdates)) children1)
     | (name1,ui1)::rem1, (name2,ui2)::rem2 ->
         let dif = Name.compare name1 name2 in
         if dif = 0 then
-          loop ((name1,ui1,ui2)::r) rem1 rem2
+          loop ((name1,ui1,name2,ui2)::r) rem1 rem2
         else if dif < 0 then
-          loop ((name1,ui1,NoUpdates)::r) rem1 children2
+          loop ((name1,ui1,name1,NoUpdates)::r) rem1 children2
         else
-          loop ((name2,NoUpdates,ui2)::r) children1 rem2
+          loop ((name2,NoUpdates,name2,ui2)::r) children1 rem2
   in
   loop [] children1 children2
 
@@ -357,36 +512,45 @@ let add_equal (counter, archiveUpdated) equal v =
 (* propagating changes to make the two replicas equal.                       *)
 (* --                                                                        *)
 (* It uses two accumulators:                                                 *)
-(*   equals: (Name.t, Common.updateContent * Common.updateContent)           *)
+(*   equals: (Name.t * Name.t, Common.updateContent * Common.updateContent)  *)
 (*           Tree.u                                                          *)
-(*   unequals: (Name.t, Common.replicas) Tree.u                              *)
+(*   unequals: (Name.t * Name.t, Common.replicas) Tree.u                     *)
 (* --                                                                        *)
-let rec reconcile path ui1 ui2 counter equals unequals =
+let rec reconcile
+          allowPartial path ui1 props1 ui2 props2 counter equals unequals =
   let different uc1 uc2 oldType equals unequals =
     (equals,
      Tree.add unequals
-       (propagateErrors
-          (Different(update2replicaContent true ui1 uc1 oldType,
-                     update2replicaContent true ui2 uc2 oldType,
-                     ref Conflict,
-                     Conflict)))) in
+       (propagateErrors allowPartial
+          (Different {rc1 = update2replicaContent
+                              path true ui1 props1 uc1 oldType;
+                      rc2 = update2replicaContent
+                              path true ui2 props2 uc2 oldType;
+                      direction = Conflict; default_direction = Conflict;
+                      errors1 = []; errors2 = []}))) in
   let toBeMerged uc1 uc2 oldType equals unequals =
     (equals,
      Tree.add unequals
-       (propagateErrors
-          (Different(update2replicaContent true ui1 uc1 oldType,
-                     update2replicaContent true ui2 uc2 oldType,
-                     ref Merge,
-                     Merge)))) in
+       (propagateErrors allowPartial
+          (Different {rc1 = update2replicaContent
+                              path true ui1 props1 uc1 oldType;
+                      rc2 = update2replicaContent
+                              path true ui2 props2 uc2 oldType;
+                      direction = Merge; default_direction = Merge;
+                      errors1 = []; errors2 = []}))) in
   match (ui1, ui2) with
     (Error s, _) ->
       (equals, Tree.add unequals (Problem s))
   | (_, Error s) ->
       (equals, Tree.add unequals (Problem s))
   | (NoUpdates, _)  ->
-      (equals, reconcileNoConflict ui2 Rep2Updated unequals)
+      (equals,
+       reconcileNoConflict
+         allowPartial path props1 ui2 props2 Rep2Updated unequals)
   | (_, NoUpdates) ->
-      (equals, reconcileNoConflict ui1 Rep1Updated unequals)
+      (equals,
+       reconcileNoConflict
+         allowPartial path props2 ui1 props1 Rep1Updated unequals)
   | (Updates (Absent, _), Updates (Absent, _)) ->
       (add_equal counter equals (Absent, Absent), unequals)
   | (Updates (Dir (desc1, children1, propsChanged1, _) as uc1, prevState1),
@@ -407,16 +571,19 @@ let rec reconcile path ui1 ui2 counter equals unequals =
            (equals,
             Tree.add unequals
               (Different
-                 (update2replicaContent false ui1 uc1 `DIRECTORY,
-                  update2replicaContent false ui2 uc2 `DIRECTORY,
-                  ref action, action)))
+                 {rc1 = update2replicaContent path false ui1 [] uc1 `DIRECTORY;
+                  rc2 = update2replicaContent path false ui2 [] uc2 `DIRECTORY;
+                  direction = action; default_direction = action;
+                  errors1 = []; errors2 = []}))
        in
        (* Apply reconcile on children. *)
        Safelist.fold_left
-         (fun (equals, unequals) (name,ui1,ui2) ->
+         (fun (equals, unequals) (name1,ui1,name2,ui2) ->
            let (eq, uneq) =
-              reconcile (Path.child path name) ui1 ui2 counter
-               (Tree.enter equals name) (Tree.enter unequals name)
+             reconcile
+               allowPartial (Path.child path name1) ui1 [] ui2 [] counter
+               (Tree.enter equals (name1, name2))
+               (Tree.enter unequals (name1, name2))
            in
            (Tree.leave eq, Tree.leave uneq))
          dirResult
@@ -459,10 +626,14 @@ let sortPaths pathUpdatesList =
     (fun (p1, _) (p2, _) -> Path.compare p1 p2 <= 0)
     pathUpdatesList
 
-let rec enterPath p t =
-  match Path.deconstruct p with
-    None          -> t
-  | Some (nm, p') -> enterPath p' (Tree.enter t nm)
+let rec enterPath p1 p2 t =
+  match Path.deconstruct p1, Path.deconstruct p2 with
+    None, None ->
+      t
+  | Some (nm1, p1'), Some (nm2, p2') ->
+      enterPath p1' p2' (Tree.enter t (nm1, nm2))
+  | _ ->
+      assert false (* Cannot happen, as the paths are equal up to case *)
 
 let rec leavePath p t =
   match Path.deconstruct p with
@@ -481,23 +652,29 @@ let dangerousPath u1 u2 =
 
 (* The second component of the return value is true if there is at least one *)
 (* file that is updated in the same way on both roots                        *)
-let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
-    : Common.reconItem list * bool * Path.t list =
+let reconcileList allowPartial
+      (pathUpdatesList:
+         ((Path.local * Common.updateItem * Props.t list) *
+          (Path.local * Common.updateItem * Props.t list)) list)
+      : Common.reconItem list * bool * Path.t list =
   let counter = ref 0 in
   let archiveUpdated = ref false in
   let (equals, unequals, dangerous) =
     Safelist.fold_left
-      (fun (equals, unequals, dangerous) (path,updatesList) ->
-        match updatesList with
-          [ui1; ui2] ->
-            let (equals, unequals) =
-              reconcile path ui1 ui2 (counter, archiveUpdated)
-                (enterPath path equals) (enterPath path unequals)
-            in
-            (leavePath path equals, leavePath path unequals,
-             if dangerousPath ui1 ui2 then path :: dangerous else dangerous)
-        | _ ->
-            assert false)
+      (fun (equals, unequals, dangerous)
+           ((path1,ui1,props1),(path2,ui2,props2)) ->
+         (* We make the paths global as we may concatenate them with
+            names from the other replica *)
+         let path1 = Path.makeGlobal path1 in
+         let path2 = Path.makeGlobal path2 in
+         let (equals, unequals) =
+           reconcile allowPartial
+             path1 ui1 props1 ui2 props2 (counter, archiveUpdated)
+             (enterPath path1 path2 equals)
+             (enterPath path1 path2 unequals)
+         in
+         (leavePath path1 equals, leavePath path1 unequals,
+          if dangerousPath ui1 ui2 then path1 :: dangerous else dangerous))
       (Tree.start, Tree.start, []) pathUpdatesList in
   let unequals = Tree.finish unequals in
   debug (fun() -> Util.msg "reconcile: %d results\n" (Tree.size unequals));
@@ -505,9 +682,13 @@ let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
   Update.markEqual equals;
   (* Commit archive updates done up to now *)
   if !archiveUpdated then Update.commitUpdates ();
-  let result = Tree.flatten unequals Path.empty Path.child [] in
+  let result =
+    Tree.flatten unequals (Path.empty, Path.empty)
+      (fun (p1, p2) (nm1, nm2) -> (Path.child p1 nm1, Path.child p2 nm2)) [] in
   let unsorted =
-    Safelist.map (fun (p, rplc) -> {path = p; replicas = rplc}) result in
+    Safelist.map
+     (fun ((p1, p2), rplc) -> {path1 = p1; path2 = p2; replicas = rplc})
+     result in
   let sorted = Sortri.sortReconItems unsorted in
   overrideReconcilerChoices sorted;
   (sorted, not (Tree.is_empty equals), dangerous)
@@ -516,12 +697,7 @@ let reconcileList (pathUpdatesList: (Path.t * Common.updateItem list) list)
    according to the roots and paths of synchronization, builds the           
    corresponding reconItem list.  A second component indicates whether there 
    is any file updated in the same way on both sides. *)
-let reconcileAll (ONEPERPATH(updatesListList)) =
+let reconcileAll ?(allowPartial = false) updatesList =
   Trace.status "Reconciling changes";
   debug (fun() -> Util.msg "reconcileAll\n");
-  let pathList = Prefs.read Globals.paths in
-  let pathUpdatesList =
-    sortPaths (Safelist.combine pathList updatesListList) in
-  reconcileList pathUpdatesList
-
-let reconcileTwo p ui ui' = reconcileList [(p, [ui; ui'])]
+  reconcileList allowPartial updatesList

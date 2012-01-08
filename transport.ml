@@ -36,16 +36,18 @@ let fileSize uiFrom uiTo =
       assert false
 
 let maxthreads =
-  Prefs.createInt "maxthreads" 20
+  Prefs.createInt "maxthreads" 0
     "!maximum number of simultaneous file transfers"
-    ("This preference controls how much concurrency is allowed during"
-     ^ " the transport phase.  Normally, it should be set reasonably high "
-     ^ "(default is 20) to maximize performance, but when Unison is used "
-     ^ "over a low-bandwidth link it may be helpful to set it lower (e.g. "
-     ^ "to 1) so that Unison doesn't soak up all the available bandwidth."
-    )
+    ("This preference controls how much concurrency is allowed during \
+      the transport phase.  Normally, it should be set reasonably high \
+      to maximize performance, but when Unison is used over a \
+      low-bandwidth link it may be helpful to set it lower (e.g. \
+      to 1) so that Unison doesn't soak up all the available bandwidth. \
+      The default is the special value 0, which mean 20 threads \
+      when file content streaming is desactivated and 1000 threads \
+      when it is activated.")
 
-let actionReg = Lwt_util.make_region (Prefs.read maxthreads)
+let actionReg = Lwt_util.make_region 50
 
 (* Logging for a thread: write a message before and a message after the
    execution of the thread. *)
@@ -75,92 +77,89 @@ let logLwtNumbered (lwtDescription: string) (lwtShortDescription: string)
     (fun _ ->
       Printf.sprintf "[END] %s\n" lwtShortDescription)
 
-let stashCurrentVersionOnRoot: Common.root -> Path.t -> unit Lwt.t = 
-  Remote.registerRootCmd 
-    "stashCurrentVersion" 
-    (fun (fspath, path) -> 
-      Lwt.return (Stasher.stashCurrentVersion fspath (Update.translatePathLocal fspath path) None))
-    
-let stashCurrentVersions fromRoot toRoot path =
-  stashCurrentVersionOnRoot fromRoot path >>= (fun()->
-  stashCurrentVersionOnRoot toRoot path)
-
-let doAction (fromRoot,toRoot) path fromContents toContents id =
-  Lwt_util.resize_region actionReg (Prefs.read maxthreads);
-  Lwt_util.resize_region Files.copyReg (Prefs.read maxthreads);
+let doAction fromRoot fromPath fromContents toRoot toPath toContents id =
+  (* When streaming, we can transfer many file simultaneously:
+     as the contents of only one file is transferred in one direction
+     at any time, little ressource is consumed this way. *)
+  let limit =
+    let n = Prefs.read maxthreads in
+    if n > 0 then n else
+    if Prefs.read Remote.streamingActivated then 1000 else 20
+  in
+  Lwt_util.resize_region actionReg limit;
+  Lwt_util.resize_region Files.copyReg limit;
   Lwt_util.run_in_region actionReg 1 (fun () ->
     if not !Trace.sendLogMsgsToStderr then
-      Trace.statusDetail (Path.toString path);
+      Trace.statusDetail (Path.toString toPath);
     Remote.Thread.unwindProtect (fun () ->
       match fromContents, toContents with
-        (`ABSENT, _, _, _), (_, _, _, uiTo) ->
+          {typ = `ABSENT}, {ui = uiTo} ->
              logLwtNumbered
-               ("Deleting " ^ Path.toString path ^
+               ("Deleting " ^ Path.toString toPath ^
                 "\n  from "^ root2string toRoot)
-               ("Deleting " ^ Path.toString path)
-               (fun () -> Files.delete fromRoot path toRoot path uiTo)
+               ("Deleting " ^ Path.toString toPath)
+               (fun () -> Files.delete fromRoot fromPath toRoot toPath uiTo)
         (* No need to transfer the whole directory/file if there were only
            property modifications on one side.  (And actually, it would be
            incorrect to transfer a directory in this case.) *)
-        | (_, (`Unchanged | `PropsChanged), fromProps, uiFrom),
-          (_, (`Unchanged | `PropsChanged), toProps, uiTo) ->
+        | {status= `Unchanged | `PropsChanged; desc= fromProps; ui= uiFrom},
+          {status= `Unchanged | `PropsChanged; desc= toProps; ui = uiTo} ->
             logLwtNumbered
-              ("Copying properties for " ^ Path.toString path
+              ("Copying properties for " ^ Path.toString toPath
                ^ "\n  from " ^ root2string fromRoot ^ "\n  to " ^
                root2string toRoot)
-              ("Copying properties for " ^ Path.toString path)
+              ("Copying properties for " ^ Path.toString toPath)
               (fun () ->
                 Files.setProp
-                  fromRoot path toRoot path fromProps toProps uiFrom uiTo)
-        | (`FILE, _, _, uiFrom), (`FILE, _, _, uiTo) ->
+                  fromRoot fromPath toRoot toPath fromProps toProps uiFrom uiTo)
+        | {typ = `FILE; ui = uiFrom}, {typ = `FILE; ui = uiTo} ->
             logLwtNumbered
-              ("Updating file " ^ Path.toString path ^ "\n  from " ^
+              ("Updating file " ^ Path.toString toPath ^ "\n  from " ^
                root2string fromRoot ^ "\n  to " ^
                root2string toRoot)
-              ("Updating file " ^ Path.toString path)
+              ("Updating file " ^ Path.toString toPath)
               (fun () ->
                 Files.copy (`Update (fileSize uiFrom uiTo))
-                  fromRoot path uiFrom toRoot path uiTo id >>= (fun()->
-                stashCurrentVersions fromRoot toRoot path))
-        | (_, _, _, uiFrom), (_, _, _, uiTo) ->
+                  fromRoot fromPath uiFrom [] toRoot toPath uiTo [] id)
+        | {ui = uiFrom; props = propsFrom}, {ui = uiTo; props = propsTo} ->
             logLwtNumbered
-              ("Copying " ^ Path.toString path ^ "\n  from " ^
+              ("Copying " ^ Path.toString toPath ^ "\n  from " ^
                root2string fromRoot ^ "\n  to " ^
                root2string toRoot)
-              ("Copying " ^ Path.toString path)
+              ("Copying " ^ Path.toString toPath)
               (fun () ->
                  Files.copy `Copy
-                   fromRoot path uiFrom toRoot path uiTo id >>= (fun()->
-               stashCurrentVersions fromRoot toRoot path)))
+                   fromRoot fromPath uiFrom propsFrom
+                   toRoot toPath uiTo propsTo id))
       (fun e -> Trace.log
           (Printf.sprintf
              "Failed: %s\n" (Util.printException e));
         return ()))
 
 let propagate root1 root2 reconItem id showMergeFn =
-  let path = reconItem.path in
+  let path = reconItem.path1 in
   match reconItem.replicas with
     Problem p ->
       Trace.log (Printf.sprintf "[ERROR] Skipping %s\n  %s\n"
                    (Path.toString path) p);
       return ()
-  | Different(rc1,rc2,dir,_) ->
-      match !dir with
+  | Different {rc1 = rc1; rc2 = rc2; direction = dir} ->
+      match dir with
         Conflict ->
           Trace.log (Printf.sprintf "[CONFLICT] Skipping %s\n"
                        (Path.toString path));
           return ()
       | Replica1ToReplica2 ->
-          doAction (root1, root2) path rc1 rc2 id
+          doAction root1 reconItem.path1 rc1 root2 reconItem.path2 rc2 id
       | Replica2ToReplica1 ->
-          doAction (root2, root1) path rc2 rc1 id
-      | Merge -> 
-          begin match (rc1,rc2) with
-            (`FILE, _, _, ui1), (`FILE, _, _, ui2) ->
-              Files.merge root1 root2 path id ui1 ui2 showMergeFn;
-              return ()
-          | _ -> raise (Util.Transient "Can only merge two existing files")
-          end 
+          doAction root2 reconItem.path2 rc2 root1 reconItem.path1 rc1 id
+      | Merge ->
+          if rc1.typ <> `FILE || rc2.typ <> `FILE then
+            raise (Util.Transient "Can only merge two existing files");
+          Files.merge
+            root1 reconItem.path1 rc1.ui root2 reconItem.path2 rc2.ui id
+            showMergeFn;
+          return ()
 
 let transportItem reconItem id showMergeFn =
   let (root1,root2) = Globals.roots() in
@@ -170,24 +169,28 @@ let transportItem reconItem id showMergeFn =
 
 let logStart () =
   Abort.reset ();
-  let tm = Util.localtime (Util.time()) in
+  let t = Unix.gettimeofday () in
+  let tm = Util.localtime t in
   let m =
     Printf.sprintf
-      "%s%s started propagating changes at %02d:%02d:%02d on %02d %s %04d\n"
+      "%s%s started propagating changes at %02d:%02d:%02d.%02d on %02d %s %04d\n"
       (if Prefs.read Trace.terse || Prefs.read Globals.batch then "" else "\n\n")
       (String.uppercase Uutil.myNameAndVersion)
       tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
+      (min 99 (truncate (mod_float t 1. *. 100.)))
       tm.Unix.tm_mday (Util.monthname tm.Unix.tm_mon)
       (tm.Unix.tm_year+1900) in
   Trace.logverbose m
 
 let logFinish () =
-  let tm = Util.localtime (Util.time()) in
+  let t = Unix.gettimeofday () in
+  let tm = Util.localtime t in
   let m =
     Printf.sprintf
-      "%s finished propagating changes at %02d:%02d:%02d on %02d %s %04d\n%s"
+      "%s finished propagating changes at %02d:%02d:%02d.%02d on %02d %s %04d\n%s"
       (String.uppercase Uutil.myNameAndVersion)
       tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
+      (min 99 (truncate (mod_float t 1. *. 100.)))
       tm.Unix.tm_mday (Util.monthname tm.Unix.tm_mon)
       (tm.Unix.tm_year+1900)
       (if Prefs.read Trace.terse || Prefs.read Globals.batch then "" else "\n\n") in

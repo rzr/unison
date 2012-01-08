@@ -22,7 +22,7 @@
 let debug = Util.debug "os"
 
 let myCanonicalHostName =
-  try Unix.getenv "UNISONLOCALHOSTNAME"
+  try System.getenv "UNISONLOCALHOSTNAME"
   with Not_found -> Unix.gethostname()
 
 let tempFilePrefix = ".unison."
@@ -36,28 +36,6 @@ let includeInTempNames s =
     if s = "" then tempFileSuffixFixed
     else "." ^ s ^ tempFileSuffixFixed
 
-let xferDelete = ref (fun (fp,p) -> ())
-let xferRename = ref (fun (fp,p) (ftp,tp) -> ())
-
-let initializeXferFunctions del ren =
-  xferDelete := del;
-  xferRename := ren
-      
-
-(*****************************************************************************)
-(*                      ESCAPING SHELL PARAMETERS                            *)
-(*****************************************************************************)
-
-(* Using single quotes is simpler under Unix but they are not accepted
-   by the Windows shell.  Double quotes without further quoting is
-   sufficient with Windows as filenames are not allowed to contain
-   double quotes. *)
-let quotes s =
-  if Util.osType = `Win32 && not Util.isCygwin then
-    "\"" ^ s ^ "\""
-  else
-    "'" ^ Util.replacesubstring s "'" "'\\''" ^ "'"
-
 (*****************************************************************************)
 (*                      QUERYING THE FILESYSTEM                              *)
 (*****************************************************************************)
@@ -69,8 +47,8 @@ let readLink fspath path =
   Util.convertUnixErrorsToTransient
   "reading symbolic link"
     (fun () ->
-       let abspath = Fspath.concatToString fspath path in
-       Unix.readlink abspath)
+       let abspath = Fspath.concat fspath path in
+       Fs.readlink abspath)
 
 let rec isAppleDoubleFile file =
   Prefs.read Osx.rsrc &&
@@ -83,7 +61,7 @@ let allChildrenOf fspath path =
   "scanning directory"
     (fun () ->
       let rec loop children directory =
-        let newFile = try Unix.readdir directory with End_of_file -> "" in
+        let newFile = try directory.Fs.readdir () with End_of_file -> "" in
         if newFile = "" then children else
         let newChildren =
           if newFile = "." || newFile = ".." then
@@ -95,7 +73,7 @@ let allChildrenOf fspath path =
       let absolutePath = Fspath.concat fspath path in
       let directory =
         try
-          Some (Fspath.opendir absolutePath)
+          Some (Fs.opendir absolutePath)
         with Unix.Unix_error (Unix.ENOENT, _, _) ->
           (* FIX (in Ocaml): under Windows, when a directory is empty
              (not even "." and ".."), FindFirstFile fails with
@@ -107,11 +85,11 @@ let allChildrenOf fspath path =
         Some directory ->
           begin try
             let result = loop [] directory in
-            Unix.closedir directory;
+            directory.Fs.closedir ();
             result
           with Unix.Unix_error _ as e ->
             begin try
-              Unix.closedir directory
+              directory.Fs.closedir ()
             with Unix.Unix_error _ -> () end;
             raise e
           end
@@ -143,12 +121,12 @@ let rec childrenOf fspath path =
            if Props.time i.Fileinfo.desc +. secondsinthirtydays < Util.time()
            then begin
              debug (fun()-> Util.msg "deleting old temp file %s\n"
-                      (Fspath.concatToString fspath p));
+                      (Fspath.toDebugString (Fspath.concat fspath p)));
              delete fspath p
            end else
              debug (fun()-> Util.msg
                       "keeping temp file %s since it is less than 30 days old\n"
-                      (Fspath.concatToString fspath p));
+                      (Fspath.toDebugString (Fspath.concat fspath p)));
          end;
          false
        end else
@@ -164,55 +142,52 @@ and delete fspath path =
   Util.convertUnixErrorsToTransient
     "deleting"
     (fun () ->
-      let absolutePath = Fspath.concatToString fspath path in
+      let absolutePath = Fspath.concat fspath path in
       match (Fileinfo.get false fspath path).Fileinfo.typ with
         `DIRECTORY ->
           begin try
-            Unix.chmod absolutePath 0o700
+            Fs.chmod absolutePath 0o700
           with Unix.Unix_error _ -> () end;
           Safelist.iter
             (fun child -> delete fspath (Path.child path child))
             (allChildrenOf fspath path);
-	  (!xferDelete) (fspath, path);
-          Unix.rmdir absolutePath
+          Fs.rmdir absolutePath
       | `FILE ->
           if Util.osType <> `Unix then begin
             try
-              Unix.chmod absolutePath 0o600;
+              Fs.chmod absolutePath 0o600;
             with Unix.Unix_error _ -> ()
           end;
-	  (!xferDelete) (fspath, path);
-          Unix.unlink absolutePath;
+          Fs.unlink absolutePath;
           if Prefs.read Osx.rsrc then begin
-            let pathDouble = Osx.appleDoubleFile fspath path in
-            if Sys.file_exists pathDouble then
-              Unix.unlink pathDouble
+            let pathDouble = Fspath.appleDouble absolutePath in
+            if Fs.file_exists pathDouble then
+              Fs.unlink pathDouble
           end
       | `SYMLINK ->
            (* Note that chmod would not do the right thing on links *)
-          Unix.unlink absolutePath
+          Fs.unlink absolutePath
       | `ABSENT ->
           ())
     
 let rename fname sourcefspath sourcepath targetfspath targetpath =
   let source = Fspath.concat sourcefspath sourcepath in
-  let source' = Fspath.toString source in
+  let source' = Fspath.toPrintString source in
   let target = Fspath.concat targetfspath targetpath in
-  let target' = Fspath.toString target in
-  if source' = target' then
+  let target' = Fspath.toPrintString target in
+  if source = target then
     raise (Util.Transient ("Rename ("^fname^"): identical source and target " ^ source'));
   Util.convertUnixErrorsToTransient ("renaming " ^ source' ^ " to " ^ target')
     (fun () ->
       debug (fun() -> Util.msg "rename %s to %s\n" source' target');
-      (!xferRename) (sourcefspath, sourcepath) (targetfspath, targetpath);
-      Unix.rename source' target';
+      Fs.rename source target;
       if Prefs.read Osx.rsrc then begin
-        let sourceDouble = Osx.appleDoubleFile sourcefspath sourcepath in
-        let targetDouble = Osx.appleDoubleFile targetfspath targetpath in
-        if Sys.file_exists sourceDouble then
-          Unix.rename sourceDouble targetDouble
-        else if Sys.file_exists targetDouble then
-          Unix.unlink targetDouble
+        let sourceDouble = Fspath.appleDouble source in
+        let targetDouble = Fspath.appleDouble target in
+        if Fs.file_exists sourceDouble then
+          Fs.rename sourceDouble targetDouble
+        else if Fs.file_exists targetDouble then
+          Fs.unlink targetDouble
       end)
     
 let symlink =
@@ -221,23 +196,23 @@ let symlink =
       Util.convertUnixErrorsToTransient
       "writing symbolic link"
       (fun () ->
-         let abspath = Fspath.concatToString fspath path in
-         Unix.symlink l abspath)
+         let abspath = Fspath.concat fspath path in
+         Fs.symlink l abspath)
   else
     fun fspath path l ->
       raise (Util.Transient
                (Format.sprintf
                   "Cannot create symlink \"%s\": \
                    symlinks are not supported under Windows"
-                  (Fspath.concatToString fspath path)))
+                  (Fspath.toPrintString (Fspath.concat fspath path))))
 
 (* Create a new directory, using the permissions from the given props        *)
 let createDir fspath path props =
   Util.convertUnixErrorsToTransient
   "creating directory"
     (fun () ->
-       let absolutePath = Fspath.concatToString fspath path in
-       Unix.mkdir absolutePath (Props.perms props))
+       let absolutePath = Fspath.concat fspath path in
+       Fs.mkdir absolutePath (Props.perms props))
 
 (*****************************************************************************)
 (*                              FINGERPRINTS                                 *)
@@ -258,7 +233,7 @@ let safeFingerprint fspath path info optDig =
                (Printf.sprintf
                   "Failed to fingerprint file \"%s\": \
                    the file keeps on changing"
-                  (Fspath.concatToString fspath path)))
+                  (Fspath.toPrintString (Fspath.concat fspath path))))
     else
       let dig =
         match optDig with
@@ -293,6 +268,12 @@ let reasonForFingerprintMismatch (digdata,digress) (digdata',digress') =
 
 let fullfingerprint_dummy = (Fingerprint.dummy,Fingerprint.dummy)
 
+let fullfingerprintHash (fp, rfp) =
+  Fingerprint.hash fp + 31 * Fingerprint.hash rfp
+
+let fullfingerprintEqual (fp, rfp) (fp', rfp') =
+  Fingerprint.equal fp fp' && Fingerprint.equal rfp rfp'
+
 (*****************************************************************************)
 (*                           UNISON DIRECTORY                                *)
 (*****************************************************************************)
@@ -300,39 +281,40 @@ let fullfingerprint_dummy = (Fingerprint.dummy,Fingerprint.dummy)
 (* Gives the fspath of the archive directory on the machine, depending on    *)
 (* which OS we use                                                           *)
 let unisonDir =
-  try Fspath.canonize (Some (Unix.getenv "UNISON"))
+  try
+    System.fspathFromString (System.getenv "UNISON")
   with Not_found ->
-    let genericName = Util.fileInHomeDir (Printf.sprintf ".%s" Uutil.myName) in
-    if Osx.isMacOSX then
-      let osxName = Util.fileInHomeDir "Library/Application Support/Unison" in
-      if Sys.file_exists genericName then Fspath.canonize (Some genericName)
-      else Fspath.canonize (Some osxName)
+    let genericName =
+      Util.fileInHomeDir (Printf.sprintf ".%s" Uutil.myName) in
+    if Osx.isMacOSX && not (System.file_exists genericName) then
+      Util.fileInHomeDir "Library/Application Support/Unison"
     else
-      Fspath.canonize (Some genericName)
+      genericName
 
 (* build a fspath representing an archive child path whose name is given     *)
-let fileInUnisonDir str =
-  let n =
-    try Name.fromString str
-    with Invalid_argument _ ->
-      raise (Util.Transient
-               ("Ill-formed name of file in UNISON directory: "^str))
-  in
-    Fspath.child unisonDir n
+let fileInUnisonDir str = System.fspathConcat unisonDir str
 
 (* Make sure archive directory exists                                        *)
 let createUnisonDir() =
-  try ignore (Fspath.stat unisonDir)
+  try ignore (System.stat unisonDir)
   with Unix.Unix_error(_) ->
     Util.convertUnixErrorsToFatal
       (Printf.sprintf "creating unison directory %s"
-         (Fspath.toString unisonDir))
+         (System.fspathToPrintString unisonDir))
       (fun () ->
-         ignore (Unix.mkdir (Fspath.toString unisonDir) 0o700))
+         ignore (System.mkdir unisonDir 0o700))
 
 (*****************************************************************************)
 (*                           TEMPORARY FILES                                 *)
 (*****************************************************************************)
+
+(* Truncate a filename to at most [l] bytes, making sure of not
+   truncating an UTF-8 character.  Assumption: [String.length s > l] *)
+let rec truncate_filename s l =
+  if l > 0 && Char.code s.[l] land 0xC0 = 0x80 then
+    truncate_filename s (l - 1)
+  else
+    String.sub s 0 l
 
 (* Generates an unused fspath for a temporary file.                          *)
 let genTempPath fresh fspath path prefix suffix =
@@ -341,28 +323,22 @@ let genTempPath fresh fspath path prefix suffix =
       if i=0 then suffix
       else Printf.sprintf "..%03d.%s" i suffix in
     let tempPath =
-      Path.addPrefixToFinalName
-        (Path.addSuffixToFinalName path s)
-        prefix
+      match Path.deconstructRev path with
+        None ->
+          assert false
+      | Some (name, parentPath) ->
+          let name = Name.toString name in
+          let len = String.length name in
+          let maxlen = 64 in
+          let name =
+            if len <= maxlen then name else
+            (truncate_filename name maxlen ^
+             Digest.to_hex (Digest.string name))
+          in
+          Path.child parentPath (Name.fromString (prefix ^ name ^ s))
     in
     if fresh && exists fspath tempPath then f (i + 1) else tempPath
   in f 0
 
 let tempPath ?(fresh=true) fspath path =
   genTempPath fresh fspath path tempFilePrefix !tempFileSuffix
-
-(*****************************************************************************)
-(*                     INTERRUPTED SYSTEM CALLS                              *)
-(*****************************************************************************)
-(* Needed because in lwt/lwt_unix.ml we set a signal handler for SIG_CHLD,
-   which means that slow system calls can be interrupted to handle
-   SIG_CHLD.  We want to restart these system calls.  It would be much
-   better to do this using SA_RESTART, however, ocaml's Unix module does
-   not support this, probably because it isn't nicely portable. *)
-let accept fd =
-   let rec loop () =
-     try Unix.accept fd
-     with Unix.Unix_error(Unix.EINTR,_,_) -> loop() in
-   loop()
-
-

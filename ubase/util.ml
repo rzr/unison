@@ -37,17 +37,8 @@ let nocase_eq a b = (0 = (nocase_cmp a b))
 (*                        PRE-BUILT MAP AND SET MODULES                      *)
 (*****************************************************************************)
 
-module StringMap =
-  Map.Make(struct
-    type t = string
-    let compare = compare
-  end)
-
-module StringSet =
-  Set.Make(struct
-    type t = string
-    let compare = compare
-  end)
+module StringMap = Map.Make (String)
+module StringSet = Set.Make (String)
 
 let stringSetFromList l =
   Safelist.fold_right StringSet.add l StringSet.empty
@@ -134,7 +125,11 @@ let encodeException m kind e =
     Unix.Unix_error(err,fnname,param) ->
       let s =   "Error in " ^ m ^ ":\n"
               ^ (Unix.error_message err)
-              ^ " [" ^ fnname ^ "(" ^ param ^ ")]" in
+              ^ " [" ^ fnname ^ "(" ^ param ^ ")]%s" ^
+              (match err with
+                 Unix.EUNKNOWNERR n -> Format.sprintf " (code %d)" n
+               | _                  -> "")
+      in
       debug "exn"
         (fun() -> msg "Converting a Unix error to %s:\n%s\n" kindStr s);
       reraise s
@@ -257,7 +252,7 @@ let safeGetenv var =
   convertUnixErrorsToFatal
     "querying environment"
     (fun () ->
-       try Unix.getenv var
+       try System.getenv var
        with Not_found ->
          raise (Fatal ("Environment variable " ^ var ^ " not found")))
 
@@ -387,6 +382,12 @@ let endswith s1 s2 =
 let concatmap sep f l =
   String.concat sep (Safelist.map f l)
 
+let removeTrailingCR s =
+  let l = String.length s in
+  if l = 0 || s.[l - 1] <> '\r' then s else
+  String.sub s 0 (l - 1)
+
+(* FIX: quadratic! *)
 let rec trimWhitespace s =
   let l = String.length s in
   if l=0 then s
@@ -423,21 +424,26 @@ let padto n s = s ^ (String.make (max 0 (n - String.length s)) ' ')
 (*              Building pathnames in the user's home dir                    *)
 (*****************************************************************************)
 
-let fileInHomeDir n =
-  if (osType = `Unix) || isCygwin then
-    Filename.concat (safeGetenv "HOME") n
-  else if osType = `Win32 then
-    let dirString =
-      try Unix.getenv "HOME" (* Windows 9x with Cygwin HOME set *)
-      with Not_found ->
-      try Unix.getenv "USERPROFILE" (* Windows NT/2K standard *)
-      with Not_found ->
-      try Unix.getenv "UNISON" (* Use UNISON dir if it is set *)
-      with Not_found ->
-      "c:/" (* Default *) in
-    Filename.concat dirString n
-  else
-    assert false (* osType can't be anything else *)
+let homeDir () =
+  System.fspathFromString
+    (if (osType = `Unix) || isCygwin then
+       safeGetenv "HOME"
+     else if osType = `Win32 then
+(*We don't want the behavior of Unison to depends on whether it is run
+  from a Cygwin shell (where HOME is set) or in any other way (where
+  HOME is usually not set)
+       try System.getenv "HOME" (* Windows 9x with Cygwin HOME set *)
+       with Not_found ->
+*)
+       try System.getenv "USERPROFILE" (* Windows NT/2K standard *)
+       with Not_found ->
+       try System.getenv "UNISON" (* Use UNISON dir if it is set *)
+       with Not_found ->
+       "c:/" (* Default *)
+     else
+       assert false (* osType can't be anything else *))
+
+let fileInHomeDir n = System.fspathConcat (homeDir ()) n
 
 (*****************************************************************************)
 (*           "Upcall" for building pathnames in the .unison dir              *)

@@ -15,18 +15,10 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *)
 
-
-(*
-XXX
-- Check exception handling
-- Use Lwt_unix.system for the merge function
-   (Unix.open_process_in for diff)
-*)
-
 let (>>=) = Lwt.bind
 
 let debug = Trace.debug "remote"
-let debugV = Trace.debug "remote+"
+let debugV = Trace.debug "remote_emit+"
 let debugE = Trace.debug "remote+"
 let debugT = Trace.debug "remote+"
 
@@ -36,98 +28,141 @@ let debugT = Trace.debug "remote+"
    But that resulted in huge amounts of output from '-debug all'.
 *)
 
-let windowsHack = Sys.os_type <> "Unix"
+let _ =
+  if Sys.os_type = "Unix" then
+    ignore(Sys.set_signal Sys.sigpipe Sys.Signal_ignore)
+
+let _ =
+  if Sys.os_type = "Unix" then
+    ignore(Sys.set_signal Sys.sigpipe Sys.Signal_ignore)
+
+(*
+   Flow-control mechanism (only active under Windows).
+   Only one side is allowed to send messages at any given time.
+   Once it has finished sending messages, a special message is sent
+   meaning that the destination is now allowed to send messages.
+
+   Threads behave in a very controlled way: they only perform possibly
+   blocking I/Os through the remote module, and never call
+   Lwt_unix.yield.  This mean that when one side gives up its right to
+   write, we know that no matter how long we wait, it will not have
+   anything to write.  This ensures that there is no deadlock.
+   A more robust protocol would be to give up write permission
+   whenever idle (not just after having sent at least one message).
+   But then, there is the risk that the two sides exchange spurious
+   messages.
+*)
 
 (****)
 
+let intSize = 5
+
+let intHash x = ((x * 791538121) lsr 23 + 17) land 255
+
 let encodeInt m =
-  let int_buf = Bytearray.create 4 in
+  let int_buf = Bytearray.create intSize in
   int_buf.{0} <- Char.chr ( m         land 0xff);
   int_buf.{1} <- Char.chr ((m lsr 8)  land 0xff);
   int_buf.{2} <- Char.chr ((m lsr 16) land 0xff);
   int_buf.{3} <- Char.chr ((m lsr 24) land 0xff);
-  int_buf
+  int_buf.{4} <- Char.chr (intHash m);
+  (int_buf, 0, intSize)
 
 let decodeInt int_buf i =
   let b0 = Char.code (int_buf.{i + 0}) in
   let b1 = Char.code (int_buf.{i + 1}) in
   let b2 = Char.code (int_buf.{i + 2}) in
   let b3 = Char.code (int_buf.{i + 3}) in
-  ((b3 lsl 24) lor (b2 lsl 16) lor (b1 lsl 8) lor b0)
+  let m = (b3 lsl 24) lor (b2 lsl 16) lor (b1 lsl 8) lor b0 in
+  if Char.code (int_buf.{i + 4}) <> intHash m then
+    raise (Util.Fatal
+             "Protocol error: corrupted message received;\n\
+              if it happens to you in a repeatable way, \n\
+              please post a report on the unison-users mailing list.");
+  m
 
 (*************************************************************************)
 (*                           LOW-LEVEL IO                                *)
 (*************************************************************************)
 
-let lost_connection () =
+let lostConnection () =
   Lwt.fail (Util.Fatal "Lost connection with the server")
 
-let catch_io_errors th =
+let catchIoErrors th =
   Lwt.catch th
     (fun e ->
        match e with
          Unix.Unix_error(Unix.ECONNRESET, _, _)
        | Unix.Unix_error(Unix.EPIPE, _, _)
          (* Windows may also return the following errors... *)
-       | Unix.Unix_error(Unix.EINVAL, _, _) ->
+       | Unix.Unix_error(Unix.EINVAL, _, _)
+       | Unix.Unix_error(Unix.EUNKNOWNERR (-64), _, _)
+                         (* ERROR_NETNAME_DELETED *)
+       | Unix.Unix_error(Unix.EUNKNOWNERR (-233), _, _) ->
+                         (* ERROR_PIPE_NOT_CONNECTED *)
          (* Client has closed its end of the connection *)
-           lost_connection ()
+           lostConnection ()
        | _ ->
            Lwt.fail e)
 
 (****)
 
-type connection =
-  { inputChannel : Unix.file_descr;
-    inputBuffer : string;
-    mutable inputLength : int;
-    outputChannel : Unix.file_descr;
-    outputBuffer : string;
-    mutable outputLength : int;
-    outputQueue : (Bytearray.t * int * int) list Queue.t;
-    mutable pendingOutput : bool;
-    mutable flowControl : bool;
-    mutable canWrite : bool;
-    mutable tokens : int;
-    mutable reader : unit Lwt.t option }
-
 let receivedBytes = ref 0.
 let emittedBytes = ref 0.
 
-let inputBuffer_size = 8192
+(****)
 
-let fill_inputBuffer conn =
-  assert (conn.inputLength = 0);
-  catch_io_errors
+(* I/O buffers *)
+
+type ioBuffer =
+  { channel : Lwt_unix.file_descr;
+    buffer : string;
+    mutable length : int;
+    mutable opened : bool }
+
+let bufferSize = 16384
+(* No point in making this larger, as the Ocaml Unix library uses a
+   buffer of this size *)
+
+let makeBuffer ch =
+  { channel = ch; buffer = String.create bufferSize;
+    length = 0; opened = true }
+
+(****)
+
+(* Low-level inputs *)
+
+let fillInputBuffer conn =
+  assert (conn.length = 0);
+  catchIoErrors
     (fun () ->
-       Lwt_unix.read conn.inputChannel conn.inputBuffer 0 inputBuffer_size
-         >>= (fun len ->
+       Lwt_unix.read conn.channel conn.buffer 0 bufferSize >>= fun len ->
        debugV (fun() ->
          if len = 0 then
            Util.msg "grab: EOF\n"
          else
            Util.msg "grab: %s\n"
-             (String.escaped (String.sub conn.inputBuffer 0 len)));
+             (String.escaped (String.sub conn.buffer 0 len)));
        if len = 0 then
-         lost_connection ()
+         lostConnection ()
        else begin
          receivedBytes := !receivedBytes +. float len;
-         conn.inputLength <- len;
+         conn.length <- len;
          Lwt.return ()
-       end))
+       end)
 
-let rec grab_rec conn s pos len =
-  if conn.inputLength = 0 then begin
-    fill_inputBuffer conn >>= (fun () ->
-    grab_rec conn s pos len)
+let rec grabRec conn s pos len =
+  if conn.length = 0 then begin
+    fillInputBuffer conn >>= fun () ->
+    grabRec conn s pos len
   end else begin
-    let l = min (len - pos) conn.inputLength in
-    Bytearray.blit_from_string conn.inputBuffer 0 s pos l;
-    conn.inputLength <- conn.inputLength - l;
-    if conn.inputLength > 0 then
-      String.blit conn.inputBuffer l conn.inputBuffer 0 conn.inputLength;
+    let l = min (len - pos) conn.length in
+    Bytearray.blit_from_string conn.buffer 0 s pos l;
+    conn.length <- conn.length - l;
+    if conn.length > 0 then
+      String.blit conn.buffer l conn.buffer 0 conn.length;
     if pos + l < len then
-      grab_rec conn s (pos + l) len
+      grabRec conn s (pos + l) len
     else
       Lwt.return ()
   end
@@ -135,184 +170,206 @@ let rec grab_rec conn s pos len =
 let grab conn s len =
   assert (len > 0);
   assert (Bytearray.length s <= len);
-  grab_rec conn s 0 len
+  grabRec conn s 0 len
 
-let peek_without_blocking conn =
-  String.sub conn.inputBuffer 0 conn.inputLength
+let peekWithoutBlocking conn =
+  String.sub conn.buffer 0 conn.length
 
 (****)
 
-let outputBuffer_size = 8192
+(* Low-level outputs *)
 
-let rec send_output conn =
-  catch_io_errors
+let rec sendOutput conn =
+  catchIoErrors
     (fun () ->
-       Lwt_unix.write
-         conn.outputChannel conn.outputBuffer 0 conn.outputLength
-         >>= (fun len ->
+       begin if conn.opened then
+         Lwt_unix.write conn.channel conn.buffer 0 conn.length
+       else
+         Lwt.return conn.length
+       end >>= fun len ->
        debugV (fun() ->
          Util.msg "dump: %s\n"
-           (String.escaped (String.sub conn.outputBuffer 0 len)));
+           (String.escaped (String.sub conn.buffer 0 len)));
        emittedBytes := !emittedBytes +. float len;
-       conn.outputLength <- conn.outputLength - len;
-       if conn.outputLength > 0 then
+       conn.length <- conn.length - len;
+       if conn.length > 0 then
          String.blit
-           conn.outputBuffer len conn.outputBuffer 0 conn.outputLength;
-       Lwt.return ()))
+           conn.buffer len conn.buffer 0 conn.length;
+       Lwt.return ())
 
-let rec fill_buffer_2 conn s pos len =
-  if conn.outputLength = outputBuffer_size then
-    send_output conn >>= (fun () ->
-    fill_buffer_2 conn s pos len)
+let rec fillBuffer2 conn s pos len =
+  if conn.length = bufferSize then
+    sendOutput conn >>= fun () ->
+    fillBuffer2 conn s pos len
   else begin
-    let l = min (len - pos) (outputBuffer_size - conn.outputLength) in
-    Bytearray.blit_to_string s pos conn.outputBuffer conn.outputLength l;
-    conn.outputLength <- conn.outputLength + l;
+    let l = min (len - pos) (bufferSize - conn.length) in
+    Bytearray.blit_to_string s pos conn.buffer conn.length l;
+    conn.length <- conn.length + l;
     if pos + l < len then
-      fill_buffer_2 conn s (pos + l) len
+      fillBuffer2 conn s (pos + l) len
     else
       Lwt.return ()
   end
 
-let rec fill_buffer conn l =
+let rec fillBuffer conn l =
   match l with
     (s, pos, len) :: rem ->
       assert (pos >= 0);
       assert (len >= 0);
       assert (pos <= Bytearray.length s - len);
-      fill_buffer_2 conn s pos len >>= (fun () ->
-      fill_buffer conn rem)
+      fillBuffer2 conn s pos len >>= fun () ->
+      fillBuffer conn rem
   | [] ->
       Lwt.return ()
 
-(*
-   Flow-control mechanism (only active under windows).
-   Only one side is allowed to send message at any given time.
-   Once it has finished sending message, a special message is sent
-   meaning that the destination is now allowed to send messages.
-   A side is allowed to send any number of messages, but will then
-   not be allowed to send before having received the same number of
-   messages.
-   This way, there can be no dead-lock with both sides trying
-   simultaneously to send some messages.  Furthermore, multiple
-   messages can still be coalesced.
-*)
-let needFlowControl = windowsHack
+let rec flushBuffer conn =
+  if conn.length > 0 then
+    sendOutput conn >>= fun () ->
+    flushBuffer conn
+  else
+    Lwt.return ()
 
-(* Loop until the output buffer is empty *)
-let rec flush_buffer conn =
-  if conn.tokens <= 0 && conn.canWrite then begin
-    assert conn.flowControl;
-    conn.canWrite <- false;
-    debugE (fun() -> Util.msg "Sending write token\n");
-    (* Special message allowing the other side to write *)
-    fill_buffer conn [(encodeInt 0, 0, 4)] >>= (fun () ->
-    flush_buffer conn) >>= (fun () ->
-    if windowsHack then begin
-      debugE (fun() -> Util.msg "Restarting reader\n");
-      match conn.reader with
-        None ->
-          ()
-      | Some r ->
-          conn.reader <- None;
-          Lwt.wakeup r ()
-    end;
-    Lwt.return ())
-  end else if conn.outputLength > 0 then
-    send_output conn >>= (fun () ->
-    flush_buffer conn)
+(****)
+
+(* Output scheduling *)
+
+type kind = Normal | Idle | Last | Urgent
+
+type outputQueue =
+  { mutable available : bool;
+    mutable canWrite : bool;
+    mutable flowControl : bool;
+    writes : (kind * (unit -> unit Lwt.t) * unit Lwt.t) Queue.t;
+    urgentWrites : (kind * (unit -> unit Lwt.t) * unit Lwt.t) Queue.t;
+    idleWrites : (kind * (unit -> unit Lwt.t) * unit Lwt.t) Queue.t;
+    flush : outputQueue -> unit Lwt.t }
+
+let rec performOutputRec q (kind, action, res) =
+  action () >>= fun () ->
+  Lwt.wakeup res ();
+  popOutputQueues q
+
+and popOutputQueues q =
+  if not (Queue.is_empty q.urgentWrites) then
+    performOutputRec q (Queue.take q.urgentWrites)
+  else if not (Queue.is_empty q.writes) && q.canWrite then
+    performOutputRec q (Queue.take q.writes)
+  else if not (Queue.is_empty q.idleWrites) && q.canWrite then
+    performOutputRec q (Queue.take q.idleWrites)
   else begin
-    conn.pendingOutput <- false;
+    q.available <- true;
+    (* Flush asynchronously the output *)
+    Lwt.ignore_result (q.flush q);
     Lwt.return ()
   end
 
-let rec msg_length l =
-  match l with
-    [] -> 0
-  | (s, p, l)::r -> l + msg_length r
-
-(* Send all pending messages *)
-let rec dump_rec conn =
-  try
-    let l = Queue.take conn.outputQueue in
-    fill_buffer conn l >>= (fun () ->
-    if conn.flowControl then conn.tokens <- conn.tokens - 1;
-    debugE (fun () -> Util.msg "Remaining tokens: %d\n" conn.tokens);
-    dump_rec conn)
-  with Queue.Empty ->
-    (* We wait a bit before flushing everything, so that other packets
-       send just afterwards can be coalesced *)
-    Lwt_unix.yield () >>= (fun () ->
-    try
-      ignore (Queue.peek conn.outputQueue);
-      dump_rec conn
-    with Queue.Empty ->
-      flush_buffer conn)
-
-(* Start the thread that write all pending messages, if this thread is
-   not running at this time *)
-let signalSomethingToWrite conn =
-  if not conn.canWrite && conn.pendingOutput then
-    debugE
-      (fun () -> Util.msg "Something to write, but no write token (%d)\n"
-                          conn.tokens);
-  if conn.pendingOutput = false && conn.canWrite then begin
-    conn.pendingOutput <- true;
-    Lwt.ignore_result (dump_rec conn)
+(* Perform an output action in an atomic way *)
+let performOutput q kind action =
+  if q.available && (kind = Urgent || q.canWrite) then begin
+    q.available <- false;
+    performOutputRec q (kind, action, Lwt.wait ())
+  end else begin
+    let res = Lwt.wait () in
+    Queue.add (kind, action, res)
+      (match kind with
+         Urgent -> q.urgentWrites
+       | Normal -> q.writes
+       | Idle   -> q.idleWrites
+       | Last   -> assert false);
+    res
   end
 
-(* Add a message to the output queue and schedule its emission *)
-(* A message is a list of fragments of messages, represented by triplets
-   (string, position in string, length) *)
+let allowWrites q =
+  assert (not q.canWrite);
+  q.canWrite <- true;
+  q.available <- false;
+  (* We yield to let the receiving thread restart and to let some time
+     to the requests to be processed *)
+  Lwt.ignore_result (Lwt_unix.yield () >>= fun () -> popOutputQueues q)
+
+let disableFlowControl q =
+  q.flowControl <- false;
+  if not q.canWrite then allowWrites q
+
+let outputQueueIsEmpty q = q.available
+
+let makeOutputQueue isServer flush =
+  { available = true; canWrite = isServer; flowControl = true;
+    writes = Queue.create (); urgentWrites = Queue.create ();
+    idleWrites = Queue.create ();
+    flush = flush }
+
+(****)
+
+type connection =
+  { inputBuffer : ioBuffer;
+    outputBuffer : ioBuffer;
+    outputQueue : outputQueue }
+
+let maybeFlush pendingFlush q buf =
+  (* We return immediately if a flush is already scheduled, or if the
+     output buffer is already empty. *)
+  (* If we are doing flow control and we can write, we need to send
+     a write token even when the buffer is empty. *)
+  if
+    !pendingFlush || (buf.length = 0 && not (q.flowControl && q.canWrite))
+  then
+    Lwt.return ()
+  else begin
+    pendingFlush := true;
+    (* Wait a bit, in case there are some new requests being processed *)
+    Lwt_unix.yield () >>= fun () ->
+    pendingFlush := false;
+    (* If there are other writes scheduled, we do not flush yet *)
+    if outputQueueIsEmpty q then begin
+      performOutput q Last
+        (fun () ->
+           if q.flowControl then begin
+             debugE (fun() -> Util.msg "Sending write token\n");
+             q.canWrite <- false;
+             fillBuffer buf [encodeInt 0] >>= fun () ->
+             flushBuffer buf
+           end else
+             flushBuffer buf) >>= fun () ->
+      Lwt.return ()
+    end else
+      Lwt.return ()
+  end
+
+let makeConnection isServer inCh outCh =
+  let pendingFlush = ref false in
+  let outputBuffer = makeBuffer outCh in
+  { inputBuffer = makeBuffer inCh;
+    outputBuffer = outputBuffer;
+    outputQueue =
+      makeOutputQueue isServer
+        (fun q -> maybeFlush pendingFlush q outputBuffer) }
+
+(* Send message [l] *)
 let dump conn l =
-  Queue.add l conn.outputQueue;
-  signalSomethingToWrite conn;
-  Lwt.return ()
+  performOutput
+    conn.outputQueue Normal (fun () -> fillBuffer conn.outputBuffer l)
 
-(* Invoked when a special message is received from the other side,
-   allowing this side to send messages *)
-let allowWrites conn =
-  if conn.flowControl then begin
-    assert (conn.pendingOutput = false);
-    assert (not conn.canWrite);
-    conn.canWrite <- true;
-    debugE (fun () -> Util.msg "Received write token (%d)\n" conn.tokens);
-    (* Flush pending messages, if there are any *)
-    signalSomethingToWrite conn
-  end
+(* Send message [l] when idle *)
+let dumpIdle conn l =
+  performOutput
+    conn.outputQueue Idle (fun () -> fillBuffer conn.outputBuffer l)
 
-(* Invoked when a special message is received from the other side,
-   meaning that the other side does not block on write, and that
-   therefore there can be no dead-lock. *)
-let disableFlowControl conn =
-  debugE (fun () -> Util.msg "Flow control disabled\n");
-  conn.flowControl <- false;
-  conn.canWrite <- true;
-  conn.tokens <- 1;
-  (* We are allowed to write, so we flush pending messages, if there
-     are any *)
-  signalSomethingToWrite conn
+(* Send message [l], even if write are disabled.  This is used for
+   aborting rapidly a stream.  This works as long as only one small
+   message is written at a time (the write will succeed as the pipe
+   will not be full) *)
+let dumpUrgent conn l =
+  performOutput conn.outputQueue Urgent
+    (fun () ->
+       fillBuffer conn.outputBuffer l >>= fun () ->
+       flushBuffer conn.outputBuffer)
 
 (****)
 
 (* Initialize the connection *)
-let setupIO in_ch out_ch =
-  if not windowsHack then begin
-    Unix.set_nonblock in_ch;
-    Unix.set_nonblock out_ch
-  end;
-  { inputChannel = in_ch;
-    inputBuffer = String.create inputBuffer_size;
-    inputLength = 0;
-    outputChannel = out_ch;
-    outputBuffer = String.create outputBuffer_size;
-    outputLength = 0;
-    outputQueue = Queue.create ();
-    pendingOutput = false;
-    flowControl = true;
-    canWrite = true;
-    tokens = 1;
-    reader = None }
+let setupIO isServer inCh outCh =
+  makeConnection isServer inCh outCh
 
 (* XXX *)
 module Thread = struct
@@ -358,22 +415,8 @@ let rec first_chars len msg =
       else
         Bytearray.sub s p len
 
-(* An integer just a little smaller than the maximum representable in 30 bits *)
-let hugeint = 1000000000
-
 let safeMarshal marshalPayload tag data rem =
   let (rem', length) = marshalPayload data rem in
-  if length > hugeint then  begin
-    let start = first_chars (min length 10) rem' in
-    let start = if length > 10 then start ^ "..." else start in
-    let start = String.escaped start in
-    Util.msg "Fatal error in safeMarshal: sending too many (%d) bytes with tag %s and contents [%s]\n" length (Bytearray.to_string tag) start; 
-    raise (Util.Fatal ((Printf.sprintf
-             "Message payload too large (%d, %s, [%s]).  \n"
-                length (Bytearray.to_string tag) start)
-             ^ "This is a bug in Unison; if it happens to you in a repeatable way, \n"
-             ^ "please post a report on the unison-users mailing list."))
-  end;
   let l = Bytearray.length tag in
   debugE (fun() ->
             let start = first_chars (min length 10) rem' in
@@ -381,7 +424,7 @@ let safeMarshal marshalPayload tag data rem =
             let start = String.escaped start in
             Util.msg "send [%s] '%s' %d bytes\n"
               (Bytearray.to_string tag) start length);
-  ((encodeInt (l + length), 0, 4) :: (tag, 0, l) :: rem')
+  (encodeInt (l + length) :: (tag, 0, l) :: rem')
 
 let safeUnmarshal unmarshalPayload tag buf =
   let taglength = Bytearray.length tag in
@@ -471,21 +514,17 @@ let addversionno =
 
 (* List containing the connected hosts and the file descriptors of
    the communication. *)
-(*
-(* Perhaps the list would be better indexed by root
-     (host name [+ user name] [+ socket]) ... *)
-let connectedHosts = ref []
+let connectionsByHosts = ref []
 
 (* Gets the Read/Write file descriptors for a host;
    the connection must have been set up by canonizeRoot before calling *)
 let hostConnection host =
-  try Safelist.assoc host !connectedHosts
+  try Safelist.assoc host !connectionsByHosts
   with Not_found ->
-    raise(Util.Fatal "hostConnection")
-*)
+    raise(Util.Fatal "Remote.hostConnection")
 
-(* connectedHosts is a list of command-line roots, their corresponding
-   canonical host names and canonical fspaths, and their connections.
+(* connectedHosts is a list of command-line roots and their corresponding
+   canonical host names.
    Local command-line roots are not in the list.
    Although there can only be one remote host per sync, it's possible
    connectedHosts to hold more than one hosts if more than one sync is
@@ -494,22 +533,6 @@ let hostConnection host =
    same canonical root.
 *)
 let connectedHosts = ref []
-let hostConnection host = (* host must be canonical *)
-  let rec loop = function
-      [] -> raise(Util.Fatal "Remote.hostConnection")
-    | (cl,h,fspath,conn)::tl -> if h=host then conn else loop tl in
-  loop !connectedHosts
-
-let canonize clroot = (* connection for clroot must have been set up already *)
-  match clroot with
-    Clroot.ConnectLocal s -> (Common.Local, Fspath.canonize s)
-  | _ ->
-    let rec loop = function
-        [] -> raise(Util.Fatal "Remote.canonize")
-      | (cl,h,fspath,conn)::tl ->
-        if cl=clroot then (Common.Remote h,fspath) else loop tl in
-    loop !connectedHosts
-
 
 (**********************************************************************
                        CLIENT/SERVER PROTOCOLS
@@ -554,13 +577,13 @@ two switch roles.)
 
 let receivePacket conn =
   (* Get the length of the packet *)
-  let int_buf = Bytearray.create 4 in
-  grab conn int_buf 4 >>= (fun () ->
+  let int_buf = Bytearray.create intSize in
+  grab conn.inputBuffer int_buf intSize >>= (fun () ->
   let length = decodeInt int_buf 0 in
   assert (length >= 0);
   (* Get packet *)
   let buf = Bytearray.create length in
-  grab conn buf length >>= (fun () ->
+  grab conn.inputBuffer buf length >>= (fun () ->
   (debugE (fun () ->
              let start =
                if length > 10 then (Bytearray.sub buf 0 10) ^ "..."
@@ -574,11 +597,17 @@ type servercmd =
   ((Bytearray.t * int * int) list -> (Bytearray.t * int * int) list) Lwt.t
 let serverCmds = ref (Util.StringMap.empty : servercmd Util.StringMap.t)
 
+type serverstream =
+  connection -> Bytearray.t -> unit
+let serverStreams = ref (Util.StringMap.empty : serverstream Util.StringMap.t)
+
 type header =
     NormalResult
   | TransientExn of string
   | FatalExn of string
   | Request of string
+  | Stream of string
+  | StreamAbort
 
 let ((marshalHeader, unmarshalHeader) : header marshalingFunctions) =
   makeMarshalingFunctions defaultMarshalingFunctions "rsp"
@@ -591,22 +620,56 @@ let processRequest conn id cmdName buf =
   Lwt.try_bind (fun () -> cmd conn buf)
     (fun marshal ->
        debugE (fun () -> Util.msg "Sending result (id: %d)\n" (decodeInt id 0));
-       dump conn ((id, 0, 4) :: marshalHeader NormalResult (marshal [])))
+       dump conn ((id, 0, intSize) :: marshalHeader NormalResult (marshal [])))
     (function
        Util.Transient s ->
          debugE (fun () ->
            Util.msg "Sending transient exception (id: %d)\n" (decodeInt id 0));
-         dump conn ((id, 0, 4) :: marshalHeader (TransientExn s) [])
+         dump conn ((id, 0, intSize) :: marshalHeader (TransientExn s) [])
      | Util.Fatal s ->
          debugE (fun () ->
            Util.msg "Sending fatal exception (id: %d)\n" (decodeInt id 0));
-         dump conn ((id, 0, 4) :: marshalHeader (FatalExn s) [])
+         dump conn ((id, 0, intSize) :: marshalHeader (FatalExn s) [])
      | e ->
          Lwt.fail e)
+
+let streamAbortedSrc = ref 0
+let streamAbortedDst = ref false
+
+let streamError = Hashtbl.create 7
+
+let abortStream conn id =
+  if not !streamAbortedDst then begin
+    streamAbortedDst := true;
+    let request = encodeInt id :: marshalHeader StreamAbort [] in
+    dumpUrgent conn request
+  end else
+    Lwt.return ()
+
+let processStream conn id cmdName buf =
+  let id = decodeInt id 0 in
+  if Hashtbl.mem streamError id then
+   abortStream conn id
+  else begin
+    begin try
+      let cmd =
+        try Util.StringMap.find cmdName !serverStreams
+        with Not_found -> raise (Util.Fatal (cmdName ^ " not registered!"))
+      in
+      cmd conn buf;
+      Lwt.return ()
+    with e ->
+      Hashtbl.add streamError id e;
+      abortStream conn id
+    end
+  end
 
 (* Message ids *)
 type msgId = int
 module MsgIdMap = Map.Make (struct type t = msgId let compare = compare end)
+(* An integer just a little smaller than the maximum representable in
+   30 bits *)
+let hugeint = 1000000000
 let ids = ref 1
 let newMsgId () = incr ids; if !ids = hugeint then ids := 2; !ids
 
@@ -621,54 +684,54 @@ let find_receiver id =
 (* Receiving thread: read a message and dispatch it to the right
    thread or create a new thread to process requests. *)
 let rec receive conn =
-  (if windowsHack && conn.canWrite then
-     let wait = Lwt.wait () in
-     assert (conn.reader = None);
-     conn.reader <- Some wait;
-     wait
-   else
-     Lwt.return ()) >>= (fun () ->
-  debugE (fun () -> Util.msg "Waiting for next message\n");
-  (* Get the message ID *)
-  let id = Bytearray.create 4 in
-  grab conn id 4 >>= (fun () ->
-  let num_id = decodeInt id 0 in
-  if num_id = 0 then begin
-    debugE (fun () -> Util.msg "Received the write permission\n");
-    allowWrites conn;
-    receive conn
-  end else begin
-    if conn.flowControl then conn.tokens <- conn.tokens + 1;
-    debugE
-      (fun () -> Util.msg "Message received (id: %d) (tokens: %d)\n"
-                          num_id  conn.tokens);
-    (* Read the header *)
-    receivePacket conn >>= (fun buf ->
-    let req = unmarshalHeader buf in
-    begin match req with
-      Request cmdName ->
-        receivePacket conn >>= (fun buf ->
-        (* We yield before starting processing the request.
-           This way, the request may call [Lwt_unix.run] and this will
-           not block the receiving thread. *)
-        Lwt.ignore_result
-          (Lwt_unix.yield () >>= (fun () ->
-           processRequest conn id cmdName buf));
-        receive conn)
-    | NormalResult ->
-        receivePacket conn >>= (fun buf ->
-        Lwt.wakeup (find_receiver num_id) buf;
-        receive conn)
-    | TransientExn s ->
-        debugV (fun() -> Util.msg "receive: Transient remote error '%s']" s);
-        Lwt.wakeup_exn (find_receiver num_id) (Util.Transient s);
-        receive conn
-    | FatalExn s ->
-        debugV (fun() -> Util.msg "receive: Fatal remote error '%s']" s);
-        Lwt.wakeup_exn (find_receiver num_id) (Util.Fatal ("Server: " ^ s));
-        receive conn
+  begin
+    debugE (fun () -> Util.msg "Waiting for next message\n");
+    (* Get the message ID *)
+    let id = Bytearray.create intSize in
+    grab conn.inputBuffer id intSize >>= (fun () ->
+    let num_id = decodeInt id 0 in
+    if num_id = 0 then begin
+      debugE (fun () -> Util.msg "Received the write permission\n");
+      allowWrites conn.outputQueue;
+      receive conn
+    end else begin
+      debugE
+        (fun () -> Util.msg "Message received (id: %d)\n" num_id);
+      (* Read the header *)
+      receivePacket conn >>= (fun buf ->
+      let req = unmarshalHeader buf in
+      begin match req with
+        Request cmdName ->
+          receivePacket conn >>= (fun buf ->
+          (* We yield before starting processing the request.
+             This way, the request may call [Lwt_unix.run] and this will
+             not block the receiving thread. *)
+          Lwt.ignore_result
+            (Lwt_unix.yield () >>= (fun () ->
+             processRequest conn id cmdName buf));
+          receive conn)
+      | NormalResult ->
+          receivePacket conn >>= (fun buf ->
+          Lwt.wakeup (find_receiver num_id) buf;
+          receive conn)
+      | TransientExn s ->
+          debugV (fun() -> Util.msg "receive: Transient remote error '%s']" s);
+          Lwt.wakeup_exn (find_receiver num_id) (Util.Transient s);
+          receive conn
+      | FatalExn s ->
+          debugV (fun() -> Util.msg "receive: Fatal remote error '%s']" s);
+          Lwt.wakeup_exn (find_receiver num_id) (Util.Fatal ("Server: " ^ s));
+          receive conn
+      | Stream cmdName ->
+          receivePacket conn >>= fun buf ->
+          processStream conn id cmdName buf >>= fun () ->
+          receive conn
+      | StreamAbort ->
+          streamAbortedSrc := num_id;
+          receive conn
+      end)
     end)
-  end))
+  end
 
 let wait_for_reply id =
   let res = Lwt.wait () in
@@ -707,7 +770,7 @@ let registerSpecialServerCmd
     let id = newMsgId () in (* Message ID *)
     assert (id >= 0); (* tracking down an assert failure in receivePacket... *)
     let request =
-      (encodeInt id, 0, 4) ::
+      encodeInt id ::
       marshalHeader (Request cmdName) (marshalArgs serverArgs [])
     in
     let reply = wait_for_reply id in
@@ -770,6 +833,75 @@ let registerRootCmdWithConnection
     | _  -> let conn = hostConnection (hostOfRoot localRoot) in
             client0 conn args
 
+let streamReg = Lwt_util.make_region 1
+
+let streamingActivated =
+  Prefs.createBool "stream" true
+    ("!use a streaming protocol for transferring file contents")
+    "When this preference is set, Unison will use an experimental \
+     streaming protocol for transferring file contents more efficiently. \
+     The default value is \\texttt{true}."
+
+let registerStreamCmd
+    (cmdName : string)
+    marshalingFunctionsArgs
+    (serverSide : connection -> 'a -> unit)
+    =
+  let cmd =
+    registerSpecialServerCmd
+      cmdName marshalingFunctionsArgs defaultMarshalingFunctions
+      (fun conn v -> serverSide conn v; Lwt.return ())
+  in
+  let ping =
+    registerServerCmd (cmdName ^ "Ping")
+      (fun conn (id : int) ->
+         try
+           let e = Hashtbl.find streamError id in
+           Hashtbl.remove streamError id;
+           streamAbortedDst := false;
+           Lwt.fail e
+         with Not_found ->
+           Lwt.return ())
+  in
+  (* Check that this command name has not already been bound *)
+  if (Util.StringMap.mem cmdName !serverStreams) then
+    raise (Util.Fatal (cmdName ^ " already registered!"));
+  (* Create marshaling and unmarshaling functions *)
+  let ((marshalArgs,unmarshalArgs) : 'a marshalingFunctions) =
+    makeMarshalingFunctions marshalingFunctionsArgs (cmdName ^ "-str") in
+  (* Create a server function and remember it *)
+  let server conn buf =
+    let args = unmarshalArgs buf in
+    serverSide conn args
+  in
+  serverStreams := Util.StringMap.add cmdName server !serverStreams;
+  (* Create a client function and return it *)
+  let client conn id serverArgs =
+    debugE (fun () -> Util.msg "Sending stream chunk (id: %d)\n" id);
+    if !streamAbortedSrc = id then raise (Util.Transient "Streaming aborted");
+    let request =
+      encodeInt id ::
+      marshalHeader (Stream cmdName) (marshalArgs serverArgs [])
+    in
+    dumpIdle conn request
+  in
+  fun conn sender ->
+    if not (Prefs.read streamingActivated) then
+      sender (fun v -> cmd conn v)
+    else begin
+      (* At most one active stream at a time *)
+      let id = newMsgId () in (* Message ID *)
+      Lwt.try_bind
+        (fun () ->
+           Lwt_util.run_in_region streamReg 1
+             (fun () -> sender (fun v -> client conn id v)))
+        (fun v -> ping conn id >>= fun () -> Lwt.return v)
+        (fun e -> ping conn id >>= fun () -> Lwt.fail e)
+    end
+
+let commandAvailable =
+  registerRootCmd "commandAvailable"
+    (fun (_, cmdName) -> Lwt.return (Util.StringMap.mem cmdName !serverCmds))
 
 (****************************************************************************
                      BUILDING CONNECTIONS TO THE SERVER
@@ -781,11 +913,11 @@ let rec checkHeader conn buffer pos len =
   if pos = len then
     Lwt.return ()
   else begin
-    (grab conn buffer 1 >>= (fun () ->
+    (grab conn.inputBuffer buffer 1 >>= (fun () ->
     if buffer.{0} <> connectionHeader.[pos] then
       let prefix =
         String.sub connectionHeader 0 pos ^ Bytearray.to_string buffer in
-      let rest = peek_without_blocking conn in
+      let rest = peekWithoutBlocking conn.inputBuffer in
       Lwt.fail
         (Util.Fatal
            ("Received unexpected header from the server:\n \
@@ -810,64 +942,147 @@ let rec checkHeader conn buffer pos len =
    Both hosts must use non-blocking I/O (otherwise a dead-lock is
    possible with ssh).
 *)
+let halfduplex =
+  Prefs.createBool "halfduplex" false
+    "!force half-duplex communication with the server"
+    "When this flag is set to {\\tt true}, Unison network communication \
+     is forced to be half duplex (the client and the server never \
+     simultaneously emit data).  If you experience unstabilities with \
+     your network link, this may help.  The communication is always \
+     half-duplex when synchronizing with a Windows machine due to a \
+     limitation of Unison current implementation that could result \
+     in a deadlock."
 
 let negociateFlowControlLocal conn () =
-  if not needFlowControl then disableFlowControl conn;
-  Lwt.return needFlowControl
+  disableFlowControl conn.outputQueue;
+  Lwt.return false
 
 let negociateFlowControlRemote =
   registerServerCmd "negociateFlowControl" negociateFlowControlLocal
 
 let negociateFlowControl conn =
-  if not needFlowControl then
-    negociateFlowControlRemote conn () >>= (fun needed ->
-    if not needed then
-      negociateFlowControlLocal conn () >>= (fun _ -> Lwt.return ())
-    else
-      Lwt.return ())
-  else
-    Lwt.return ()
+  (* Flow control negociation can be done asynchronously. *)
+  if not (Prefs.read halfduplex) then
+    Lwt.ignore_result
+      (negociateFlowControlRemote conn () >>= fun needed ->
+       if not needed then
+         negociateFlowControlLocal conn ()
+       else
+         Lwt.return true)
 
 (****)
 
 let initConnection in_ch out_ch =
-  if not windowsHack then
-    ignore(Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
-  let conn = setupIO in_ch out_ch in
-  conn.canWrite <- false;
+  let conn = setupIO false in_ch out_ch in
   checkHeader
     conn (Bytearray.create 1) 0 (String.length connectionHeader) >>= (fun () ->
   Lwt.ignore_result (receive conn);
-  negociateFlowControl conn >>= (fun () ->
-  Lwt.return conn))
+  negociateFlowControl conn;
+  Lwt.return conn)
 
-let inetAddr host =
-  let targetHostEntry = Unix.gethostbyname host in
-  targetHostEntry.Unix.h_addr_list.(0)
+let rec findFirst f l =
+  match l with
+    []     -> Lwt.return None
+  | x :: r -> f x >>= fun v ->
+              match v with
+                None        -> findFirst f r
+              | Some _ as v -> Lwt.return v
+
+let printAddr host addr =
+  match addr with
+    Unix.ADDR_UNIX s ->
+      assert false
+  | Unix.ADDR_INET (s, p) ->
+      Format.sprintf "%s[%s]:%d" host (Unix.string_of_inet_addr s) p
+
+let buildSocket host port kind =
+  let attemptCreation ai =
+    Lwt.catch
+      (fun () ->
+         let socket =
+           Lwt_unix.socket
+             ai.Unix.ai_family ai.Unix.ai_socktype ai.Unix.ai_protocol
+         in
+         Lwt.catch
+           (fun () ->
+              begin match kind with
+                `Connect ->
+                  (* Connect (synchronously) to the remote host *)
+                  Lwt_unix.connect socket ai.Unix.ai_addr
+              | `Bind ->
+                  (* Allow reuse of local addresses for bind *)
+                  Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
+                  (* Bind the socket to portnum on the local host *)
+                  Lwt_unix.bind socket ai.Unix.ai_addr;
+                  (* Start listening, allow up to 1 pending request *)
+                  Lwt_unix.listen socket 1;
+                  Lwt.return ()
+              end >>= fun () ->
+              Lwt.return (Some socket))
+           (fun e ->
+              match e with
+                Unix.Unix_error _ ->
+                  Lwt_unix.close socket;
+                  Lwt.fail e
+              | _ ->
+                  Lwt.fail e))
+      (fun e ->
+         match e with
+           Unix.Unix_error (error, _, _) ->
+             begin match error with
+               Unix.EAFNOSUPPORT | Unix.EPROTONOSUPPORT | Unix.EINVAL ->
+                 ()
+             | _  ->
+                 let msg =
+                   match kind with
+                     `Connect ->
+                       Printf.sprintf "Can't connect to server %s: %s\n"
+                         (printAddr host ai.Unix.ai_addr)
+                         (Unix.error_message error)
+                   | `Bind ->
+                       Printf.sprintf
+                         "Can't bind socket to port %s at address [%s]: %s\n"
+                         port
+                         (match ai.Unix.ai_addr with
+                            Unix.ADDR_INET (addr, _) ->
+                              Unix.string_of_inet_addr addr
+                          | _ ->
+                              assert false)
+                         (Unix.error_message error)
+                 in
+                 Util.warn msg
+              end;
+              Lwt.return None
+         | _ ->
+             Lwt.fail e)
+  in
+  let options =
+    match kind with
+      `Connect -> [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]
+    | `Bind    -> [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ; Unix.AI_PASSIVE ]
+  in
+  findFirst attemptCreation (Unix.getaddrinfo host port options) >>= fun res ->
+  match res with
+    Some socket ->
+      Lwt.return socket
+  | None ->
+      let msg =
+        match kind with
+          `Connect ->
+             Printf.sprintf
+               "Failed to connect to the server on host %s:%s" host port
+        | `Bind ->
+             if host = "" then
+               Printf.sprintf "Can't bind socket to port %s" port
+             else
+               Printf.sprintf "Can't bind socket to port %s on host %s"
+                 port host
+      in
+      Lwt.fail (Util.Fatal msg)
 
 let buildSocketConnection host port =
-  Util.convertUnixErrorsToFatal "canonizeRoot" (fun () ->
-    let rec loop = function
-      [] ->
-        raise (Util.Fatal
-                 (Printf.sprintf
-                    "Can't find the IP address of the server (%s:%s)" host
-		    port))
-    | ai::r ->
-      (* create a socket to talk to the remote host *)
-      let socket = Unix.socket ai.Unix.ai_family ai.Unix.ai_socktype ai.Unix.ai_protocol in
-      begin try
-        Unix.connect socket ai.Unix.ai_addr;
-        initConnection socket socket
-      with
-        Unix.Unix_error (error, _, reason) ->
-          (if error != Unix.EAFNOSUPPORT then
-            Util.warn
-              (Printf.sprintf
-                    "Can't connect to server (%s:%s): %s" host port reason);
-           loop r)
-    end
-    in loop (Unix.getaddrinfo host port [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]))
+  buildSocket host port `Connect >>= fun socket ->
+  initConnection socket socket
 
 let buildShellConnection shell host userOpt portOpt rootName termInteract =
   let remoteCmd =
@@ -908,13 +1123,13 @@ let buildShellConnection shell host userOpt portOpt rootName termInteract =
     Safelist.concat
       (Safelist.map (fun s -> Util.splitIntoWords s ' ') preargs) in
   let argsarray = Array.of_list args in
-  let (i1,o1) = Unix.pipe() in
-  let (i2,o2) = Unix.pipe() in
+  let (i1,o1) = Lwt_unix.pipe_out () in
+  let (i2,o2) = Lwt_unix.pipe_in () in
   (* We need to make sure that there is only one reader and one
      writer by pipe, so that, when one side of the connection
      dies, the other side receives an EOF or a SIGPIPE. *)
-  Unix.set_close_on_exec i2;
-  Unix.set_close_on_exec o1;
+  Lwt_unix.set_close_on_exec i2;
+  Lwt_unix.set_close_on_exec o1;
   (* We add CYGWIN=binmode to the environment before calling
      ssh because the cygwin implementation on Windows sometimes
      puts the pipe in text mode (which does end of line
@@ -923,16 +1138,17 @@ let buildShellConnection shell host userOpt portOpt rootName termInteract =
      goes into text mode; this does not happen if unison is
      invoked from cygwin's bash.  By setting CYGWIN=binmode
      we force the pipe to remain in binary mode. *)
-  Unix.putenv "CYGWIN" "binmode";
+  System.putenv "CYGWIN" "binmode";
   debug (fun ()-> Util.msg "Shell connection: %s (%s)\n"
            shellCmd (String.concat ", " args));
   let term =
+    Util.convertUnixErrorsToFatal "starting shell connection" (fun () ->
     match termInteract with
       None ->
-        ignore (Unix.create_process shellCmd argsarray i1 o2 Unix.stderr);
+        ignore (System.create_process shellCmd argsarray i1 o2 Unix.stderr);
         None
     | Some callBack ->
-        fst (Terminal.create_session shellCmd argsarray i1 o2 Unix.stderr)
+        fst (Terminal.create_session shellCmd argsarray i1 o2 Unix.stderr))
   in
   Unix.close i1; Unix.close o2;
   begin match term, termInteract with
@@ -943,37 +1159,66 @@ let buildShellConnection shell host userOpt portOpt rootName termInteract =
   end;
   initConnection i2 o1
 
+let canonizeLocally s unicode =
+  (* We need to select the proper API in order to compute correctly the
+     canonical fspath *)
+  Fs.setUnicodeEncoding unicode;
+  Fspath.canonize s
+
 let canonizeOnServer =
   registerServerCmd "canonizeOnServer"
-    (fun _ s -> Lwt.return (Os.myCanonicalHostName, Fspath.canonize s))
+    (fun _ (s, unicode) ->
+       Lwt.return (Os.myCanonicalHostName, canonizeLocally s unicode))
 
-let canonizeRoot rootName clroot termInteract =
-  let finish ioServer s =
-    canonizeOnServer ioServer s >>= (fun (host, fspath) ->
-    connectedHosts := (clroot,host,fspath,ioServer)::(!connectedHosts);
-    Lwt.return (Common.Remote host,fspath)) in
-  let rec hostfspath = function
-         [] -> None
-       | (clroot',host,fspath,_)::tl ->
-         if clroot=clroot'
-         then Some(Lwt.return(Common.Remote host,fspath))
-         else hostfspath tl in
+let canonize clroot = (* connection for clroot must have been set up already *)
   match clroot with
     Clroot.ConnectLocal s ->
-      Lwt.return (Common.Local, Fspath.canonize s)
+      (Common.Local, canonizeLocally s (Case.useUnicodeAPI ()))
+  | _ ->
+      match
+        try
+          Some (Safelist.assoc clroot !connectedHosts)
+        with Not_found ->
+          None
+      with
+        None                -> raise (Util.Fatal "Remote.canonize")
+      | Some (h, fspath, _) -> (Common.Remote h, fspath)
+
+let listReplace v l = v :: Safelist.remove_assoc (fst v) l
+
+let rec hostFspath clroot =
+  try
+    let (_, _, ioServer) = Safelist.assoc clroot !connectedHosts in
+    Some (Lwt.return ioServer)
+  with Not_found ->
+    None
+
+let canonizeRoot rootName clroot termInteract =
+  let unicode = Case.useUnicodeAPI () in
+  let finish ioServer s =
+    (* We need to always compute the fspath as it depends on
+       unicode settings *)
+    canonizeOnServer ioServer (s, unicode) >>= (fun (host, fspath) ->
+    connectedHosts :=
+      listReplace (clroot, (host, fspath, ioServer)) !connectedHosts;
+    connectionsByHosts := listReplace (host, ioServer) !connectionsByHosts;
+    Lwt.return (Common.Remote host,fspath)) in
+  match clroot with
+    Clroot.ConnectLocal s ->
+      Lwt.return (Common.Local, canonizeLocally s unicode)
   | Clroot.ConnectBySocket(host,port,s) ->
-      (match hostfspath !connectedHosts with
+      begin match hostFspath clroot with
         Some x -> x
-      | None ->
-          buildSocketConnection host port >>= (fun ioServer ->
-            finish ioServer s))
+      | None   -> buildSocketConnection host port
+      end >>= fun ioServer ->
+      finish ioServer s
   | Clroot.ConnectByShell(shell,host,userOpt,portOpt,s) ->
-      (match hostfspath !connectedHosts with
+      begin match hostFspath clroot with
         Some x -> x
-      | None ->
-          buildShellConnection
-            shell host userOpt portOpt rootName termInteract >>=
-          (fun ioServer -> finish ioServer s))
+      | None   -> buildShellConnection
+                   shell host userOpt portOpt rootName termInteract
+      end >>= fun ioServer ->
+      finish ioServer s
 
 (* A new interface, useful for terminal interaction, it should
    eventually replace canonizeRoot and buildShellConnection *)
@@ -981,11 +1226,11 @@ let canonizeRoot rootName clroot termInteract =
    terminal interaction might be required (for ssh password) *)
 type preconnection =
      (Unix.file_descr
-     * Unix.file_descr
-     * Unix.file_descr
+     * Lwt_unix.file_descr
+     * Lwt_unix.file_descr
      * Unix.file_descr
      * string option
-     * Unix.file_descr option
+     * Lwt_unix.file_descr option
      * Clroot.clroot
      * int)
 let openConnectionStart clroot =
@@ -993,80 +1238,97 @@ let openConnectionStart clroot =
     Clroot.ConnectLocal s ->
       None
   | Clroot.ConnectBySocket(host,port,s) ->
-      (* This check isn't foolproof as the host in the clroot might not be canonical *)
-      if (Safelist.exists (fun (clroot',_,_,_) -> clroot=clroot') !connectedHosts)
-      then None
-      else begin
-        let ioServer = Lwt_unix.run(buildSocketConnection host port) in
-        let (host,fspath) = Lwt_unix.run(canonizeOnServer ioServer s) in
-        connectedHosts := (clroot,host,fspath,ioServer)::(!connectedHosts);
-        None
-      end
+      Lwt_unix.run
+        (begin match hostFspath clroot with
+           Some x -> x
+         | None   -> buildSocketConnection host port
+         end >>= fun ioServer ->
+         (* We need to always compute the fspath as it depends on
+            unicode settings *)
+         let unicode = Case.useUnicodeAPI () in
+         canonizeOnServer ioServer (s, unicode) >>= fun (host, fspath) ->
+         connectedHosts :=
+           listReplace (clroot, (host, fspath, ioServer)) !connectedHosts;
+         connectionsByHosts :=
+           listReplace (host, ioServer) !connectionsByHosts;
+         Lwt.return ());
+      None
   | Clroot.ConnectByShell(shell,host,userOpt,portOpt,s) ->
-      if (Safelist.exists (fun (clroot',_,_,_) -> clroot=clroot') !connectedHosts)
-      then None
-      else begin
-        let remoteCmd =
-          (if Prefs.read serverCmd="" then Uutil.myName
-           else Prefs.read serverCmd)
-          ^ (if Prefs.read addversionno then "-" ^ Uutil.myMajorVersion else "")
-          ^ " -server" in
-        let userArgs =
-          match userOpt with
-            None -> []
-          | Some user -> ["-l"; user] in
-        let portArgs =
-          match portOpt with
-            None -> []
-          | Some port -> ["-p"; port] in
-        let shellCmd =
-          (if shell = "ssh" then
-            Prefs.read sshCmd
-          else if shell = "rsh" then
-            Prefs.read rshCmd
-          else
-            shell) in
-        let shellCmdArgs = 
-          (if shell = "ssh" then
-            Prefs.read sshargs
-          else if shell = "rsh" then
-            Prefs.read rshargs
-          else
-            "") in
-        let preargs =
-            ([shellCmd]@userArgs@portArgs@
-             [host]@
-             (if shell="ssh" then ["-e none"] else [])@
-             [shellCmdArgs;remoteCmd]) in
-        (* Split compound arguments at space chars, to make
-           create_process happy *)
-        let args =
-          Safelist.concat
-            (Safelist.map (fun s -> Util.splitIntoWords s ' ') preargs) in
-        let argsarray = Array.of_list args in
-        let (i1,o1) = Unix.pipe() in
-        let (i2,o2) = Unix.pipe() in
-        (* We need to make sure that there is only one reader and one
-           writer by pipe, so that, when one side of the connection
-           dies, the other side receives an EOF or a SIGPIPE. *)
-        Unix.set_close_on_exec i2;
-        Unix.set_close_on_exec o1;
-        (* We add CYGWIN=binmode to the environment before calling
-           ssh because the cygwin implementation on Windows sometimes
-           puts the pipe in text mode (which does end of line
-           translation).  Specifically, if unison is invoked from
-           a DOS command prompt or other non-cygwin context, the pipe
-           goes into text mode; this does not happen if unison is
-           invoked from cygwin's bash.  By setting CYGWIN=binmode
-           we force the pipe to remain in binary mode. *)
-        Unix.putenv "CYGWIN" "binmode";
-        debug (fun ()-> Util.msg "Shell connection: %s (%s)\n"
-                 shellCmd (String.concat ", " args));
-        let (term,pid) =
-          Terminal.create_session shellCmd argsarray i1 o2 Unix.stderr in
-        (* after terminal interact, remember to close i1 and o2 *)
-        Some(i1,i2,o1,o2,s,term,clroot,pid)
-      end
+      match hostFspath clroot with
+         Some x ->
+           let unicode = Case.useUnicodeAPI () in
+           (* We recompute the fspath as it may have changed due to
+              unicode settings *)
+           Lwt_unix.run
+             (x >>= fun ioServer ->
+              canonizeOnServer ioServer (s, unicode) >>= fun (host, fspath) ->
+              connectedHosts :=
+                listReplace (clroot, (host, fspath, ioServer)) !connectedHosts;
+              connectionsByHosts :=
+                listReplace (host, ioServer) !connectionsByHosts;
+              Lwt.return ());
+           None
+      | None ->
+          let remoteCmd =
+            (if Prefs.read serverCmd="" then Uutil.myName
+             else Prefs.read serverCmd)
+            ^ (if Prefs.read addversionno then "-" ^ Uutil.myMajorVersion else "")
+            ^ " -server" in
+          let userArgs =
+            match userOpt with
+              None -> []
+            | Some user -> ["-l"; user] in
+          let portArgs =
+            match portOpt with
+              None -> []
+            | Some port -> ["-p"; port] in
+          let shellCmd =
+            (if shell = "ssh" then
+              Prefs.read sshCmd
+            else if shell = "rsh" then
+              Prefs.read rshCmd
+            else
+              shell) in
+          let shellCmdArgs = 
+            (if shell = "ssh" then
+              Prefs.read sshargs
+            else if shell = "rsh" then
+              Prefs.read rshargs
+            else
+              "") in
+          let preargs =
+              ([shellCmd]@userArgs@portArgs@
+               [host]@
+               (if shell="ssh" then ["-e none"] else [])@
+               [shellCmdArgs;remoteCmd]) in
+          (* Split compound arguments at space chars, to make
+             create_process happy *)
+          let args =
+            Safelist.concat
+              (Safelist.map (fun s -> Util.splitIntoWords s ' ') preargs) in
+          let argsarray = Array.of_list args in
+          let (i1,o1) = Lwt_unix.pipe_out() in
+          let (i2,o2) = Lwt_unix.pipe_in() in
+          (* We need to make sure that there is only one reader and one
+             writer by pipe, so that, when one side of the connection
+             dies, the other side receives an EOF or a SIGPIPE. *)
+          Lwt_unix.set_close_on_exec i2;
+          Lwt_unix.set_close_on_exec o1;
+          (* We add CYGWIN=binmode to the environment before calling
+             ssh because the cygwin implementation on Windows sometimes
+             puts the pipe in text mode (which does end of line
+             translation).  Specifically, if unison is invoked from
+             a DOS command prompt or other non-cygwin context, the pipe
+             goes into text mode; this does not happen if unison is
+             invoked from cygwin's bash.  By setting CYGWIN=binmode
+             we force the pipe to remain in binary mode. *)
+          System.putenv "CYGWIN" "binmode";
+          debug (fun ()-> Util.msg "Shell connection: %s (%s)\n"
+                   shellCmd (String.concat ", " args));
+          let (term,pid) =
+            Terminal.create_session shellCmd argsarray i1 o2 Unix.stderr in
+          (* after terminal interact, remember to close i1 and o2 *)
+          Some(i1,i2,o1,o2,s,term,clroot,pid)
 
 let openConnectionPrompt = function
     (i1,i2,o1,o2,s,Some fdTerm,clroot,pid) ->
@@ -1077,23 +1339,32 @@ let openConnectionPrompt = function
 let openConnectionReply = function
     (i1,i2,o1,o2,s,Some fdTerm,clroot,pid) ->
     (fun response ->
-      (* FIX: should loop on write, watch for EINTR, etc. *)
-      ignore(Unix.write fdTerm (response ^ "\n") 0 (String.length response + 1)))
+      (* FIX: should loop until everything is written... *)
+      ignore (Lwt_unix.run (Lwt_unix.write fdTerm (response ^ "\n") 0
+                              (String.length response + 1))))
   | _ -> (fun _ -> ())
 
 let openConnectionEnd (i1,i2,o1,o2,s,_,clroot,pid) =
       Unix.close i1; Unix.close o2;
-      let ioServer = Lwt_unix.run (initConnection i2 o1) in
-      let (host,fspath) = Lwt_unix.run(canonizeOnServer ioServer s) in
-      connectedHosts := (clroot,host,fspath,ioServer)::(!connectedHosts)
+      Lwt_unix.run
+        (initConnection i2 o1 >>= fun ioServer ->
+         let unicode = Case.useUnicodeAPI () in
+         canonizeOnServer ioServer (s, unicode) >>= fun (host, fspath) ->
+         connectedHosts :=
+           listReplace (clroot, (host, fspath, ioServer)) !connectedHosts;
+         connectionsByHosts :=
+           listReplace (host, ioServer) !connectionsByHosts;
+         Lwt.return ())
 
 let openConnectionCancel (i1,i2,o1,o2,s,fdopt,clroot,pid) =
-      try Unix.kill pid Sys.sigkill with _ -> ();
-      try Unix.close i1 with _ -> ();
-      try Unix.close i2 with _ -> ();
-      try Unix.close o1 with _ -> ();
-      try Unix.close o2 with _ -> ();
-      match fdopt with None -> () | Some fd -> (try Unix.close fd with _ -> ())
+      try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ();
+      try Unix.close i1 with Unix.Unix_error _ -> ();
+      try Lwt_unix.close i2 with Unix.Unix_error _ -> ();
+      try Lwt_unix.close o1 with Unix.Unix_error _ -> ();
+      try Unix.close o2 with Unix.Unix_error _ -> ();
+      match fdopt with
+        None    -> ()
+      | Some fd -> (try Lwt_unix.close fd with Unix.Unix_error _ -> ())
 
 (****************************************************************************)
 (*                     SERVER-MODE COMMAND PROCESSING LOOP                  *)
@@ -1116,10 +1387,10 @@ let commandLoop in_ch out_ch =
   Trace.runningasserver := true;
   (* Send header indicating to the client that it has successfully
      connected to the server *)
-  let conn = setupIO in_ch out_ch in
-  try
-    Lwt_unix.run
-      (dump conn [(Bytearray.of_string connectionHeader, 0,
+  let conn = setupIO true in_ch out_ch in
+  Lwt.catch
+    (fun e ->
+       dump conn [(Bytearray.of_string connectionHeader, 0,
                    String.length connectionHeader)]
          >>= (fun () ->
        (* Set the local warning printer to make an RPC to the client and
@@ -1130,9 +1401,23 @@ let commandLoop in_ch out_ch =
          Some (fun str -> Lwt_unix.run (forwardMsgToClient conn str));
        receive conn >>=
        Lwt.wait))
-(*    debug (fun () -> Util.msg "Should never happen\n") *)
-  with Util.Fatal "Lost connection with the server" ->
-    debug (fun () -> Util.msg "Connection closed by the client\n")
+    (fun e ->
+       match e with
+         Util.Fatal "Lost connection with the server" ->
+           debug (fun () -> Util.msg "Connection closed by the client\n");
+           (* We prevents new writes and wait for any current write to
+              terminate.  As we don't have a good way to wait for the
+              writer to terminate, we just yield a bit. *)
+           let rec wait n =
+             if n = 0 then Lwt.return () else begin
+               Lwt_unix.yield () >>= fun () ->
+               wait (n - 1)
+             end
+           in
+           conn.outputBuffer.opened <- false;
+           wait 10
+       | _ ->
+           Lwt.fail e)
 
 let killServer =
   Prefs.createBool "killserver" false
@@ -1153,61 +1438,42 @@ let _ = Prefs.alias killServer "killServer"
    for a request. Each request is processed by commandLoop. When a
    session finishes, the server waits for another request. *)
 let waitOnPort hostOpt port =
-  Util.convertUnixErrorsToFatal
-    "waiting on port"
+  Util.convertUnixErrorsToFatal "waiting on port"
     (fun () ->
-      let host = match hostOpt with
-        Some host -> host
-      | None -> "" in
-      let rec loop = function
-        [] -> raise (Util.Fatal
-		       (if host = "" then
-                        Printf.sprintf "Can't bind socket to port %s" port
-                        else
-                        Printf.sprintf "Can't bind socket to port %s on host %s" port host))
-      | ai::r ->
-        (* Open a socket to listen for queries *)
-        let socket = Unix.socket ai.Unix.ai_family ai.Unix.ai_socktype
-	  ai.Unix.ai_protocol in
-	begin try
-          (* Allow reuse of local addresses for bind *)
-          Unix.setsockopt socket Unix.SO_REUSEADDR true;
-          (* Bind the socket to portnum on the local host *)
-	  Unix.bind socket ai.Unix.ai_addr;
-          (* Start listening, allow up to 1 pending request *)
-          Unix.listen socket 1;
-	  socket
-	with
-	  Unix.Unix_error (error, _, reason) ->
-            (if error != Unix.EAFNOSUPPORT then
-               Util.msg
-                 "Can't bind socket to port %s at address [%s]: %s\n"
-                 port
-                 (match ai.Unix.ai_addr with
-                    Unix.ADDR_INET (addr, _) -> Unix.string_of_inet_addr addr
-                  | _                        -> assert false)
-                 (Unix.error_message error);
-	     loop r)
-	end in
-      let listening = loop (Unix.getaddrinfo host port [ Unix.AI_SOCKTYPE
-        Unix.SOCK_STREAM ; Unix.AI_PASSIVE ]) in
-      Util.msg "server started\n";
-      while
-        (* Accept a connection *)
-        let (connected,_) = Os.accept listening in
-        Unix.setsockopt connected Unix.SO_KEEPALIVE true;
-        commandLoop connected connected;
-        (* The client has closed its end of the connection *)
-        begin try Unix.close connected with Unix.Unix_error _ -> () end;
-        not (Prefs.read killServer)
-      do () done)
+       let host =
+         match hostOpt with
+           Some host -> host
+         | None      -> ""
+       in
+       let listening = Lwt_unix.run (buildSocket host port `Bind) in
+       Util.msg "server started\n";
+       let rec handleClients () =
+         let (connected, _) =
+           Lwt_unix.run (Lwt_unix.accept listening)
+         in
+         Lwt_unix.setsockopt connected Unix.SO_KEEPALIVE true;
+         begin try
+           (* Accept a connection *)
+           Lwt_unix.run (commandLoop connected connected)
+         with Util.Fatal "Lost connection with the server" -> () end;
+         (* The client has closed its end of the connection *)
+         begin try Lwt_unix.close connected with Unix.Unix_error _ -> () end;
+         if not (Prefs.read killServer) then handleClients ()
+       in
+       handleClients ())
 
 let beAServer () =
   begin try
-    Sys.chdir (Sys.getenv "HOME")
+    let home = System.getenv "HOME" in
+    Util.convertUnixErrorsToFatal
+      "changing working directory"
+      (fun () -> System.chdir (System.fspathFromString home))
   with Not_found ->
     Util.msg
       "Environment variable HOME unbound: \
        executing server in current directory\n"
   end;
-  commandLoop Unix.stdin Unix.stdout
+  Lwt_unix.run
+    (commandLoop
+       (Lwt_unix.of_unix_file_descr Unix.stdin)
+       (Lwt_unix.of_unix_file_descr Unix.stdout))

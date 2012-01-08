@@ -44,6 +44,7 @@ module type FILESIZE = sig
   val dummy : t
   val add : t -> t -> t
   val sub : t -> t -> t
+  val ofFloat : float -> t
   val toFloat : t -> float
   val toString : t -> string
   val ofInt : int -> t
@@ -57,10 +58,11 @@ end
 
 module Filesize : FILESIZE = struct
   type t = int64
-  let zero = Int64.zero
-  let dummy = Int64.minus_one
+  let zero = 0L
+  let dummy = -1L
   let add = Int64.add
   let sub = Int64.sub
+  let ofFloat = Int64.of_float
   let toFloat = Int64.to_float
   let toString = Int64.to_string
   let ofInt x = Int64.of_int x
@@ -137,7 +139,7 @@ let readWriteBounded source target len notify =
       if n > 0 then begin
         let _ = output target buf 0 n in
         l := !l + n;
-        if !l > 100 * 1024 then begin
+        if !l >= 100 * 1024 then begin
           notify !l;
           l := 0
         end;
@@ -148,3 +150,17 @@ let readWriteBounded source target len notify =
       notify !l
   in
   Util.convertUnixErrorsToTransient "readWriteBounded" (fun () -> read len)
+
+(*****************************************************************************)
+(*                      ESCAPING SHELL PARAMETERS                            *)
+(*****************************************************************************)
+
+(* Using single quotes is simpler under Unix but they are not accepted
+   by the Windows shell.  Double quotes without further quoting is
+   sufficient with Windows as filenames are not allowed to contain
+   double quotes. *)
+let quotes s =
+  if Util.osType = `Win32 && not Util.isCygwin then
+    "\"" ^ s ^ "\""
+  else
+    "'" ^ Util.replacesubstring s "'" "'\\''" ^ "'"

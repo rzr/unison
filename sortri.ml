@@ -100,18 +100,18 @@ let sortNewFirst () =
 (* Main sorting functions *)
 
 let shouldSortFirst ri =
-  Pred.test sortfirst (Path.toString ri.path)
+  Pred.test sortfirst (Path.toString ri.path1)
 let shouldSortLast ri =
-  Pred.test sortlast (Path.toString ri.path)
+  Pred.test sortlast (Path.toString ri.path1)
 
-let newItem ri = 
+let newItem ri =
   let newItem1 ri =
     match ri.replicas with
-      Different((_, `Created, _, _), _, _, _) -> true
+      Different diff -> diff.rc1.status = `Created
     | _ -> false in
   let newItem2 ri =
     match ri.replicas with
-      Different(_, (_, `Created, _, _), _, _) -> true
+      Different diff -> diff.rc2.status = `Created
     | _ -> false
   in newItem1 ri || newItem2 ri
 
@@ -130,6 +130,7 @@ let compareReconItems () =
     let cmp = 
       combineCmp [
         pred problematic;
+        pred partiallyProblematic;
         pred shouldSortFirst;
         invertCmp (pred shouldSortLast);
         if newfirst then pred newItem else 0;
@@ -138,10 +139,10 @@ let compareReconItems () =
           let l2 = Common.riLength ri2 in
           if l1<l2 then -1 else if l2<l1 then 1 else 0
          else 0);
-        (compare (Path.toString ri1.path) (Path.toString ri2.path))
+        (compare (Path.toString ri1.path1) (Path.toString ri2.path1))
       ] in
     dbgsort (fun() -> Util.msg "%s <= %s --> %d\n"
-               (Path.toString ri1.path) (Path.toString ri2.path) cmp);
+               (Path.toString ri1.path1) (Path.toString ri2.path1) cmp);
     cmp
 
 let sortReconItems items = Safelist.stable_sort (compareReconItems()) items
