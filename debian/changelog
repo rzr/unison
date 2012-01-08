@@ -1,8 +1,16 @@
-unison (2.40.63-1) UNRELEASED; urgency=low
+unison (2.40.63-1) experimental; urgency=low
 
-  * New upstream release
+  * Team upload
+  * New upstream release (Closes: #641462)
+    - remove all former patches; the issues they fix seem to have been
+      addressed upstream
+    - add a new patch to fix all typos reported by Lintian
+  * debian/control:
+    - remove build-dependency to quilt
+    - replace Conflicts by Replaces/Breaks
+    - bump Standards-Version to 3.9.2 (no changes)
 
- -- Stéphane Glondu <glondu@debian.org>  Sun, 08 Jan 2012 13:48:32 +0100
+ -- Stéphane Glondu <glondu@debian.org>  Sun, 08 Jan 2012 14:25:17 +0100
 
 unison (2.32.52-3) unstable; urgency=low
 
