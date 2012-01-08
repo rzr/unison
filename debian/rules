@@ -89,17 +89,8 @@ DEB_INSTALL_CHANGELOGS_ALL := NEWS
 # Build unison
 #
  
-BACKUP=lwt/depend ubase/depend
 configure::
 	cp config/Makefile.unix config/Makefile
-	for i in $(BACKUP); do \
-	  if ! test -e $$i.org; then cp $$i $$i.org; fi; \
-	done
-
-clean::
-	for i in $(BACKUP); do \
-	  if test -e $$i.org; then mv $$i.org $$i; fi; \
-	done
 
 build/$(UNISON_PACKAGE)::
 	$(MAKE) UISTYLE=text NATIVE=$(NATIVE) $(MY_MAKE_FLAGS) CFLAGS=
@@ -114,6 +105,7 @@ clean::
 	-$(RM) '$(CURDIR)/$(UNISON_GTK)'
 	-$(RM) '$(CURDIR)/$(UNISON)'
 	$(MAKE) clean
+	rm lwt/depend ubase/depend
 
 debian/unison-manual.txt: build/$(UNISON_PACKAGE)
 	env HOME='$(CURDIR)' '$(CURDIR)/$(UNISON)' -doc all > '$(CURDIR)/unison-manual.txt'
