@@ -1,8 +1,12 @@
-unison2.32.52 (2.32.52-4) UNRELEASED; urgency=low
+unison2.32.52 (2.32.52-4) unstable; urgency=low
 
+  * Team upload
   * Fork a unison2.32.52 package, to maintain compatibility with squeeze
+  * debian/control:
+    - replace Conflicts by Replaces/Breaks
+    - bump Standards-Version to 3.9.2 (no changes)
 
- -- Stéphane Glondu <glondu@debian.org>  Sun, 03 Apr 2011 13:16:18 +0200
+ -- Stéphane Glondu <glondu@debian.org>  Sun, 08 Jan 2012 13:03:50 +0100
 
 unison (2.32.52-3) unstable; urgency=low
 
