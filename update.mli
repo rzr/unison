@@ -1,7 +1,7 @@
 (* Unison file synchronizer: src/update.mli *)
 (* Copyright 1999-2009, Benjamin C. Pierce (see COPYING for details) *)
 
-module NameMap : Map.S with type key = Name.t
+module NameMap : MyMap.S with type key = Name.t
 
 type archive =
     ArchiveDir of Props.t * archive NameMap.t
@@ -18,39 +18,31 @@ val storeRootsName : unit -> unit
 (* Retrieve the actual names of the roots *)
 val getRootsName : unit -> string 
 
-val findOnRoot :
-  Common.root -> Path.t list -> Common.updateItem list Lwt.t
-
 (* Structures describing dirty files/dirs (1 per path given in the -path preference) *)
 val findUpdates :
-  unit -> Common.updateItem list Common.oneperpath
+  unit -> ((Path.local * Common.updateItem * Props.t list) *
+           (Path.local * Common.updateItem * Props.t list)) list
 
 (* Take a tree of equal update contents and update the archive accordingly. *)
 val markEqual :
-  (Name.t, Common.updateContent * Common.updateContent) Tree.t -> unit
+  (Name.t * Name.t, Common.updateContent * Common.updateContent) Tree.t -> unit
 
-(* Commit in memory the last archive updates, or rollback if an exception is
-   raised.  A commit function must have been specified on both sides before
-   finishing the transaction. *)
-type transaction
-val transaction : (transaction -> unit Lwt.t) -> unit Lwt.t
-
-(* Update a part of an archive *)
-val updateArchive :
-  Common.root -> Path.t -> Common.updateItem -> transaction ->
-  (Path.local * archive) Lwt.t
+(* Get and update a part of an archive (the archive remains unchanged) *)
+val updateArchive : Fspath.t -> Path.local -> Common.updateItem -> archive
 (* Replace a part of an archive by another archive *)
-val replaceArchive :
-  Common.root -> Path.t -> (Fspath.t * Path.local) option ->
-  archive -> transaction -> bool -> bool -> Path.local Lwt.t
+val replaceArchive : Common.root -> Path.t -> archive -> unit Lwt.t
+val replaceArchiveLocal : Fspath.t -> Path.local -> archive -> unit
 (* Update only some permissions *)
 val updateProps :
-  Common.root -> Path.t -> Props.t option -> Common.updateItem ->
-  transaction -> Path.local Lwt.t
+  Fspath.t -> 'a Path.path -> Props.t option -> Common.updateItem -> unit
 
 (* Check that no updates has taken place in a given place of the filesystem *)
+(* Returns an archive mirroring the filesystem contents *)
 val checkNoUpdates :
- Common.root -> Path.t -> Common.updateItem -> unit Lwt.t
+  Fspath.t -> Path.local -> Common.updateItem -> archive
+
+(* Turn off fastcheck for the given file on the next sync. *)
+val markPossiblyUpdated : Fspath.t -> Path.local -> unit
 
 (* Save to disk the archive updates *)
 val commitUpdates : unit -> unit
@@ -75,3 +67,13 @@ val useFastChecking : unit -> bool
 (* Print the archive to the current formatter (see Format) *)
 val showArchive: archive -> unit
 
+(* Compute the size of an update *)
+val updateSize : Path.t -> Common.updateItem -> int * Uutil.Filesize.t
+
+(* Iterate on all files in an archive *)
+val iterFiles :
+  Fspath.t -> Path.local -> archive ->
+  (Fspath.t -> Path.local -> Os.fullfingerprint -> unit) -> unit
+
+(* (For breaking the dependency loop between update.ml and stasher.ml...) *)
+val setStasherFun : (Fspath.t -> Path.local -> unit) -> unit

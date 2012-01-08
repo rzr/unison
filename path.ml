@@ -146,6 +146,7 @@ let is_absolute s =
      loop "c:/foo" -> ["c:"; "foo"]
 *)
 let fromString str =
+  let str0 = str in
   let str = if Util.osType = `Win32 then Fileutil.backslashes2forwardslashes str else str in
   if is_absolute str then
     raise (Util.Transient
@@ -156,22 +157,32 @@ let fromString str =
     try
       let pos = String.index str pathSeparatorChar in
       let name1 = String.sub str 0 pos in
+      if name1 = ".." then
+        raise (Util.Transient
+                 (Printf.sprintf
+                    "Reference to parent directory '..' not allowed \
+                     in path '%s'" str0));
       let str_res =
         String.sub str (pos + 1) (String.length str - pos - 1) in
-      if pos = 0 then begin
+      if pos = 0 || name1 = "." then begin
         loop p str_res
       end else
         loop (child p (Name.fromString name1)) str_res
     with
-      Not_found -> child p (Name.fromString str)
+      Not_found ->
+        if str = ".." then
+          raise (Util.Transient
+                   (Printf.sprintf
+                      "Reference to parent directory '..' not allowed \
+                       in path '%s'" str0));
+        if str = "." then p else child p (Name.fromString str)
     | Invalid_argument _ ->
         raise(Invalid_argument "Path.fromString") in
   loop empty str
 
 let toString path = path
 
-let compare p1 p2 =
-  if Case.insensitive () then Util.nocase_cmp p1 p2 else compare p1 p2
+let compare p1 p2 = (Case.ops())#compare p1 p2
 
 let toDebugString path = String.concat " / " (toStringList path)
 
@@ -191,21 +202,23 @@ let addPrefixToFinalName path prefix =
     assert (not (isEmpty path));
     prefix ^ path
 
+(* No need to perform case normalization on local paths *)
 let hash p = Hashtbl.hash p
+let equal (p1 : local) (p2 : local) = p1 = p2
 
 (* Pref controlling whether symlinks are followed. *)
-let follow = Pred.create "follow"
+let followPred = Pred.create ~advanced:true "follow"
     ("Including the preference \\texttt{-follow \\ARG{pathspec}} causes Unison to \
       treat symbolic links matching \\ARG{pathspec} as `invisible' and \
       behave as if the object pointed to by the link had appeared literally \
       at this position in the replica.  See \
       \\sectionref{symlinks}{Symbolic Links} for more details. \
-      The syntax of \\ARG{pathspec>} is \
+      The syntax of \\ARG{pathspec} is \
       described in \\sectionref{pathspec}{Path Specification}.")
 
 let followLink path =
      (Util.osType = `Unix || Util.isCygwin)
-  && Pred.test follow (toString path)
+  && Pred.test followPred (toString path)
 
-let magic p = p
-let magic' p = p
+let forceLocal p = p
+let makeGlobal p = p

@@ -18,6 +18,26 @@
 
 let debugV = Util.debug "fileinfo+"
 
+let allowSymlinks =
+  Prefs.createBoolWithDefault "links"
+    "!allow the synchronization of symbolic links (true/false/default)"
+    ("When set to {\\tt true}, this flag causes Unison to synchronize \
+      symbolic links.  When the flag is set to {\\tt false}, symbolic \
+      links will result in an error during update detection.  \
+      Ordinarily, when the flag is set to {\\tt default}, symbolic \
+      links are synchronized except when one of the hosts is running \
+      Windows.  In rare circumstances it may be useful to set the flag \
+      manually.")
+
+let symlinksAllowed =
+  Prefs.createBool "links-aux" true
+    "*Pseudo-preference for internal use only" ""
+
+let init b =
+  Prefs.set symlinksAllowed
+    (Prefs.read allowSymlinks = `True ||
+     (Prefs.read allowSymlinks = `Default && not b))
+
 type typ = [ `ABSENT | `FILE | `DIRECTORY | `SYMLINK ]
 
 let type2string = function
@@ -26,22 +46,21 @@ let type2string = function
   | `DIRECTORY -> "dir"
   | `SYMLINK   -> "symlink"
 
-type t = { typ : typ; inode : int; ctime : float;
-           desc : Props.t; osX : Osx.info}
+type t = { typ : typ; inode : int; desc : Props.t; osX : Osx.info}
 
 (* Stat function that pays attention to pref for following links             *)
 let statFn fromRoot fspath path =
   let fullpath = Fspath.concat fspath path in
-  let stats = Fspath.lstat fullpath in
+  let stats = Fs.lstat fullpath in
   if stats.Unix.LargeFile.st_kind = Unix.S_LNK 
      && fromRoot 
      && Path.followLink path
   then 
-    try Fspath.stat fullpath 
+    try Fs.stat fullpath 
     with Unix.Unix_error((Unix.ENOENT | Unix.ENOTDIR),_,_) ->
       raise (Util.Transient (Printf.sprintf
         "Path %s is marked 'follow' but its target is missing"
-        (Fspath.toString fullpath)))
+        (Fspath.toPrintString fullpath)))
   else
     stats
 
@@ -52,17 +71,25 @@ let get fromRoot fspath path =
        try
          let stats = statFn fromRoot fspath path in
          debugV (fun () ->
-                   Util.msg "%s: %b %f %f\n" (Fspath.concatToString fspath path)
+                   Util.msg "%s: %b %f %f\n"
+                     (Fspath.toDebugString (Fspath.concat fspath path))
                      fromRoot stats.Unix.LargeFile.st_ctime stats.Unix.LargeFile.st_mtime);
          let typ =
            match stats.Unix.LargeFile.st_kind with
              Unix.S_REG -> `FILE
            | Unix.S_DIR -> `DIRECTORY
-           | Unix.S_LNK -> `SYMLINK
+           | Unix.S_LNK ->
+               if not fromRoot || Prefs.read symlinksAllowed then
+                 `SYMLINK
+               else
+                 raise
+                   (Util.Transient
+                      (Format.sprintf "path %s is a symbolic link"
+                         (Fspath.toPrintString (Fspath.concat fspath path))))
            | _ ->
                raise (Util.Transient
                         ("path " ^
-                         (Fspath.concatToString fspath path) ^
+                         (Fspath.toPrintString (Fspath.concat fspath path)) ^
                          " has unknown file type"))
          in
          let osxInfos = Osx.getFileInfos fspath path typ in
@@ -70,14 +97,12 @@ let get fromRoot fspath path =
            inode    = (* The inode number is truncated so that
                          it fits in a 31 bit ocaml integer *)
                       stats.Unix.LargeFile.st_ino land 0x3FFFFFFF;
-           ctime    = stats.Unix.LargeFile.st_ctime;
            desc     = Props.get stats osxInfos;
            osX      = osxInfos }
        with
          Unix.Unix_error((Unix.ENOENT | Unix.ENOTDIR),_,_) ->
          { typ = `ABSENT;
            inode    = 0;
-           ctime    = 0.0;
            desc     = Props.dummy;
            osX      = Osx.getFileInfos fspath path `ABSENT })
 
@@ -122,24 +147,21 @@ type stamp =
       fastcheck expects ctime to be preserved by renaming.  Thus, we should
       probably not use any stamp under Windows. *)
 
-let pretendLocalOSIsWin32 =
-  Prefs.createBool "pretendwin" false
-    "!Use creation times for detecting updates"
-    ("When set to true, this preference makes Unison use Windows-style "
-  ^ "fast update detection (using file creation times as "
-  ^ "``pseudo-inode-numbers''), even when running on a Unix system.  This "
-  ^ "switch should be used with care, as it is less safe than the standard "
-  ^ "update detection method, but it can be useful for synchronizing VFAT "
-  ^ "filesystems (which do not support inode numbers) mounted on Unix "
-  ^ "systems.  The {\\tt fastcheck} option should also be set to true.")
+let ignoreInodeNumbers =
+  Prefs.createBool "ignoreinodenumbers" false
+    "!ignore inode number changes when detecting updates"
+    ("When set to true, this preference makes Unison not take advantage \
+      of inode numbers during fast update detection. \
+      This switch should be used with care, as it \
+      is less safe than the standard update detection method, but it \
+      can be useful with filesystems which do not support inode numbers.")
+let _ = Prefs.alias ignoreInodeNumbers "pretendwin"
 
 let stamp info =
        (* Was "CtimeStamp info.ctime", but this is bogus: Windows
           ctimes are not reliable. *)
-  if Prefs.read pretendLocalOSIsWin32 then CtimeStamp 0.0 else
-  match Util.osType with
-    `Unix  -> InodeStamp info.inode
-  | `Win32 -> CtimeStamp 0.0
+  if Prefs.read ignoreInodeNumbers then CtimeStamp 0.0 else
+  if Fs.hasInodeNumbers () then InodeStamp info.inode else CtimeStamp 0.0
 
 let ressStamp info = Osx.stamp info.osX
 
@@ -161,3 +183,24 @@ let unchanged fspath path info =
   (info', dataUnchanged,
    Osx.ressUnchanged info.osX.Osx.ressInfo info'.osX.Osx.ressInfo
      (Some t0) dataUnchanged)
+
+(****)
+
+let get' f =
+  Util.convertUnixErrorsToTransient
+  "querying file information"
+    (fun () ->
+       try
+         let stats = System.stat f in
+         let typ = `FILE in
+         let osxInfos = Osx.defaultInfos typ in
+         { typ   = typ;
+           inode = stats.Unix.LargeFile.st_ino land 0x3FFFFFFF;
+           desc  = Props.get stats osxInfos;
+           osX   = osxInfos }
+       with
+         Unix.Unix_error((Unix.ENOENT | Unix.ENOTDIR),_,_) ->
+         { typ = `ABSENT;
+           inode    = 0;
+           desc     = Props.dummy;
+           osX      = Osx.defaultInfos `ABSENT })

@@ -19,9 +19,6 @@ val auto : bool Prefs.t
 (* User preference: How tall to make the main window in the GTK ui *)
 val mainWindowHeight : int Prefs.t
 
-(* User preference: Should we reuse top-level windows as much as possible? *)
-val reuseToplevelWindows : bool Prefs.t
-
 (* User preference: Expert mode *)
 val expert : bool Prefs.t
 
@@ -58,6 +55,12 @@ val roots2string : unit -> string
 (* Format a reconItem (and its status string) for display, eliding
    initial components that are the same as the previous path *)
 val reconItem2string : Path.t -> Common.reconItem -> string -> string
+
+type action = AError | ASkip of bool | ALtoR of bool | ARtoL of bool | AMerge
+
+(* Same as previous function, but returns a tuple of strings *)
+val reconItem2stringList :
+  Path.t -> Common.reconItem -> string * action * string * string
 
 (* Format an exception for display *)
 val exn2string : exn -> string
@@ -100,7 +103,7 @@ val initPrefs :
   termInteract:(string -> string -> string) option ->
   unit
 
-val checkCaseSensitivity : unit -> unit Lwt.t
+val validateAndFixupPrefs : unit -> unit Lwt.t
 
 (* Exit codes *)
 val perfectExit: int   (* when everything's okay *)

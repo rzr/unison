@@ -50,22 +50,10 @@ let auto =
 (* This has to be here rather than in uigtk.ml, because it is part of what
    gets sent to the server at startup *)
 let mainWindowHeight =
-  Prefs.createInt "height" 20
+  Prefs.createInt "height" 15
     "!height (in lines) of main window in graphical interface"
     ("Used to set the height (in lines) of the main window in the graphical "
      ^ "user interface.")
-
-let reuseToplevelWindows =
-  Prefs.createBool "reusewindows" false
-    "*reuse top-level windows instead of making new ones" ""
-(* Not sure if this should actually be made available to users...
-    ("When true, causes the graphical interface to re-use top-level windows "
-     ^ "(e.g., the small window that says ``Connecting...'') rather than "
-     ^ "destroying them and creating fresh ones.  ") 
-*)
-(* For convenience: *)
-let _ = Prefs.alias reuseToplevelWindows "rw"
-
 
 let expert =
   Prefs.createBool "expert" false
@@ -187,17 +175,19 @@ let prevProps newprops ui =
       (* || Props.similar newprops oldprops *)
       " (was: "^(Props.toString oldprops)^")"
 
-let replicaContent2string rc sep = 
-  let (typ, status, desc, ui) = rc in
-  let d s = s ^ sep ^ Props.toString desc ^ prevProps desc ui in
-  match typ, status with
+let replicaContentDesc rc =
+  Props.toString (Props.setLength rc.desc (snd rc.size))
+
+let replicaContent2string rc sep =
+  let d s = s ^ sep ^ replicaContentDesc rc ^ prevProps rc.desc rc.ui in
+  match rc.typ, rc.status with
     `ABSENT, `Unchanged ->
       "absent"
   | _, `Unchanged ->
       "unchanged "
-     ^(Util.truncateString (Fileinfo.type2string typ) 7)
+     ^(Util.truncateString (Fileinfo.type2string rc.typ) 7)
      ^ sep
-     ^(Props.toString desc)
+     ^ replicaContentDesc rc
   | `ABSENT, `Deleted -> "deleted"
   | `FILE, `Created ->
      d (choose "new file         " "file             ")
@@ -223,8 +213,7 @@ let replicaContent2string rc sep =
       assert false
   
 let replicaContent2shortString rc =
-  let (typ, status, _, _) = rc in
-  match typ, status with
+  match rc.typ, rc.status with
     _, `Unchanged             -> "        "
   | `ABSENT, `Deleted         -> "deleted "
   | `FILE, `Created           -> choose "new file" "file    "
@@ -255,7 +244,7 @@ let details2string theRi sep =
   match theRi.replicas with
     Problem s ->
       Printf.sprintf "Error: %s\n" s
-  | Different(rc1, rc2, _, _) ->
+  | Different {rc1 = rc1; rc2 = rc2} ->
       let root1str, root2str =
         roots2niceStrings 12 (Globals.roots()) in
       Printf.sprintf "%s : %s\n%s : %s"
@@ -286,43 +275,65 @@ let roots2string () =
   let replica1, replica2 = roots2niceStrings 12 (Globals.roots()) in
   (Printf.sprintf "%s   %s       " replica1 replica2) 
 
-let direction2niceString = function
-    Conflict           -> "<-?->"
-  | Replica1ToReplica2 -> "---->"
-  | Replica2ToReplica1 -> "<----"
-  | Merge              -> "<-M->"
+type action = AError | ASkip of bool | ALtoR of bool | ARtoL of bool | AMerge
+
+let direction2action partial dir =
+  match dir with
+    Conflict           -> ASkip partial
+  | Replica1ToReplica2 -> ALtoR partial
+  | Replica2ToReplica1 -> ARtoL partial
+  | Merge              -> AMerge
+
+let action2niceString action =
+  match action with
+    AError      -> "error"
+  | ASkip _     -> "<-?->"
+  | ALtoR false -> "---->"
+  | ALtoR true  -> "--?->"
+  | ARtoL false -> "<----"
+  | ARtoL true  -> "<-?--"
+  | AMerge      -> "<-M->"
+
+let reconItem2stringList oldPath theRI =
+  match theRI.replicas with
+    Problem s ->
+      ("        ", AError, "        ", displayPath oldPath theRI.path1)
+  | Different diff ->
+      let partial = diff.errors1 <> [] || diff.errors2 <> [] in
+      (replicaContent2shortString diff.rc1,
+       direction2action partial diff.direction,
+       replicaContent2shortString diff.rc2,
+       displayPath oldPath theRI.path1)
 
 let reconItem2string oldPath theRI status =
-  let theLine =
-    match theRI.replicas with
-      Problem s ->
-        "         error           " ^ status
-    | Different(rc1, rc2, dir, _) ->
-        let signs =
-          Printf.sprintf "%s %s %s"
-            (replicaContent2shortString rc1)
-            (direction2niceString (!dir))
-            (replicaContent2shortString rc2) in
-        Printf.sprintf "%s  %s" signs status in
-  Printf.sprintf "%s %s" theLine (displayPath oldPath theRI.path)
+  let (r1, action, r2, path) = reconItem2stringList oldPath theRI in
+  Format.sprintf "%s %s %s %s %s" r1 (action2niceString action) r2 status path
 
 let exn2string = function
     Sys.Break      -> "Terminated!"
   | Util.Fatal(s)  -> Printf.sprintf "Fatal error: %s" s
   | Util.Transient(s) -> Printf.sprintf "Error: %s" s
+  | Unix.Unix_error (err, fun_name, arg) ->
+      Printf.sprintf "Uncaught unix error: %s failed%s: %s%s"
+        fun_name
+        (if String.length arg > 0 then Format.sprintf " on \"%s\"" arg else "")
+        (Unix.error_message err)
+        (match err with
+           Unix.EUNKNOWNERR n -> Format.sprintf " (code %d)" n
+         | _                  -> "")
+  | Invalid_argument s -> Printf.sprintf "Invalid argument: %s" s
   | other -> Printf.sprintf "Uncaught exception %s" (Printexc.to_string other)
 
 (* precondition: uc = File (Updates(_, ..) on both sides *)
 let showDiffs ri printer errprinter id =
-  let p = ri.path in
   match ri.replicas with
     Problem _ ->
       errprinter
         "Can't diff files: there was a problem during update detection"
-  | Different((`FILE, _, _, ui1), (`FILE, _, _, ui2), _, _) ->
+  | Different {rc1 = {typ = `FILE; ui = ui1}; rc2 = {typ = `FILE; ui = ui2}} ->
       let (root1,root2) = Globals.roots() in
       begin
-        try Files.diff root1 p ui1 root2 p ui2 printer id
+        try Files.diff root1 ri.path1 ui1 root2 ri.path2 ui2 printer id
         with Util.Transient e -> errprinter e
       end 
   | Different _ ->
@@ -339,13 +350,13 @@ let dangerousPathMsg dangerousPaths =
   if dangerousPaths = [Path.empty] then
     "The root of one of the replicas has been completely emptied.\n\
      Unison may delete everything in the other replica.  (Set the \n\
-     'confirmbigdel' preference to false to disable this check.)"
+     'confirmbigdel' preference to false to disable this check.)\n"
   else
     Printf.sprintf
       "The following paths have been completely emptied in one replica:\n  \
        %s\n\
        Unison may delete everything below these paths in the other replica.\n
-       (Set the 'confirmbigdel' preference to false to disable this check.)"
+       (Set the 'confirmbigdel' preference to false to disable this check.)\n"
       (String.concat "\n  "
          (Safelist.map (fun p -> "'" ^ (Path.toString p) ^ "'")
             dangerousPaths))
@@ -423,31 +434,55 @@ let debug = Trace.debug "startup"
 
 (* ---- *)
 
+(*FIX: remove when Unison version > 2.40 *)
+let _ =
+Remote.registerRootCmd "_unicodeCaseSensitive_" (fun _ -> Lwt.return ())
+let supportUnicodeCaseSensitive () =
+  if Uutil.myMajorVersion > "2.40" (* The test is correct until 2.99... *) then
+    Lwt.return true
+  else begin
+    Globals.allRootsMap
+      (fun r -> Remote.commandAvailable r "_unicodeCaseSensitive_")
+    >>= fun l ->
+    Lwt.return (List.for_all (fun x -> x) l)
+  end
+
 (* Determine the case sensitivity of a root (does filename FOO==foo?) *)
 let architecture =
   Remote.registerRootCmd
     "architecture"
-    (fun (_,()) -> return (Util.osType = `Win32, Osx.isMacOSX))
+    (fun (_,()) -> return (Util.osType = `Win32, Osx.isMacOSX, Util.isCygwin))
 
 (* During startup the client determines the case sensitivity of each root.
    If any root is case insensitive, all roots must know this -- it's
-   propagated in a pref. *)
-(* FIX: this does more than check case sensitivity, it also detects
-   HFS (needed for resource forks) and Windows (needed for permissions)...
-   needs a new name *)
-let checkCaseSensitivity () =
+   propagated in a pref.  Also, detects HFS (needed for resource forks) and
+   Windows (needed for permissions) and does some sanity checking. *) 
+let validateAndFixupPrefs () =
+  Props.validatePrefs();
+  let supportUnicodeCaseSensitive = supportUnicodeCaseSensitive () in
   Globals.allRootsMap (fun r -> architecture r ()) >>= (fun archs ->
+  supportUnicodeCaseSensitive >>= fun unicodeCS ->
   let someHostIsRunningWindows =
-    Safelist.exists (fun (isWin, _) -> isWin) archs in
+    Safelist.exists (fun (isWin, _, _) -> isWin) archs in
   let allHostsAreRunningWindows =
-    Safelist.for_all (fun (isWin, _) -> isWin) archs in
+    Safelist.for_all (fun (isWin, _, _) -> isWin) archs in
+  let someHostIsRunningBareWindows =
+    Safelist.exists (fun (isWin, _, isCyg) -> isWin && not isCyg) archs in
   let someHostRunningOsX =
-    Safelist.exists (fun (_, isOSX) -> isOSX) archs in
+    Safelist.exists (fun (_, isOSX, _) -> isOSX) archs in
   let someHostIsCaseInsensitive =
     someHostIsRunningWindows || someHostRunningOsX in
-  Case.init someHostIsCaseInsensitive;
+  if Prefs.read Globals.fatFilesystem then begin
+    Prefs.overrideDefault Props.permMask 0;
+    Prefs.overrideDefault Props.dontChmod true;
+    Prefs.overrideDefault Case.caseInsensitiveMode `True;
+    Prefs.overrideDefault Fileinfo.allowSymlinks `False;
+    Prefs.overrideDefault Fileinfo.ignoreInodeNumbers true
+  end;
+  Case.init someHostIsCaseInsensitive (someHostRunningOsX && unicodeCS);
   Props.init someHostIsRunningWindows;
   Osx.init someHostRunningOsX;
+  Fileinfo.init someHostIsRunningBareWindows;
   Prefs.set Globals.someHostIsRunningWindows someHostIsRunningWindows;
   Prefs.set Globals.allHostsAreRunningWindows allHostsAreRunningWindows;
   return ())
@@ -460,7 +495,7 @@ let promptForRoots getFirstRoot getSecondRoot =
   let r2 = match getSecondRoot() with None -> exit 0 | Some r -> r in
   (* Remember them for this run, ordering them so that the first
      will come out on the left in the UI *)
-  Globals.setRawRoots [r2;r1];
+  Globals.setRawRoots [r1; r2];
   (* Save them in the current profile *)
   ignore (Prefs.add "root" r1);
   ignore (Prefs.add "root" r2)
@@ -472,11 +507,15 @@ let promptForRoots getFirstRoot getSecondRoot =
    we ignore the command line *)
 let firstTime = ref(true)
 
+(* Roots given on the command line *)
+let cmdLineRawRoots = ref []
+
 (* BCP: WARNING: Some of the code from here is duplicated in uimacbridge...! *)
 let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
               ~termInteract =
   (* Restore prefs to their default values, if necessary *)
   if not !firstTime then Prefs.resetToDefaults();
+  Globals.setRawRoots !cmdLineRawRoots;
 
   (* Tell the preferences module the name of the profile *)
   Prefs.profileName := Some(profileName);
@@ -492,7 +531,7 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
     (* If the profile does not exist, create an empty one (this should only
        happen if the profile is 'default', since otherwise we will already
        have checked that the named one exists). *)
-    if not(Sys.file_exists (Prefs.profilePathname profileName)) then
+    if not(System.file_exists (Prefs.profilePathname profileName)) then
       Prefs.addComment "Unison preferences file";
 
     (* Load the profile *)
@@ -505,7 +544,8 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
   end;
 
   (* Parse the command line.  This will override settings from the profile. *)
-  if !firstTime then begin
+  (* JV (6/09): always reparse the command line *)
+  if true (*!firstTime*) then begin
     debug (fun() -> Util.msg "about to parse command line");
     Prefs.parseCmdLine usageMsg;
   end;
@@ -527,9 +567,11 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
     promptForRoots getFirstRoot getSecondRoot;
   end;
 
+  Recon.checkThatPreferredRootIsValid();
+
   (* The following step contacts the server, so warn the user it could take
      some time *)
-  if !firstTime && (not (Prefs.read contactquietly || Prefs.read Trace.terse)) then 
+  if not (Prefs.read contactquietly || Prefs.read Trace.terse) then
     displayWaitMessage();
 
   (* Canonize the names of the roots, sort them (with local roots first),
@@ -560,7 +602,9 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
 
   Update.storeRootsName ();
 
-  if not (Prefs.read contactquietly || Prefs.read Trace.terse) then
+  if
+    numRemote > 0 && not (Prefs.read contactquietly || Prefs.read Trace.terse)
+  then
     Util.msg "Connected [%s]\n"
       (Util.replacesubstring (Update.getRootsName()) ", " " -> ");
 
@@ -577,11 +621,9 @@ let initPrefs ~profileName ~displayWaitMessage ~getFirstRoot ~getSecondRoot
                         Printf.eprintf "       %s\n" (root2string r))
          (Globals.rootsInCanonicalOrder());
        Printf.eprintf "\n");
-
-  Recon.checkThatPreferredRootIsValid();
   
   Lwt_unix.run
-    (checkCaseSensitivity () >>=
+    (validateAndFixupPrefs () >>=
      Globals.propagatePrefs);
 
   (* Initializes some backups stuff according to the preferences just loaded from the profile.
@@ -633,9 +675,9 @@ let uiInit
       match Util.StringMap.find "rest" args with
         [] -> ()
       | [profile] -> clprofile := Some profile
-      | [root1;root2] -> Globals.setRawRoots [root1;root2]
-      | [root1;root2;profile] ->
-          Globals.setRawRoots [root1;root2];
+      | [root2;root1] -> cmdLineRawRoots := [root1;root2]
+      | [root2;root1;profile] ->
+          cmdLineRawRoots := [root1;root2];
           clprofile := Some profile
       | _ ->
           (reportError(Printf.sprintf
@@ -653,7 +695,7 @@ let uiInit
     (match !clprofile with
       None -> Util.msg "No profile given on command line"
     | Some s -> Printf.eprintf "Profile '%s' given on command line" s);
-    (match Globals.rawRoots() with
+    (match !cmdLineRawRoots with
       [] -> Util.msg "No roots given on command line"
     | [root1;root2] ->
         Printf.eprintf "Roots '%s' and '%s' given on command line"
@@ -663,28 +705,26 @@ let uiInit
   let profileName =
     begin match !clprofile with
       None ->
-        let dirString = Fspath.toString Os.unisonDir in
-        let profiles_exist = (Files.ls dirString "*.prf")<>[] in
-        let clroots_given = (Globals.rawRoots() <> []) in
+        let clroots_given = !cmdLineRawRoots <> [] in
         let n =
-          if profiles_exist && not(clroots_given) then begin
-            (* Unison has been used before: at least one profile exists.
-               Ask the user to choose a profile or create a new one. *)
+          if not(clroots_given) then begin
+            (* Ask the user to choose a profile or create a new one. *)
             clprofile := getProfile();
             match !clprofile with
               None -> exit 0 (* None means the user wants to quit *)
             | Some x -> x 
           end else begin
-            (* First time use, OR roots given on command line.
-               In either case, the profile should be the default. *)
+            (* Roots given on command line.
+               The profile should be the default. *)
             clprofile := Some "default";
             "default"
           end in
         n
     | Some n ->
         let f = Prefs.profilePathname n in
-        if not(Sys.file_exists f)
-        then (reportError (Printf.sprintf "Profile %s does not exist" f);
+        if not(System.file_exists f)
+        then (reportError (Printf.sprintf "Profile %s does not exist"
+                             (System.fspathToPrintString f));
               exit 1);
         n
     end in

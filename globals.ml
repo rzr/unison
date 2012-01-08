@@ -40,14 +40,13 @@ let rawroots =
      ^ "that, if Unison is invoked later with a slightly different name "
      ^ "for the same root, it will be able to locate the correct archives.")
 
-let setRawRoots l =
-  Prefs.set rawroots l
+let setRawRoots l = Prefs.set rawroots (Safelist.rev l)
 
-let rawRoots () = Prefs.read rawroots
+let rawRoots () = Safelist.rev (Prefs.read rawroots)
 
-let rootsInitialName () =
+let rawRootPair () =
   match rawRoots () with
-    [r2; r1] -> (r1, r2)
+    [r1; r2] -> (r1, r2)
   | _        -> assert false
 
 let theroots = ref []
@@ -67,7 +66,7 @@ let installRoots termInteract =
        cont >>= (fun l ->
        return (r' :: l))))
     roots (return []) >>= (fun roots' ->
-  theroots := Safelist.rev roots';
+  theroots := roots';
   return ())
 
 (* Alternate interface, should replace old interface eventually *)
@@ -76,8 +75,8 @@ let installRoots2 () =
   let roots = rawRoots () in
   theroots :=
     Safelist.map Remote.canonize ((Safelist.map Clroot.parseRoot) roots);
-  theroots := Safelist.rev !theroots (* Not sure why this is needed... *)
-  
+  theroots := !theroots
+
 let roots () =
   match !theroots with
     [root1;root2] -> (root1,root2)
@@ -86,6 +85,8 @@ let roots () =
 let rootsList() = !theroots
 
 let rootsInCanonicalOrder() = Common.sortRoots (!theroots)
+
+let localRoot () = List.hd (rootsInCanonicalOrder ())
 
 let reorderCanonicalListToUsersOrder l =
   if rootsList() = rootsInCanonicalOrder() then l
@@ -162,7 +163,7 @@ let paths =
 
 (* FIX: this does weird things in case-insensitive mode... *)
 let globPath lr p =
-  let p = Path.magic p in
+  let p = Path.forceLocal p in
   debug (fun() ->
     Util.msg "Checking path '%s' for expansions\n"
       (Path.toDebugString p) );
@@ -175,10 +176,10 @@ let globPath lr p =
                   (Path.toString p)
                   "but first root (after canonizing) is non-local"))
       | Some lrfspath -> 
-          Safelist.map (fun c -> Path.magic' (Path.child parent c))
+          Safelist.map (fun c -> Path.makeGlobal (Path.child parent c))
             (Os.childrenOf lrfspath parent)
       end 
-  | _ -> [Path.magic' p]
+  | _ -> [Path.makeGlobal p]
 
 let expandWildcardPaths() =
   let lr =
@@ -220,7 +221,7 @@ let batch =
 let confirmBigDeletes =
   Prefs.createBool "confirmbigdel" true
     "!ask about whole-replica (or path) deletes"
-    ("!When this is set to {\\tt true}, Unison will request an extra confirmation if it appears "
+    ("When this is set to {\\tt true}, Unison will request an extra confirmation if it appears "
      ^ "that the entire replica has been deleted, before propagating the change.  If the {\\tt batch} "
      ^ "flag is also set, synchronization will be aborted.  When the {\\tt path} preference is used, "
      ^ "the same confirmation will be requested for top-level paths.  (At the moment, this flag only "
@@ -228,7 +229,7 @@ let confirmBigDeletes =
 
 let () = Prefs.alias confirmBigDeletes "confirmbigdeletes"
 
-let ignore =
+let ignorePred =
   Pred.create "ignore"
     ("Including the preference \\texttt{-ignore \\ARG{pathspec}} causes Unison to "
      ^ "completely ignore paths that match \\ARG{pathspec} (as well as their "
@@ -238,7 +239,7 @@ let ignore =
      ^ "details on ignoring paths is found in"
      ^ " \\sectionref{ignore}{Ignoring Paths}.")
     
-let ignorenot =
+let ignorenotPred =
   Pred.create "ignorenot"
     ("This preference overrides the preference \\texttt{ignore}. 
       It gives a list of patterns 
@@ -254,18 +255,18 @@ let ignorenot =
      if some parent of a given path matches an {\\tt ignore} pattern, then 
      it will be skipped even if the path itself matches an {\\tt ignorenot}
      pattern.  In particular, putting {\\tt ignore = Path *} in your profile
-     and then using {\tt ignorenot} to select particular paths to be 
+     and then using {\\tt ignorenot} to select particular paths to be 
      synchronized will not work.  Instead, you should use the {\\tt path}
      preference to choose particular paths to synchronize.")
     
 let shouldIgnore p =
   let p = Path.toString p in
-  (Pred.test ignore p) && not (Pred.test ignorenot p) 
+  (Pred.test ignorePred p) && not (Pred.test ignorenotPred p) 
 
 let addRegexpToIgnore re =
-  let oldRE = Pred.extern ignore in
+  let oldRE = Pred.extern ignorePred in
   let newRE = re::oldRE in
-  Pred.intern ignore newRE
+  Pred.intern ignorePred newRE
 
 let merge = 
   Pred.create "merge" ~advanced:true
@@ -288,3 +289,18 @@ let someHostIsRunningWindows =
 
 let allHostsAreRunningWindows =
   Prefs.createBool "allHostsAreRunningWindows" false "*" ""
+
+let fatFilesystem =
+  Prefs.createBool "fat" ~local:true false
+    "use appropriate options for FAT filesystems"
+    ("When this is set to {\\tt true}, Unison will use appropriate options \
+      to synchronize efficiently and without error a replica located on a \
+      FAT filesystem on a non-Windows machine: \
+      do not synchronize permissions ({\\tt perms = 0}); \
+      never use chmod ({\tt dontchmod = true}); \
+      treat filenames as case insensitive ({\\tt ignorecase = true}); \
+      do not attempt to synchronize symbolic links ({\\tt links = false}); \
+      ignore inode number changes when detecting updates \
+      ({\\tt ignoreinodenumbers = true}).  \
+      Any of these change can be overridden by explicitely setting \
+      the corresponding preference in the profile.")

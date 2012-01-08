@@ -37,6 +37,16 @@ all:: strings.ml buildexecutable
 
 all:: INSTALL
 
+.PHONY: all clean install doinstall installtext text \
+	setupdemo-old setupdemo modifydemo demo \
+	run runbatch runt rundebug runp runtext runsort runprefer \
+	prefsdocs runtest repeattest \
+	selftest selftestdebug selftestremote testmerge \
+	checkin installremote
+
+.DELETE_ON_ERROR:
+# to avoid problems when e.g. mkProjectInfo fails to run
+
 INSTALL: $(NAME)$(EXEC_EXT)
 # file isn't made for OS X, so check that it's there first
 	(if [ -f $(NAME) ]; then ./$(NAME) -doc install > INSTALLATION; fi)
@@ -50,11 +60,13 @@ STATIC=false
 # NAME, VERSION, and MAJORVERSION, automatically generated
 -include Makefile.ProjectInfo
 
-Makefile.ProjectInfo: mkProjectInfo
+Makefile.ProjectInfo: mkProjectInfo $(wildcard ../.bzr/branch/last-revision)
 	./mkProjectInfo > $@
+# BCP (4/11): simplified from this:
+#	ocaml str.cma unix.cma ./mkProjectInfo.ml > $@
 
 mkProjectInfo: mkProjectInfo.ml
-	ocamlc -o $@ $^
+	ocamlc -o $@ unix.cma str.cma $^
 
 clean::
 	$(RM) mkProjectInfo
@@ -200,7 +212,7 @@ prefsdocs: all
 
 # For developers 
 runtest:
-	$(MAKE) all NATIVE=false DEBUG=true
+	$(MAKE) NATIVE=false DEBUG=true text
 	./unison test
 
 repeattest:
@@ -334,7 +346,9 @@ testmerge:
 .PHONY: tags
 
 tags:
-	-$(ETAGS) *.mli */*.mli *.ml */*.ml */*.m *.c */*.c *.txt
+	-if [ -f `which $(ETAGS)` ]; then \
+	    $(ETAGS) *.mli */*.mli *.ml */*.ml */*.m *.c */*.c *.txt \
+          ; fi 
 
 all:: TAGS
 

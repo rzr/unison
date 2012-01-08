@@ -5,6 +5,11 @@
 ####################################################################
 ### Try to automatically guess OS
 
+ifeq (${OSCOMP},cross) # Cross-compilation under Linux
+  OSARCH=win32gnuc
+  PATH := /usr/i586-mingw32msvc/bin:$(PATH)
+endif
+
 ifeq (${OSCOMP},cygwingnuc) # Define this if compiling with Cygwin GNU C
   OSARCH=win32gnuc
   ETAGS=/bin/etags
@@ -46,21 +51,23 @@ endif
 # to Unix '/' separators, and extraneous control-M's are deleted.
 # Unfortunately there is a literal control-M buried in this, I'd rather
 # get rid of it...
-# OCAMLLIBDIR=$(shell ocamlc -v | tail -n -1 | sed -e 's/.* //g' | sed -e 's/\\/\//g' | sed -e 's///g')
-# Better(?) version, June 2005:
-OCAMLLIBDIR=$(shell ocamlc -v | tail -n -1 | sed -e 's/.* //g' | sed -e 's/\\/\//g' | tr -d '\r')
-
-## BCP (6/05) an alternative, but not quite working, version
-## suggested by Nick Montfort:
+# OCAMLLIBDIR=$(shell ocamlc -v | tail -1 | sed -e 's/.* //g' | sed -e 's/\\/\//g' | sed -e 's///g')
+# BCP (6/05) an alternative, but not quite working, version
+# suggested by Nick Montfort:
 # OCAMLLIBDIR=$(shell ocamlc -v | sed -n '$p' | sed -e 's/^Standard library directory: //' | sed -e 's/\\/\//g' | sed -e 's/\r//g')
+# Better(?) version, June 2005:
+# OCAMLLIBDIR=$(shell ocamlc -v | tail -1 | sed -e 's/.* //g' | sed -e 's/\\/\//g' | tr -d '\r')
+# Another try, Feb 2011, suggested by Ron Isaacson
+OCAMLLIBDIR=$(shell ocamlc -v | tail -1 | sed -e 's/.* //g' | tr '\\' '/' | tr -d '\r')
 
 # User interface style:
 #   Legal values are
 #     UISTYLE=text
 #     UISTYLE=gtk
 #     UISTYLE=gtk2
-#     UISTYLE=mac     (old and limited, but working)
-#     UISTYLE=macnew  (spiffy, but not yet extensively tested)
+#     UISTYLE=mac       (old and limited, but working)
+#     UISTYLE=macnew    (spiffier)
+#     UISTYLE=macnew09  (even spiffier, but not yet extensively tested)
 #
 # This should be set to an appropriate value automatically, depending
 # on whether the lablgtk library is available
@@ -83,13 +90,15 @@ buildexecutable::
 ####################################################################
 ### Default parameters
 
-INCLFLAGS=-I lwt -I ubase
+INCLFLAGS=-I lwt -I ubase -I system
 CAMLFLAGS+=$(INCLFLAGS)
+CAMLFLAGS+=-I system/$(SYSTEM) -I lwt/$(SYSTEM)
 
 ifeq ($(OSARCH),win32)
   # Win32 system
   EXEC_EXT=.exe
   OBJ_EXT=.obj
+  OUTPUT_SEL=/Fo
   CWD=.
 #  Fix suggested by Karl M, Jan 2009:
 #    "The new flexlink wrapper that OCaml 3.11 uses was gagging on the res
@@ -98,22 +107,32 @@ ifeq ($(OSARCH),win32)
 #    issue."
 #  CLIBS+=-cclib win32rc/unison.res
 #  STATICLIBS+=-cclib win32rc/unison.res
-  CLIBS+=-cclib "-link win32rc/unison.res"
-  STATICLIBS+=-cclib "-link win32rc/unison.res"
+  COBJS+=system/system_win_stubs$(OBJ_EXT) lwt/lwt_unix_stubs$(OBJ_EXT)
+  WINOBJS=system/system_win.cmo
+  SYSTEM=win
+  CLIBS+=-cclib "-link win32rc/unison.res" shell32.lib
+  STATICLIBS+=-cclib "-link win32rc/unison.res" shell32.lib
   buildexecutable::
 	@echo Building for Windows
 else
   # Unix system, or Cygwin with GNU C compiler
   OBJ_EXT=.o
-  CWD=$(shell pwd)
+  OUTPUT_SEL="-o "
   ifeq ($(OSARCH),win32gnuc)
+    CWD=.
     EXEC_EXT=.exe
+    COBJS+=system/system_win_stubs$(OBJ_EXT) lwt/lwt_unix_stubs$(OBJ_EXT)
+    WINOBJS=system/system_win.cmo
+    SYSTEM=win
     CLIBS+=-cclib win32rc/unison.res.lib
     STATIC=false                      # Cygwin is not MinGW :-(
     buildexecutable::
 	@echo Building for Windows with Cygwin GNU C
   else
+    CWD=$(shell pwd)
     EXEC_EXT=
+    WINOBJS=
+    SYSTEM=generic
     # openpty is in the libutil library
     ifneq ($(OSARCH),solaris)
       ifneq ($(OSARCH),osx)
@@ -125,6 +144,7 @@ else
   endif
 endif
 
+.PHONY: buildexecutable
 buildexecutable::
 	@echo NATIVE = $(NATIVE)
 	@echo THREADS = $(THREADS)
@@ -132,7 +152,7 @@ buildexecutable::
 	@echo OSTYPE = $(OSTYPE)
 	@echo OSARCH = $(OSARCH)
 
-ubase/projectInfo.ml: mkProjectInfo
+ubase/projectInfo.ml: Makefile.ProjectInfo
 	echo 'let myName = "'$(NAME)'";;' > $@
 	echo 'let myVersion = "'$(VERSION)'";;' >> $@
 	echo 'let myMajorVersion = "'$(MAJORVERSION)'";;' >> $@
@@ -151,18 +171,28 @@ ifeq ($(UISTYLE),macnew)
   buildexecutable:: macexecutable
   UIMACDIR=uimacnew
 else
+ifeq ($(UISTYLE),macnew09)
+  buildexecutable:: macexecutable
+  UIMACDIR=uimacnew09
+else
   buildexecutable:: $(NAME)$(EXEC_EXT)
 endif
 endif
+endif
 
-MINOSXVERSION=10.4
+MINOSXVERSION=10.5
+# XCODEFLAGS=-sdk macosx$(MINOSXVERSION)
+ifeq ($(OSARCH),osx)
+  CAMLFLAGS+=-ccopt -mmacosx-version-min=$(MINOSXVERSION)
+endif
 
 # NOTE: the OCAMLLIBDIR is not getting passed correctly?
 # The two cases for cltool are needed because Xcode 2.1+
 # builds in build/Default/, and earlier versions use build/
-macexecutable: $(NAME)-blob.o
+.PHONY: macexecutable
+macexecutable: 
 #	sed -e's/@@VERSION@@/$(VERSION)/' $(UIMACDIR)/Info.plist.template > $(UIMACDIR)/Info.plist
-	(cd $(UIMACDIR); xcodebuild OCAMLLIBDIR="$(OCAMLLIBDIR)" SYMROOT=build)
+	(cd $(UIMACDIR); xcodebuild $(XCODEFLAGS) OCAMLLIBDIR="$(OCAMLLIBDIR)" SYMROOT=build)
 	if [ -e $(UIMACDIR)/build/Default ]; then \
 	  gcc -mmacosx-version-min=$(MINOSXVERSION) $(UIMACDIR)/cltool.c -o $(UIMACDIR)/build/Default/Unison.app/Contents/MacOS/cltool -framework Carbon; \
 	else \
@@ -173,19 +203,27 @@ macexecutable: $(NAME)-blob.o
 # File extensions will be substituted for the native code version
 
 OCAMLOBJS += \
+          ubase/rx.cmo \
+	  \
+          unicode_tables.cmo unicode.cmo bytearray.cmo \
+          $(WINOBJS) system/system_generic.cmo \
+          system/$(SYSTEM)/system_impl.cmo \
+          system.cmo \
+          \
           ubase/projectInfo.cmo ubase/myMap.cmo ubase/safelist.cmo \
-          ubase/uprintf.cmo ubase/util.cmo ubase/rx.cmo ubase/uarg.cmo \
-          ubase/prefs.cmo ubase/trace.cmo \
+          ubase/uprintf.cmo ubase/util.cmo ubase/uarg.cmo \
+          ubase/prefs.cmo ubase/trace.cmo ubase/proplist.cmo \
           \
-          lwt/pqueue.cmo lwt/lwt.cmo lwt/lwt_util.cmo lwt/lwt_unix.cmo \
+          lwt/pqueue.cmo lwt/lwt.cmo lwt/lwt_util.cmo \
+          lwt/$(SYSTEM)/lwt_unix_impl.cmo lwt/lwt_unix.cmo \
           \
-          bytearray.cmo case.cmo pred.cmo uutil.cmo \
-          fileutil.cmo name.cmo path.cmo fspath.cmo fingerprint.cmo \
+          case.cmo pred.cmo uutil.cmo \
+          fileutil.cmo name.cmo path.cmo fspath.cmo fs.cmo fingerprint.cmo \
           abort.cmo osx.cmo external.cmo \
           props.cmo fileinfo.cmo os.cmo lock.cmo clroot.cmo common.cmo \
           tree.cmo checksum.cmo terminal.cmo \
-          transfer.cmo xferhint.cmo remote.cmo globals.cmo copy.cmo \
-          stasher.cmo update.cmo \
+          transfer.cmo xferhint.cmo remote.cmo globals.cmo \
+          fpcache.cmo update.cmo copy.cmo stasher.cmo \
 	  files.cmo sortri.cmo recon.cmo transport.cmo \
           strings.cmo uicommon.cmo uitext.cmo test.cmo
 
@@ -212,6 +250,14 @@ endif
 
 ## New Mac UI
 ifeq ($(UISTYLE),macnew)
+  OCAMLOBJS+=uimacbridgenew.cmo
+  THREADS=true
+  OCAMLLIBS+=threads.cma
+  INCLFLAGS+=-thread 
+endif
+
+## New Mac UI, 2009 version
+ifeq ($(UISTYLE),macnew09)
   OCAMLOBJS+=uimacbridgenew.cmo
   THREADS=true
   OCAMLLIBS+=threads.cma
@@ -255,7 +301,7 @@ endif
 ### Static build setup
 
 ifeq ($(STATIC), true)
-  STATICLIBS+=-cclib -static
+  CFLAGS+=-cclib -static
 endif
 
 ####################################################################
@@ -263,6 +309,11 @@ endif
 
 # Include an automatically generated list of dependencies
 include .depend
+# Additional dependencied depending on the system
+system.cmo fspath.cmo fs.cmo: system/$(SYSTEM)/system_impl.cmo
+system.cmx fspath.cmx fs.cmx: system/$(SYSTEM)/system_impl.cmx
+lwt/lwt_unix.cmo: lwt/$(SYSTEM)/lwt_unix_impl.cmo
+lwt/lwt_unix.cmx: lwt/$(SYSTEM)/lwt_unix_impl.cmx
 
 ifeq ($(OSARCH), OpenBSD)
   ifeq ($(shell echo type ocamldot | ksh), file)
@@ -281,7 +332,7 @@ endif
 # Rebuild dependencies (must be invoked manually)
 .PHONY: depend
 depend::
-	ocamldep $(INCLFLAGS) *.mli *.ml */*.ml */*.mli > .depend
+	ocamldep $(INCLFLAGS) *.mli *.ml */*.ml */*.mli */*/*.ml */*/*.mli > .depend
 ifdef OCAMLDOT
 	echo 'digraph G {' > dot.tmp
 	echo '{ rank = same; "Fileinfo"; "Props"; "Fspath"; "Os"; "Path"; }'\
@@ -341,6 +392,9 @@ else
 
 endif
 
+win32rc/unison.res: win32rc/unison.rc win32rc/U.ico
+	windres win32rc/unison.rc win32rc/unison.res
+
 win32rc/unison.res.lib: win32rc/unison.res
 	windres win32rc/unison.res win32rc/unison.res.lib
 
@@ -362,19 +416,27 @@ win32rc/unison.res.lib: win32rc/unison.res
 
 %.o %.obj: %.c
 	@echo "$(OCAMLOPT): $< ---> $@"
-	$(CAMLC) $(CAMLFLAGS) -c $(CWD)/$<
+	$(CAMLC) $(CAMLFLAGS) -ccopt $(OUTPUT_SEL)$(CWD)/$@ -c $(CWD)/$<
 
 $(NAME)$(EXEC_EXT): $(CAMLOBJS) $(COBJS)
 	@echo Linking $@
-	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $(CLIBS) $^
+	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $^ $(CLIBS)
 
 # Unfortunately -output-obj does not put .o files into the output, only .cmx
 # files, so we have to use $(LD) to take care of COBJS.
 $(NAME)-blob.o: $(CAMLOBJS) $(COBJS)
 	@echo Linking $@
-	$(CAMLC) -output-obj -verbose $(CAMLFLAGS) -o u-b.o $(CFLAGS) $(CAMLLIBS) $(CLIBS) $(CAMLOBJS)
-	$(LD) -r -o $@ u-b.o $(COBJS)
+	$(CAMLC) -dstartup -output-obj -verbose -cclib -keep_private_externs $(CAMLFLAGS) -o u-b.o $(CFLAGS) $(CAMLLIBS) $(CLIBS) $(CAMLOBJS)
+	$(LD) -r -keep_private_externs -o $@ u-b.o $(COBJS)
 	$(RM) u-b.o
+
+
+# Original:
+# $(NAME)-blob.o: $(CAMLOBJS) $(COBJS)
+# 	@echo Linking $@
+# 	$(CAMLC) -output-obj -verbose $(CAMLFLAGS) -o u-b.o $(CFLAGS) $(CAMLLIBS) $(CLIBS) $(CAMLOBJS)
+# 	$(LD) -r -o $@ u-b.o $(COBJS)
+# 	$(RM) u-b.o
 
 %$(EXEC_EXT): %.ml
 	$(OCAMLC) -verbose -o $@ $^
@@ -387,7 +449,11 @@ clean::
 	-$(RM) -r *.o core gmon.out *~ .*~
 	-$(RM) -r *.obj *.lib *.exp
 	-$(RM) -r *.tmp *.bak?.tmp .*.bak?.tmp
+	-$(RM) system/*.cm[iox] system/*.{o,obj} system/win/*~
+	-$(RM) system/generic/*.cm[iox] system/generic/*.{o,obj} system/generic/*~
+	-$(RM) system/win/*.cm[iox] system/win/*.{o,obj} system/win/*~
 
+.PHONY: paths
 paths:
 	@echo PATH = $(PATH)
 	@echo OCAMLLIBDIR = $(OCAMLLIBDIR)

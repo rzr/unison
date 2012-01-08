@@ -1,3 +1,20 @@
+(* Unison file synchronizer: src/terminal.ml *)
+(* Copyright 1999-2009, Benjamin C. Pierce 
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*)
+
 (* Parsing messages from OpenSSH *)
 (* Examples.
 
@@ -60,7 +77,7 @@ let ptyMasterOpen () =
         x.[9] <- a2.(j);
         let fdOpt =
           try Some(Unix.openfile x [Unix.O_RDWR] 0)
-          with _ -> None in
+          with Unix.Unix_error _ -> None in
         match fdOpt with None -> ()
         | Some fdMaster ->
           x.[5] <- 't';
@@ -75,7 +92,7 @@ let ptySlaveOpen = function
   | Some(fdMaster,ttySlave) ->
       let slave =
         try Some (Unix.openfile ttySlave [Unix.O_RDWR] 0o600)
-        with _ -> None in
+        with Unix.Unix_error _ -> None in
       (try Unix.close fdMaster with Unix.Unix_error(_,_,_) -> ());
       slave
 
@@ -166,7 +183,7 @@ let create_session cmd args new_stdin new_stdout new_stderr =
   match openpty () with
     None ->
       (None,
-       Unix.create_process cmd args new_stdin new_stdout new_stderr)
+       System.create_process cmd args new_stdin new_stdout new_stderr)
   | Some (masterFd, slaveFd) ->
 (*
       Printf.printf "openpty returns %d--%d\n" (dumpFd fdM) (dumpFd fdS); flush stdout;
@@ -185,48 +202,48 @@ let create_session cmd args new_stdin new_stdout new_stderr =
             Unix.tcsetattr slaveFd Unix.TCSANOW tio;
             perform_redirections new_stdin new_stdout new_stderr;
             Unix.execvp cmd args (* never returns *)
-          with _ ->
+          with Unix.Unix_error _ ->
             Printf.eprintf "Some error in create_session child\n";
             flush stderr;
             exit 127
           end
       | childPid ->
-          Unix.close slaveFd;
-          (Some masterFd, childPid)
+(*JV: FIX: we are leaking a file descriptor here.  On the other hand,
+  we do not deal gracefully with lost connections anyway. *)
+          (* Keep a file descriptor so that we do not get EIO errors
+             when the OpenSSH 5.6 child process closes the file
+             descriptor before opening /dev/tty. *)
+          (* Unix.close slaveFd; *)
+          (Some (Lwt_unix.of_unix_file_descr masterFd), childPid)
       end
 
-let rec select a b c d =
-  try Unix.select a b c d
-  with Unix.Unix_error(Unix.EINTR,_,_) -> select a b c d
+let (>>=) = Lwt.bind
 
 (* Wait until there is input. If there is terminal input s,
    return Some s. Otherwise, return None. *)
 let rec termInput fdTerm fdInput =
-  let (ready,_,_) = select [fdTerm;fdInput] [] [] (-1.0) in
-  if not(Safelist.exists (fun x -> x=fdTerm) ready) then None else
-  (* there's input waiting on the terminal *)
-  (* read a line of input *)
-  let msg =
-    let n = 1024 in (* Assume length of input from terminal < n *)
-    let s = String.create n in
-    let howmany =
-      let rec loop() =
-        try Unix.read fdTerm s 0 n
-        with Unix.Unix_error(Unix.EINTR,_,_) -> loop() in
-      loop() in
-    if howmany <= 0 then "" else
-    String.sub s 0 howmany in
-  let len = String.length msg in
-  if len = 0 then None (* the terminal has been closed *)
-  else if len = 2 && msg.[0] = '\r' && msg.[1] = '\n' then
-    termInput fdTerm fdInput
-  else Some msg
-
-let (>>=) = Lwt.bind
+  let buf = String.create 10000 in
+  let rec readPrompt () =
+    Lwt_unix.read fdTerm buf 0 10000 >>= fun len ->
+    if len = 0 then
+      (* The remote end is dead *)
+      Lwt.return None
+    else
+      let query = String.sub buf 0 len in
+      if query = "\r\n" then
+        readPrompt ()
+      else
+        Lwt.return (Some query)
+  in
+  let connectionEstablished () =
+    Lwt_unix.wait_read fdInput >>= fun () -> Lwt.return None
+  in
+  Lwt_unix.run
+    (Lwt.choose
+       [readPrompt (); connectionEstablished ()])
 
 (* Read messages from the terminal and use the callback to get an answer *)
 let handlePasswordRequests fdTerm callback =
-  Unix.set_nonblock fdTerm;
   let buf = String.create 10000 in
   let rec loop () =
     Lwt_unix.read fdTerm buf 0 10000 >>= (fun len ->

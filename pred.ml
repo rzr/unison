@@ -28,7 +28,7 @@ type t =
     mutable default: string list;
     mutable last_pref : string list;
     mutable last_def : string list;
-    mutable last_mode : bool;
+    mutable last_mode : Case.mode;
     mutable compiled: Rx.t;
     mutable associated_strings : (Rx.t * string) list;
   }
@@ -36,7 +36,7 @@ type t =
 let error_msg s =
    Printf.sprintf "bad pattern: %s\n\
     A pattern must be introduced by one of the following keywords:\n\
- \032   Name, Path, or Regex." s
+ \032   Name, Path, BelowPath or Regex." s
 
 (* [select str [(p1, f1), ..., (pN, fN)] fO]: (roughly) *)
 (* match str with                                       *)
@@ -50,7 +50,9 @@ let rec select str l f =
   | (pref, g)::r ->
       if Util.startswith str pref then
         let l = String.length pref in
-        g (Util.trimWhitespace (String.sub str l (String.length str - l)))
+        let s =
+          Util.trimWhitespace (String.sub str l (String.length str - l)) in
+        g ((Case.ops())#normalizePattern s)
       else
         select str r f
 
@@ -78,6 +80,14 @@ let compile_pattern clause =
                         ^ "'Path' patterns may not begin with a slash; "
                         ^ "only relative paths are allowed."));
             Rx.globx str);
+         ("BelowPath ", fun str ->
+            if str<>"" && str.[0] = '/' then
+              raise (Prefs.IllegalValue
+                       ("Malformed pattern: "
+                        ^ "\"" ^ p ^ "\"\n"
+                        ^ "'BelowPath' patterns may not begin with a slash; "
+                        ^ "only relative paths are allowed."));
+            Rx.seq [Rx.globx str; Rx.rx "(/.*)?"]);
          ("Regex ", Rx.rx)]
         (fun str -> raise (Prefs.IllegalValue (error_msg p)))
     with
@@ -86,9 +96,9 @@ let compile_pattern clause =
     end in
   (compiled, v)
 
-let create name ?(advanced=false) fulldoc =
+let create name ?(local=false) ?(advanced=false) fulldoc =
   let pref = 
-    Prefs.create name []
+    Prefs.create name ~local []
       ((if advanced then "!" else "")
        ^ "add a pattern to the " ^ name ^ " list")
       fulldoc
@@ -97,7 +107,7 @@ let create name ?(advanced=false) fulldoc =
         string :: oldList)
       (fun l -> l) in
   {pref = pref; name = name;
-   last_pref = []; default = []; last_def = []; last_mode = false;
+   last_pref = []; default = []; last_def = []; last_mode = (Case.ops())#mode;
    compiled = Rx.empty; associated_strings = []} 
 
 let addDefaultPatterns p pats =
@@ -109,20 +119,24 @@ let recompile mode p =
   let pref = Prefs.read p.pref in
   let compiledList = Safelist.map compile_pattern (Safelist.append p.default pref) in
   let compiled = Rx.alt (Safelist.map fst compiledList) in
+  let handleCase rx =
+    if (Case.ops())#caseInsensitiveMatch then Rx.case_insensitive rx
+    else rx
+  in
   let strings = Safelist.filterMap
                   (fun (rx,vo) ->
                      match vo with
                        None -> None
-                     | Some v -> Some (rx,v))
+                     | Some v -> Some (handleCase rx,v))
                   compiledList in
-  p.compiled <- if mode then Rx.case_insensitive compiled else compiled;
+  p.compiled <- handleCase compiled;
   p.associated_strings <- strings;
   p.last_pref <- pref;
   p.last_def <- p.default;
   p.last_mode <- mode
 
 let recompile_if_needed p =
-  let mode = Case.insensitive () in
+  let mode = (Case.ops())#mode in
   if
     p.last_mode <> mode ||
     p.last_pref != Prefs.read p.pref ||
@@ -148,10 +162,17 @@ let extern_associated_strings p =
 
 let test p s =
   recompile_if_needed p;
-  let res = Rx.match_string p.compiled (Case.normalize s) in
+  let res = Rx.match_string p.compiled ((Case.ops())#normalizeMatchedString s) in
   debug (fun() -> Util.msg "%s '%s' = %b\n" p.name s res);
   res
 
 let assoc p s =
   recompile_if_needed p;
+  let s = (Case.ops())#normalizeMatchedString s in
   snd (Safelist.find (fun (rx,v) -> Rx.match_string rx s) p.associated_strings)
+
+let assoc_all p s =
+  recompile_if_needed p;
+  let s = (Case.ops())#normalizeMatchedString s in
+  Safelist.map snd
+    (Safelist.filter (fun (rx,v) -> Rx.match_string rx s) p.associated_strings)

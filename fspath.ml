@@ -28,12 +28,17 @@
 (*      All fspaths are absolute                                             *)
 (*                                                                         - *)
 
+module Fs = System_impl.Fs
+
 let debug = Util.debug "fspath"
-let debugverbose = Util.debug "fspath+"
+let debugverbose = Util.debug "fsspath+"
 
 type t = Fspath of string
 
 let toString (Fspath f) = f
+let toPrintString (Fspath f) = f
+let toDebugString (Fspath f) = String.escaped f
+let toSysPath (Fspath f) = System.fspathFromString f
 
 (* Needed to hack around some ocaml/Windows bugs, see comment at stat, below *)
 let winRootRx = Rx.rx "(([a-zA-Z]:)?/|//[^/]+/[^/]+/)"
@@ -60,18 +65,19 @@ let differentSuffix (Fspath f1) (Fspath f2) =
       (* differ                                                              *)
       let rec loop n =
         let i1 = len1-n in
-        if i1<0 then n+1 else
+        if i1<0 then n else
         let i2 = len2-n in
-        if i2<0 then n+1 else
+        if i2<0 then n else
         if compare (String.get f1 i1) (String.get f2 i2) = 0
         then loop (n+1)
         else n in
       loop 1 in
     let suffix f len =
+      if n > len then f else
       try
         let n' = String.rindex_from f (len-n) '/' in
         String.sub f (n'+1) (len-n'-1)
-      with _ -> f in
+      with Not_found -> f in
     let s1 = suffix f1 len1 in
     let s2 = suffix f2 len2 in
     (s1,s2)
@@ -84,13 +90,19 @@ let differentSuffix (Fspath f1) (Fspath f2) =
 let appleDouble (Fspath f) =
   if isRootDir f then raise(Invalid_argument "Fspath.appleDouble") else
   let len = String.length f in
-  let i = String.rindex f '/' in
-  let before = String.sub f 0 i in
-  let after = String.sub f (i+1) (len-i-1) in
-  Fspath(before^"/._"^after)
+  try
+    let i = 1 + String.rindex f '/' in
+    let res = String.create (len + 2) in
+    String.blit f 0 res 0 i;
+    res.[i] <- '.';
+    res.[i + 1] <- '_';
+    String.blit f i res (i + 2) (len - i);
+    Fspath res
+  with Not_found ->
+    assert false
 
 let rsrc (Fspath f) =
-  if isRootDir f then raise(Invalid_argument "Fspath.appleDouble") else
+  if isRootDir f then raise(Invalid_argument "Fspath.rsrc") else
   Fspath(f^"/..namedfork/rsrc")
 
 (* WRAPPED SYSTEM CALLS *)
@@ -131,10 +143,9 @@ let rsrc (Fspath f) =
      Unix.LargeFile.stat "c://" will fail.
    (The Unix version of ocaml handles either a trailing slash or no
    trailing slash.)
+
+Invariant on fspath will guarantee that argument is OK for stat
 *)
-(* Invariant on fspath will guarantee that argument is OK for stat           *)
-let stat (Fspath f) = Unix.LargeFile.stat f
-let lstat (Fspath f) = Unix.LargeFile.lstat f
 
 (* HACK:
    Under Windows 98,
@@ -148,13 +159,14 @@ let lstat (Fspath f) = Unix.LargeFile.lstat f
 
    Unix.opendir "c:" works as well, but, this refers to the current
    working directory AFAIK.
-*)
+
 let opendir (Fspath d) =
   if Util.osType<>`Win32 || not(isRootDir d) then Unix.opendir d else
   try
     Unix.opendir d
   with Unix.Unix_error _ ->
     Unix.opendir (d^"*")
+*)
 
 let child (Fspath f) n =
   (* Note, f is not "" by invariants on Fspath *)
@@ -228,12 +240,12 @@ let canonizeFspath p0 =
   let p = match p0 with None -> "." | Some "" -> "." | Some s -> s in
   let p' =
     begin
-      let original = Sys.getcwd() in
+      let original = Fs.getcwd() in
       try
         let newp =
-          (Sys.chdir p; (* This might raise Sys_error *)
-           Sys.getcwd()) in
-        Sys.chdir original;
+          (Fs.chdir p; (* This might raise Sys_error *)
+           Fs.getcwd()) in
+        Fs.chdir original;
         newp
       with
         Sys_error why ->
@@ -253,12 +265,12 @@ let canonizeFspath p0 =
                "Cannot find canonical name of root directory %s\n(%s)" p why));
           let parent = myDirname p in
           let parent' = begin
-            (try Sys.chdir parent with
+            (try Fs.chdir parent with
                Sys_error why2 -> raise (Util.Fatal (Printf.sprintf
                  "Cannot find canonical name of %s: unable to cd either to it\n
 (%s)\nor to its parent %s\n(%s)" p why parent why2)));
-            Sys.getcwd() end in
-          Sys.chdir original;
+            Fs.getcwd() end in
+          Fs.chdir original;
           let bn = Filename.basename p in
           if bn="" then parent'
           else toString(child (localString2fspath parent')
@@ -287,11 +299,9 @@ let canonizeFspath p0 =
 let canonize x =
   Util.convertUnixErrorsToFatal "canonizing path" (fun () -> canonizeFspath x)
 
-let concatToString fspath path = toString (concat fspath path)
-
 let maxlinks = 100
 let findWorkingDir fspath path =
-  let abspath = concatToString fspath path in
+  let abspath = toString (concat fspath path) in
   let realpath =
     if not (Path.followLink path) then abspath else
     let rec followlinks n p =
@@ -300,10 +310,10 @@ let findWorkingDir fspath path =
           (Util.Transient (Printf.sprintf
              "Too many symbolic links from %s" abspath));
       try
-        let link = Unix.readlink p in
+        let link = Fs.readlink p in
         let linkabs =
           if Filename.is_relative link then
-            Filename.concat (Filename.dirname p) link
+            Fs.fspathConcat (Fs.fspathDirname p) link
           else link in
         followlinks (n+1) linkabs
       with
@@ -322,3 +332,7 @@ let findWorkingDir fspath path =
         (myDirname realpath)
         p);
   (localString2fspath (myDirname realpath), Path.fromString p)
+
+let quotes (Fspath f) = Uutil.quotes f
+let compare (Fspath f1) (Fspath f2) = compare f1 f2
+let hash (Fspath f) = Hashtbl.hash f

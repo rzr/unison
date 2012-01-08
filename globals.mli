@@ -8,6 +8,7 @@
 (* line                                                                      *)
 val rawRoots : unit -> string list
 val setRawRoots : string list -> unit
+val rawRootPair : unit -> string * string
 
 (* Parse and canonize roots from their raw names                             *)
 val installRoots : (string -> string -> string) option -> unit Lwt.t
@@ -22,9 +23,12 @@ val roots : unit -> Common.root * Common.root
 (* same thing, as a list                                                     *)
 val rootsList : unit -> Common.root list
 
-(* same thing, but in a standard order and ensuring that the Local root, if  *)
-(* any, comes first                                                          *)
+(* same thing, but in a standard order and ensuring that a Local root        *)
+(* comes first                                                               *)
 val rootsInCanonicalOrder : unit -> Common.root list
+
+(* a local root *)
+val localRoot : unit -> Common.root
 
 (* Run a command on all roots                                                *)
 val allRootsIter :
@@ -73,6 +77,8 @@ val confirmBigDeletes : bool Prefs.t
 (* Predicates on paths *)
 val shouldIgnore : 'a Path.path -> bool
 val shouldMerge : 'a Path.path -> bool
+val ignorePred : Pred.t
+val ignorenotPred : Pred.t
 
 (* Be careful calling this to add new patterns to be ignored: Its value does NOT persist
    when a new profile is loaded, so it has to be called again whenever this happens. *)
@@ -84,3 +90,4 @@ val mergeCmdForPath : Path.t -> string
 (* Internal prefs, needed to know whether to do filenames checks *)
 val someHostIsRunningWindows : bool Prefs.t
 val allHostsAreRunningWindows : bool Prefs.t
+val fatFilesystem : bool Prefs.t

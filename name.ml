@@ -20,11 +20,7 @@
    INCREMENT "UPDATE.ARCHIVEFORMAT" *)
 type t = string
 
-let compare n1 n2 =
-  if Case.insensitive () then
-    Util.nocase_cmp (Case.normalize n1) (Case.normalize n2)
-  else
-    compare n1 n2
+let compare n1 n2 = (Case.ops())#compare n1 n2
 
 let eq a b = (0 = (compare a b))
 
@@ -41,5 +37,25 @@ let fromString s =
   (* We ought to consider further checks, e.g., in Windows, no colons *)
   s
 
-let hash n =
-  Hashtbl.hash (if Case.insensitive () then String.lowercase (Case.normalize n) else n)
+let hash n = (Case.ops())#hash n
+
+let normalize n = (Case.ops())#normalizeFilename n
+
+(****)
+
+let badEncoding s = (Case.ops())#badEncoding s
+
+(* Windows file naming conventions are descripted here:
+   <http://msdn.microsoft.com/en-us/library/aa365247(printer).aspx> *)
+let badWindowsFilenameRx =
+  Rx.case_insensitive
+    (Rx.rx
+       "(.*[\000-\031<>:\"/\\|?*].*)|\
+        ((con|prn|aux|nul|com[1-9]|lpt[1-9])(\\..*)?)|\
+        (.*[. ])")
+
+let badWindowsFilenameRelaxedRx =
+  Rx.case_insensitive (Rx.rx "(con|prn|aux|nul|com[1-9]|lpt[1-9])(\\..*)?")
+
+(* FIX: should also check for a max filename length, not sure how much *)
+let badFile s = Rx.match_string badWindowsFilenameRx s

@@ -32,6 +32,12 @@ val registerRootCmd :
      -> 'a                         (*    additional arguments *)
      -> 'b Lwt.t)                  (*    -> (suspended) result *)
 
+(* Test whether a command exits on some root *)
+val commandAvailable :
+  Common.root ->                   (* root *)
+  string ->                        (* command name *)
+  bool Lwt.t
+
 (* Enter "server mode", reading and processing commands from a remote
    client process until killed *)
 val beAServer : unit -> unit
@@ -94,7 +100,8 @@ val defaultMarshalingFunctions :
   ('a ->
    (Bytearray.t * int * int) list -> (Bytearray.t * int * int) list * int) *
   (Bytearray.t -> int -> 'b)
-val encodeInt : int -> Bytearray.t
+val intSize : int
+val encodeInt : int -> Bytearray.t * int * int
 val decodeInt : Bytearray.t -> int -> int
 val registerRootCmdWithConnection :
     string                          (* command name *)
@@ -103,3 +110,13 @@ val registerRootCmdWithConnection :
     -> Common.root                  (* other root *)
     -> 'a                           (* additional arguments *)
     -> 'b Lwt.t                     (* result *)
+
+val streamingActivated : bool Prefs.t
+
+val registerStreamCmd :
+  string ->
+  ('a ->
+   (Bytearray.t * int * int) list -> (Bytearray.t * int * int) list * int) *
+  (Bytearray.t -> int -> 'a) ->
+  (connection -> 'a -> unit) ->
+  connection -> (('a -> unit Lwt.t) -> 'b Lwt.t) -> 'b Lwt.t

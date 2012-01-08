@@ -20,6 +20,7 @@ module type FILESIZE = sig
   val dummy : t
   val add : t -> t -> t
   val sub : t -> t -> t
+  val ofFloat : float -> t
   val toFloat : t -> float
   val toString : t -> string
   val ofInt : int -> t
@@ -65,3 +66,6 @@ val readWriteBounded :
   -> Filesize.t
   -> (int -> unit)              (* progress notification *)
   -> unit
+
+(* Escape shell parameters *)
+val quotes : string -> string

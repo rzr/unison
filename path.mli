@@ -19,7 +19,7 @@ val isEmpty : local -> bool
 val child : 'a path -> Name.t -> 'a path
 val parent : local -> local
 val finalName : t -> Name.t option
-val deconstruct : t -> (Name.t * t) option
+val deconstruct : 'a path -> (Name.t * 'a path) option
 val deconstructRev : local -> (Name.t * local) option
 
 val fromString : string -> 'a path
@@ -31,9 +31,11 @@ val addSuffixToFinalName : local -> string -> local
 val addPrefixToFinalName : local -> string -> local
 
 val compare : t -> t -> int
+val equal : local -> local -> bool
 val hash : local -> int
 
 val followLink : local -> bool
+val followPred : Pred.t
 
-val magic : t -> local
-val magic' : local -> t
+val forceLocal : t -> local
+val makeGlobal : local -> t

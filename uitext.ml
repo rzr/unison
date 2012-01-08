@@ -25,12 +25,7 @@ let debug = Trace.debug "ui"
 
 let dumbtty =
   Prefs.createBool "dumbtty"
-    (match Util.osType with
-        `Unix ->
-          (try (Unix.getenv "EMACS" <> "") with
-           Not_found -> false)
-      | _ ->
-          true)
+    (try System.getenv "EMACS" <> "" with Not_found -> false)
     "!do not change terminal settings in text UI"
     ("When set to \\verb|true|, this flag makes the text mode user "
      ^ "interface avoid trying to change any of the terminal settings.  "
@@ -54,42 +49,41 @@ let silent =
 
 let cbreakMode = ref None
 
+(* FIX: this may also work with Cygwin, but someone needs to try it... *)
+let supportSignals = Util.osType = `Unix (*|| Util.isCygwin*)
+
 let rawTerminal () =
   match !cbreakMode with
-    None -> ()
-  | Some state ->
-      let newstate =
-        { state with Unix.c_icanon = false; Unix.c_echo = false;
-          Unix.c_vmin = 1 }
-      in
-      Unix.tcsetattr Unix.stdin Unix.TCSANOW newstate
+    None      -> ()
+  | Some funs -> funs.System.rawTerminal ()
 
 let defaultTerminal () =
   match !cbreakMode with
-    None       -> ()
-  | Some state ->
-      Unix.tcsetattr Unix.stdin Unix.TCSANOW state
-
+    None      -> ()
+  | Some funs -> funs.System.defaultTerminal ()
+ 
 let restoreTerminal() =
-  if Util.osType = `Unix && not (Prefs.read dumbtty) then
+  if supportSignals && not (Prefs.read dumbtty) then
     Sys.set_signal Sys.sigcont Sys.Signal_default;
   defaultTerminal ();
   cbreakMode := None
 
 let setupTerminal() =
-  if Util.osType = `Unix && not (Prefs.read dumbtty) then
+  if not (Prefs.read dumbtty) then
     try
-      cbreakMode := Some (Unix.tcgetattr Unix.stdin);
+      cbreakMode := Some (System.terminalStateFunctions ());
       let suspend _ =
         defaultTerminal ();
         Sys.set_signal Sys.sigtstp Sys.Signal_default;
         Unix.kill (Unix.getpid ()) Sys.sigtstp
       in
       let resume _ =
-        Sys.set_signal Sys.sigtstp (Sys.Signal_handle suspend);
+        if supportSignals then
+          Sys.set_signal Sys.sigtstp (Sys.Signal_handle suspend);
         rawTerminal ()
       in
-      Sys.set_signal Sys.sigcont (Sys.Signal_handle resume);
+      if supportSignals then
+        Sys.set_signal Sys.sigcont (Sys.Signal_handle resume);
       resume ()
     with Unix.Unix_error _ ->
       restoreTerminal ()
@@ -109,14 +103,27 @@ let displayWhenInteractive message =
   if not (Prefs.read Globals.batch) then alwaysDisplay message
 
 let getInput () =
-  if  !cbreakMode = None then
-    let l = input_line stdin in
-    if l="" then "" else String.sub l 0 1
-  else
-    let c = input_char stdin in
-    let c = if c='\n' then "" else String.make 1 c in
-    display c;
-    c
+  match !cbreakMode with
+    None ->
+      let l = input_line stdin in
+      if l="" then "" else String.sub l 0 1
+  | Some funs ->
+      let input_char () =
+        (* We cannot used buffered I/Os under Windows, as character
+           '\r' is not passed through (probably due to the code that
+           turns \r\n into \n) *)
+        let s = String.create 1 in
+        let n = Unix.read Unix.stdin s 0 1 in
+        if n = 0 then raise End_of_file;
+        if s.[0] = '\003' then raise Sys.Break;
+        s.[0]
+      in
+      funs.System.startReading ();
+      let c = input_char () in
+      funs.System.stopReading ();
+      let c = if c='\n' || c = '\r' then "" else String.make 1 c in
+      display c;
+      c
 
 let newLine () =
   if !cbreakMode <> None then display "\n"
@@ -156,14 +163,18 @@ let rec selectAction batch actions tryagain =
          actions;
        tryagainOrLoop())
     else
-      try find a actions () with Not_found ->
-        newLine ();
-        if a="" then
-          display ("No default command [type '?' for help]\n")
-        else
-          display ("Unrecognized command '" ^ String.escaped a
-                   ^ "': try again  [type '?' for help]\n");
-        tryagainOrLoop()
+      let action = try Some (find a actions) with Not_found -> None in
+      match action with
+        Some action ->
+          action ()
+      | None ->
+          newLine ();
+          if a="" then
+            display ("No default command [type '?' for help]\n")
+          else
+            display ("Unrecognized command '" ^ String.escaped a
+                     ^ "': try again  [type '?' for help]\n");
+          tryagainOrLoop()
   in
   doAction (match batch with
     None   ->
@@ -171,26 +182,45 @@ let rec selectAction batch actions tryagain =
       getInput ()
   | Some i -> i)
 
+let alwaysDisplayErrors prefix l =
+  List.iter
+    (fun err -> alwaysDisplay (Format.sprintf "%s%s\n" prefix err)) l
+
 let alwaysDisplayDetails ri =
-  alwaysDisplay ((Uicommon.details2string ri "  ") ^ "\n")
+  alwaysDisplay ((Uicommon.details2string ri "  ") ^ "\n");
+  match ri.replicas with
+    Problem _ ->
+      ()
+  | Different diff ->
+      alwaysDisplayErrors "[root 1]: " diff.errors1;
+      alwaysDisplayErrors "[root 2]: " diff.errors2
 
 let displayDetails ri =
   if not (Prefs.read silent) then alwaysDisplayDetails ri
 
 let displayri ri =
-  let s = Uicommon.reconItem2string Path.empty ri "" ^ "  " in
-  let s =
+  let (r1, action, r2, path) = Uicommon.reconItem2stringList Path.empty ri in
+  let forced =
     match ri.replicas with
-      Different(_,_,d,def) when !d<>def ->
-        let s = Util.replacesubstring s "<-?->" "<=?=>" in
-        let s = Util.replacesubstring s "---->" "====>" in
-        let s = Util.replacesubstring s "<----" "<====" in
-        s
-    | _ -> s in
+      Different diff -> diff.direction <> diff.default_direction
+    | Problem _      -> false
+  in
+  let (defaultAction, forcedAction) =
+    match action with
+      Uicommon.AError      -> ("error", "error")
+    | Uicommon.ASkip _     -> ("<-?->", "<=?=>")
+    | Uicommon.ALtoR false -> ("---->", "====>")
+    | Uicommon.ALtoR true  -> ("--?->", "==?=>")
+    | Uicommon.ARtoL false -> ("<----", "<====")
+    | Uicommon.ARtoL true  -> ("<-?--", "<=?==")
+    | Uicommon.AMerge      -> ("<-M->", "<=M=>")
+  in
+  let action = if forced then forcedAction else defaultAction in
+  let s = Format.sprintf "%s %s %s   %s  " r1 action r2 path in
   match ri.replicas with
     Problem _ ->
       alwaysDisplay s
-  | Different (_,_,d,_) when !d=Conflict ->
+  | Different {direction = d} when d=Conflict ->
       alwaysDisplay s
   | _ ->
       display s
@@ -215,18 +245,18 @@ let interact rilist =
           begin match !Prefs.profileName with None -> assert false |
             Some(n) ->
               display ("  To un-ignore, edit "
-                       ^ (Prefs.profilePathname n)
+                       ^ System.fspathToPrintString (Prefs.profilePathname n)
                        ^ " and restart " ^ Uutil.myName ^ "\n") end;
           let nukeIgnoredRis =
-            Safelist.filter (fun ri -> not (Globals.shouldIgnore ri.path)) in
+            Safelist.filter (fun ri -> not (Globals.shouldIgnore ri.path1)) in
           loop (nukeIgnoredRis (ri::prev)) (nukeIgnoredRis ril) in
         (* This should work on most terminals: *)
         let redisplayri() = overwrite (); displayri ri; display "\n" in
         displayri ri;
         match ri.replicas with
           Problem s -> display "\n"; display s; display "\n"; next()
-        | Different(rc1,rc2,dir,_) ->
-            if Prefs.read Uicommon.auto && !dir<>Conflict then begin
+        | Different ({rc1 = rc1; rc2 = rc2; direction = dir} as diff) ->
+            if Prefs.read Uicommon.auto && dir<>Conflict then begin
               display "\n"; next()
             end else
               let (descr, descl) =
@@ -243,14 +273,14 @@ let interact rilist =
               end;
               selectAction
                 (if Prefs.read Globals.batch then Some " " else None)
-                [((if !dir=Conflict && not (Prefs.read Globals.batch)
+                [((if dir=Conflict && not (Prefs.read Globals.batch)
                      then ["f"]  (* Offer no default behavior if we've got
                                     a conflict and we're in interactive mode *)
                      else ["";"f";" "]),
                   ("follow " ^ Uutil.myName ^ "'s recommendation (if any)"),
                   fun ()->
                     newLine ();
-                    if !dir = Conflict && not (Prefs.read Globals.batch)
+                    if dir = Conflict && not (Prefs.read Globals.batch)
                     then begin
                       display "No default action [type '?' for help]\n";
                       repeat()
@@ -259,22 +289,22 @@ let interact rilist =
                  (["I"],
                   ("ignore this path permanently"),
                   (fun () ->
-                     ignore (Uicommon.ignorePath ri.path) rest
+                     ignore (Uicommon.ignorePath ri.path1) rest
                        "this path"));
                  (["E"],
                   ("permanently ignore files with this extension"),
                   (fun () ->
-                     ignore (Uicommon.ignoreExt ri.path) rest
+                     ignore (Uicommon.ignoreExt ri.path1) rest
                        "files with this extension"));
                  (["N"],
                   ("permanently ignore paths ending with this name"),
                   (fun () ->
-                     ignore (Uicommon.ignoreName ri.path) rest
+                     ignore (Uicommon.ignoreName ri.path1) rest
                        "files with this name"));
                  (["m"],
                   ("merge the versions"),
                   (fun () ->
-                    dir := Merge;
+                    diff.direction <- Merge;
                     redisplayri();
                     next()));
                  (["d"],
@@ -284,11 +314,11 @@ let interact rilist =
                      Uicommon.showDiffs ri
                        (fun title text ->
                           try
-                            let pager = Sys.getenv "PAGER" in
+                            let pager = System.getenv "PAGER" in
                             restoreTerminal ();
-                            let out = Unix.open_process_out pager in
+                            let out = System.open_process_out pager in
                             Printf.fprintf out "\n%s\n\n%s\n\n" title text;
-                            let _ = Unix.close_process_out out in
+                            let _ = System.close_process_out out in
                             setupTerminal ()
                           with Not_found ->
                             Printf.printf "\n%s\n\n%s\n\n" title text)
@@ -332,19 +362,19 @@ let interact rilist =
                  (["/"],
                   ("skip"),
                   (fun () ->
-                    dir := Conflict;
+                    diff.direction <- Conflict;
                     redisplayri();
                     next()));
                  ([">";"."],
                   ("propagate from " ^ descr),
                   (fun () ->
-                    dir := Replica1ToReplica2;
+                    diff.direction <- Replica1ToReplica2;
                     redisplayri();
                     next()));
                  (["<";","],
                   ("propagate from " ^ descl),
                   (fun () ->
-                    dir := Replica2ToReplica1;
+                    diff.direction <- Replica2ToReplica1;
                     redisplayri();
                     next()))
                 ]
@@ -372,17 +402,34 @@ let verifyMerge title text =
     end else
       true
   end
-      
+
+type stateItem =
+  { mutable ri : reconItem;
+    mutable bytesTransferred : Uutil.Filesize.t;
+    mutable bytesToTransfer : Uutil.Filesize.t }
+
 let doTransport reconItemList =
+  let items =
+    Array.map
+      (fun ri ->
+         {ri = ri;
+          bytesTransferred = Uutil.Filesize.zero;
+          bytesToTransfer = Common.riLength ri})
+      (Array.of_list reconItemList)
+  in
+  let totalBytesTransferred = ref Uutil.Filesize.zero in
   let totalBytesToTransfer =
     ref
-      (Safelist.fold_left
-         (fun l ri -> Uutil.Filesize.add l (Common.riLength ri))
-         Uutil.Filesize.zero reconItemList) in
-  let totalBytesTransferred = ref Uutil.Filesize.zero in
+      (Array.fold_left
+         (fun s item -> Uutil.Filesize.add item.bytesToTransfer s)
+         Uutil.Filesize.zero items)
+  in
   let t0 = Unix.gettimeofday () in
-  let showProgress _ b _ =
-    totalBytesTransferred := Uutil.Filesize.add !totalBytesTransferred b;
+  let showProgress i bytes dbg =
+    let i = Uutil.File.toLine i in
+    let item = items.(i) in
+    item.bytesTransferred <- Uutil.Filesize.add item.bytesTransferred bytes;
+    totalBytesTransferred := Uutil.Filesize.add !totalBytesTransferred bytes;
     let v =
       (Uutil.Filesize.percentageOfTotalSize
          !totalBytesTransferred !totalBytesToTransfer)
@@ -403,48 +450,57 @@ let doTransport reconItemList =
 
   Transport.logStart ();
   let fFailedPaths = ref [] in
-  let uiWrapper ri f =
-    catch f
+  let fPartialPaths = ref [] in
+  let uiWrapper i item f =
+    Lwt.try_bind f
+      (fun () ->
+         if partiallyProblematic item.ri && not (problematic item.ri) then
+           fPartialPaths := item.ri.path1 :: !fPartialPaths;
+         Lwt.return ())
       (fun e ->
         match e with
           Util.Transient s ->
-            let m = "[" ^ (Path.toString ri.path)  ^ "]: " ^ s in
+            let rem =
+              Uutil.Filesize.sub
+                item.bytesToTransfer item.bytesTransferred
+            in
+            if rem <> Uutil.Filesize.zero then
+              showProgress (Uutil.File.ofLine i) rem "done";
+            let m = "[" ^ (Path.toString item.ri.path1)  ^ "]: " ^ s in
             alwaysDisplay ("Failed " ^ m ^ "\n");
-            fFailedPaths := ri.path :: !fFailedPaths;
+            fFailedPaths := item.ri.path1 :: !fFailedPaths;
             return ()
         | _ ->
             fail e) in
-  let counter = ref 0 in
-  let rec loop ris actions pRiThisRound =
-    match ris with
-      [] ->
-        actions
-    | ri :: rest when pRiThisRound ri ->
-        loop rest
-          (uiWrapper ri
-             (fun () -> (* We need different line numbers so that
-                           transport operations are aborted independently *)
-                        incr counter;
-                        Transport.transportItem ri
-                          (Uutil.File.ofLine !counter) verifyMerge)
-           :: actions)
-          pRiThisRound
-    | _ :: rest ->
-        loop rest actions pRiThisRound
+  let im = Array.length items in
+  let rec loop i actions pRiThisRound =
+    if i < im then begin
+      let item = items.(i) in
+      let actions =
+        if pRiThisRound item.ri then
+          uiWrapper i item
+            (fun () -> Transport.transportItem item.ri
+                         (Uutil.File.ofLine i) verifyMerge)
+          :: actions
+        else
+          actions
+      in
+      loop (i + 1) actions pRiThisRound
+    end else
+      actions
   in
   Lwt_unix.run
-    (let actions = loop reconItemList []
-        (fun ri -> not (Common.isDeletion ri)) in
-    Lwt_util.join actions);
+    (let actions = loop 0 [] (fun ri -> not (Common.isDeletion ri)) in
+     Lwt_util.join actions);
   Lwt_unix.run
-    (let actions = loop reconItemList [] Common.isDeletion in
-    Lwt_util.join actions);
+    (let actions = loop 0 [] Common.isDeletion in
+     Lwt_util.join actions);
   Transport.logFinish ();
 
   Uutil.setProgressPrinter (fun _ _ _ -> ());
   Util.set_infos "";
 
-  (Safelist.rev !fFailedPaths)
+  (Safelist.rev !fFailedPaths, Safelist.rev !fPartialPaths)
 
 let setWarnPrinterForInitialization()=
   Util.warnPrinter :=
@@ -486,8 +542,8 @@ let formatStatus major minor =
     s
 
 let rec interactAndPropagateChanges reconItemList
-            : bool * bool * (Path.t list)
-              (* anySkipped?, anyFailures?, failingPaths *) =
+            : bool * bool * bool * (Path.t list)
+              (* anySkipped?, anyPartial?, anyFailures?, failingPaths *) =
   let (proceed,newReconItemList) = interact reconItemList in
   let (updatesToDo, skipped) =
     Safelist.fold_left
@@ -499,20 +555,25 @@ let rec interactAndPropagateChanges reconItemList
     if not (Prefs.read Globals.batch || Prefs.read Trace.terse) then newLine();
     if not (Prefs.read Trace.terse) then Trace.status "Propagating updates";
     let timer = Trace.startTimer "Transmitting all files" in
-    let failedPaths = doTransport newReconItemList in
+    let (failedPaths, partialPaths) = doTransport newReconItemList in
     let failures = Safelist.length failedPaths in
+    let partials = Safelist.length partialPaths in
     Trace.showTimer timer;
     if not (Prefs.read Trace.terse) then Trace.status "Saving synchronizer state";
     Update.commitUpdates ();
     let trans = updatesToDo - failures in
     let summary =
       Printf.sprintf
-       "Synchronization %s at %s  (%d item%s transferred, %d skipped, %d failed)"
+       "Synchronization %s at %s  (%d item%s transferred, %s%d skipped, %d failed)"
        (if failures=0 then "complete" else "incomplete")
        (let tm = Util.localtime (Util.time()) in
         Printf.sprintf "%02d:%02d:%02d"
           tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec)
        trans (if trans=1 then "" else "s")
+       (if partials <> 0 then
+          Format.sprintf "%d partially transferred, " partials
+        else
+          "")
        skipped
        failures in
     Trace.log (summary ^ "\n");
@@ -521,15 +582,20 @@ let rec interactAndPropagateChanges reconItemList
         (fun ri ->
         if problematic ri then
           alwaysDisplayAndLog
-            ("  skipped: " ^ (Path.toString ri.path)))
+            ("  skipped: " ^ (Path.toString ri.path1)))
         newReconItemList;
+    if partials>0 then
+      Safelist.iter
+        (fun p ->
+           alwaysDisplayAndLog ("  partially transferred: " ^ Path.toString p))
+        partialPaths;
     if failures>0 then
       Safelist.iter
         (fun p -> alwaysDisplayAndLog ("  failed: " ^ (Path.toString p)))
         failedPaths;
-    (skipped > 0, failures > 0, failedPaths) in
+    (skipped > 0, partials > 0, failures > 0, failedPaths) in
+  if not !Update.foundArchives then Update.commitUpdates ();
   if updatesToDo = 0 then begin
-    display "No updates to propagate\n";
     (* BCP (3/09): We need to commit the archives even if there are
        no updates to propagate because some files (in fact, if we've
        just switched to DST on windows, a LOT of files) might have new
@@ -537,8 +603,10 @@ let rec interactAndPropagateChanges reconItemList
     (* JV (5/09): Don't save the archive in repeat mode as it has some
        costs and its unlikely there is much change to the archives in
        this mode. *)
-    if Prefs.read Uicommon.repeat = "" then Update.commitUpdates ();
-    (skipped > 0, false, [])
+    if !Update.foundArchives && Prefs.read Uicommon.repeat = "" then
+      Update.commitUpdates ();
+    display "No updates to propagate\n";
+    (skipped > 0, false, false, [])
   end else if proceed=ProceedImmediately then begin
     doit()
   end else begin
@@ -612,7 +680,7 @@ let synchronizeOnce() =
   Util.set_infos "";
 
   let (reconItemList, anyEqualUpdates, dangerousPaths) =
-    Recon.reconcileAll updates in
+    Recon.reconcileAll ~allowPartial:true updates in
 
   if reconItemList = [] then begin
     (if anyEqualUpdates then
@@ -623,9 +691,9 @@ let synchronizeOnce() =
     (Uicommon.perfectExit, [])
   end else begin
     checkForDangerousPath dangerousPaths;
-    let (anySkipped, anyFailures, failedPaths) =
+    let (anySkipped, anyPartial, anyFailures, failedPaths) =
       interactAndPropagateChanges reconItemList in
-    let exitStatus = Uicommon.exitCode(anySkipped,anyFailures) in
+    let exitStatus = Uicommon.exitCode(anySkipped || anyPartial,anyFailures) in
     (exitStatus, failedPaths)
   end
 
@@ -639,7 +707,8 @@ let watcherchan = ref None
 
 let suckOnWatcherFileLocal n =
   Util.convertUnixErrorsToFatal
-    ("Reading changes from watcher process in file " ^ n)
+    ("Reading changes from watcher process in file " ^
+     System.fspathToPrintString n)
     (fun () ->
        (* The main loop, invoked from two places below *)
        let rec loop ch =
@@ -661,15 +730,15 @@ let suckOnWatcherFileLocal n =
        (* Make sure there's a file to watch, then read from it *)
        match !watcherchan with
          None -> 
-           if Sys.file_exists n then begin
-             let ch = open_in n in
+           if System.file_exists n then begin
+             let ch = System.open_in_bin n in
              watcherchan := Some(ch);
              loop ch
            end else []
        | Some(ch) -> loop ch
       )
 
-let suckOnWatcherFileRoot: Common.root -> string -> (string list) Lwt.t =
+let suckOnWatcherFileRoot: Common.root -> System.fspath -> (string list) Lwt.t =
   Remote.registerRootCmd
     "suckOnWatcherFile"
     (fun (fspath, n) ->
@@ -681,8 +750,10 @@ let suckOnWatcherFiles n =
       Globals.allRootsMap (fun r -> suckOnWatcherFileRoot r n)))
 
 let synchronizePathsFromFilesystemWatcher () =
-  let watcherfilename = "" in
-  (* STOPPED HERE -- need to find the program using watcherosx preference and invoke it using a redirect to get the output into a temp file... *)
+  let watcherfilename = System.fspathFromString "" in
+  (* STOPPED HERE -- need to find the program using watcherosx preference
+     and invoke it (on both hosts, if there are two!) using a redirect to
+     get the output into a temp file... *)
   let rec loop failedPaths = 
     let newpaths = suckOnWatcherFiles watcherfilename in
     if newpaths <> [] then
@@ -738,14 +809,18 @@ let rec synchronizeUntilDone () =
     synchronizeUntilDone ()
   end
 
-let start _ =
+let start interface =
+  if interface <> Uicommon.Text then
+    Util.msg "This Unison binary only provides the text GUI...\n";
   begin try
     (* Just to make sure something is there... *)
     setWarnPrinterForInitialization();
     Uicommon.uiInit
       (fun s -> Util.msg "%s\n%s\n" Uicommon.shortUsageMsg s; exit 1)
       (fun s -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)
-      (fun () -> if not (Prefs.read silent)
+      (fun () -> setWarnPrinter();
+                 if Prefs.read silent then Prefs.set Trace.terse true;
+                 if not (Prefs.read silent)
                  then Util.msg "%s\n" (Uicommon.contactingServerMsg())) 
       (fun () -> Some "default")
       (fun () -> Util.msg "%s" Uicommon.shortUsageMsg; exit 1)
