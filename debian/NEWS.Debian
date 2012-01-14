@@ -1,3 +1,12 @@
+unison (2.40.63-1) experimental; urgency=low
+
+ This new version uses a protocol incompatible with the precedent one
+ (2.32.52) which was the version available in Debian 6.0 (a.k.a.
+ "Squeeze"). If you want to synchronize with the previous version of
+ Unison, use the unison2.32.52 package.
+
+ -- Stéphane Glondu <glondu@debian.org>  Sat, 14 Jan 2012 11:31:14 +0100
+
 unison (2.13.16-1) unstable; urgency=low
 
  As of version 2.10.2, the package use an alternative to let the user
