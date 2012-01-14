@@ -15,7 +15,7 @@ let save fn =
 let restore ?(ext="") (fn, tmp) =
   mv tmp (fn^ext)
 
-let fns = 
+let fns =
   [
     "debian/changelog";
     "debian/control";
@@ -25,18 +25,18 @@ let fns =
 let baks =
   List.rev_map save fns
 
-let () = 
-  try 
-    let cmd = 
+let () =
+  try
+    let cmd =
       "git merge "^(String.concat " " (List.tl (Array.to_list Sys.argv)))
     in
       prerr_endline ("Runnning "^cmd);
-      match Sys.command cmd with 
+      match Sys.command cmd with
         | 0 ->
             List.iter restore baks
         | n ->
-            Printf.eprintf 
-              "Command '%s' exited with code %d/n%!" 
+            Printf.eprintf
+              "Command '%s' exited with code %d/n%!"
               cmd
               n;
             List.iter (restore ~ext:".old") baks
