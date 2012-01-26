@@ -2,7 +2,8 @@ Source: unison2.32.52
 Section: utils
 Priority: optional
 Maintainer: Debian OCaml Maintainers <debian-ocaml-maint@lists.debian.org>
-Uploaders: Sylvain Le Gall <gildor@debian.org>
+Uploaders:
+ Stéphane Glondu <glondu@debian.org>
 Build-Depends: cdbs (>= 0.4.23),
  debhelper (>= 7),
  ocaml-nox (>= 3.10.0-8),
