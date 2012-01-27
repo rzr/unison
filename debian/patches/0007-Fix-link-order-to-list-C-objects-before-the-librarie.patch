@@ -1,0 +1,26 @@
+From: Colin Watson <cjwatson@ubuntu.com>
+Date: Fri, 27 Jan 2012 07:25:23 +0100
+Subject: Fix link order to list C objects before the libraries they require
+
+Author: Colin Watson <cjwatson@ubuntu.com>
+Forwarded: yes
+Last-Update: 2011-09-10
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=657423
+---
+ Makefile.OCaml |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/Makefile.OCaml b/Makefile.OCaml
+index 00d6756..0fec866 100644
+--- a/Makefile.OCaml
++++ b/Makefile.OCaml
+@@ -366,7 +366,7 @@ win32rc/unison.res.lib: win32rc/unison.res
+ 
+ $(NAME)$(EXEC_EXT): $(CAMLOBJS) $(COBJS)
+ 	@echo Linking $@
+-	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $(CLIBS) $^
++	$(CAMLC) -verbose $(CAMLFLAGS) -o $@ $(CFLAGS) $(CAMLLIBS) $^ $(CLIBS)
+ 
+ # Unfortunately -output-obj does not put .o files into the output, only .cmx
+ # files, so we have to use $(LD) to take care of COBJS.
+-- 

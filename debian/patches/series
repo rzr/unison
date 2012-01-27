@@ -4,3 +4,4 @@
 0004-Fix-silent-behaviour.patch
 0005-Fix-build-with-OCaml-3.12.patch
 0006-Fix-bad-interaction-with-OpenSSH-5.6.patch
+0007-Fix-link-order-to-list-C-objects-before-the-librarie.patch
