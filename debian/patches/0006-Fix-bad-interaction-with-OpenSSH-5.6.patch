@@ -1,6 +1,6 @@
 From: Stephane Glondu <steph@glondu.net>
 Date: Sun, 3 Apr 2011 11:44:19 +0200
-Subject: [PATCH] Fix bad interaction with OpenSSH 5.6
+Subject: Fix bad interaction with OpenSSH 5.6
 
 Origin: https://bugs.archlinux.org/task/20877
 Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=620031
