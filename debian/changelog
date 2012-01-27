@@ -1,3 +1,12 @@
+unison2.32.52 (2.32.52-5) unstable; urgency=low
+
+  * Remove unison-gtk alternative on uninstall (Closes: #656355)
+  * Fix link order to list C objects before the libraries they require
+    (Closes: #657423)
+  * Add myself to Uploaders, remove Sylvain
+
+ -- Stéphane Glondu <glondu@debian.org>  Fri, 27 Jan 2012 07:31:13 +0100
+
 unison2.32.52 (2.32.52-4) unstable; urgency=low
 
   * Team upload
