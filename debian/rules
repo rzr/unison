@@ -52,7 +52,7 @@ UNISON_GTK_ALTERNATIVE=$(if $(PACKAGE_VERSION),$(UNISON_GTK),unison-latest-stabl
 UNISON_GTK_VERSIONNO=unison-$(VERSIONNO)-gtk
 UNISON_GTK_VAR=$(call TR,$(UNISON_GTK))
 
-RENAME := debian/unison.1.in 
+RENAME := debian/unison.1.in
 RENAME += debian/unison.doc-base.in
 RENAME += debian/unison-gtk.menu.in
 RENAME += debian/unison-gtk.svg.in
@@ -83,12 +83,12 @@ UISTYLE := $(shell dpkg --compare-versions 2.10 ge $(VERSION) && echo gtk || ech
 
 DEB_INSTALL_DOCS_ALL := BUGS.txt TODO.txt unison-manual.txt -X unison.doc-base.in
 
-DEB_INSTALL_CHANGELOGS_ALL := NEWS 
+DEB_INSTALL_CHANGELOGS_ALL := NEWS
 
 #
 # Build unison
 #
- 
+
 configure::
 	cp config/Makefile.unix config/Makefile
 
@@ -205,7 +205,7 @@ common-binary-arch:: template
 # Rename and substitute files
 #
 
-unison-rename: unison-rename-stamp 
+unison-rename: unison-rename-stamp
 unison-rename-stamp: $(RENAME)
 	# Rename all the debhelper files needed and substitue the @XXX@
 	# string
@@ -214,7 +214,7 @@ unison-rename-stamp: $(RENAME)
 	  sed $(SED_REPLACE) $$i > "$(CURDIR)/$$DST"; \
 	done
 	
-	# We always need to rename the manual 
+	# We always need to rename the manual
 	cp '$(CURDIR)/debian/$(UNISON_PACKAGE).1' '$(CURDIR)/debian/$(UNISON).1'
 	# We copy unison.1 to unison-gtk.1
 	cp '$(CURDIR)/debian/$(UNISON).1' '$(CURDIR)/debian/$(UNISON_GTK).1'
@@ -227,7 +227,7 @@ clean::
 	  DST=`echo $$i | sed -e "s/unison/${UNISON_PACKAGE}/" -e "s/\\.in\\$$//"`; \
 	  $(RM) "$(CURDIR)/$$DST"; \
 	done
-	-$(RM) '$(CURDIR)/debian/$(UNISON).1' 
+	-$(RM) '$(CURDIR)/debian/$(UNISON).1'
 	-$(RM) '$(CURDIR)/debian/$(UNISON_GTK).1'
 	-$(RM) '$(CURDIR)/unison-rename-stamp'
 

@@ -2,15 +2,15 @@
 #load "str.cma"
 
 let option_no_arg opt hlp =
- List.iter print_endline 
+ List.iter print_endline
    [
      ".TP";
      ".B \\"^opt;
      hlp
    ]
 
-let option_arg opt arg hlp = 
- List.iter print_endline 
+let option_arg opt arg hlp =
+ List.iter print_endline
    [
      ".TP";
      ".B \\"^opt^" "^arg;
@@ -18,46 +18,46 @@ let option_arg opt arg hlp =
    ]
 
 let () =
-  let fn = 
+  let fn =
     Filename.temp_file "unison-" ".txt"
   in
     begin
-      try 
-        let cmd = 
+      try
+        let cmd =
           (String.concat " " (List.tl (Array.to_list Sys.argv)))^
           " -help > "^
           (Filename.quote fn)
         in
-          match Sys.command cmd with 
+          match Sys.command cmd with
             | 2 ->
                 begin
-                  let actions = 
+                  let actions =
                     (* *)
                     (List.map
                        (fun (s, f) -> Str.regexp s, f)
                        [
-                         " *\\(-[a-z_-]+\\) xxx +\\(.*\\)", 
-                         (fun s -> 
+                         " *\\(-[a-z_-]+\\) xxx +\\(.*\\)",
+                         (fun s ->
                             option_arg
                               (Str.matched_group 1 s)
                               "xxx"
                               (Str.matched_group 2 s));
 
-                         " *\\(-[a-z_-]+\\) n +\\(.*\\)", 
-                         (fun s -> 
+                         " *\\(-[a-z_-]+\\) n +\\(.*\\)",
+                         (fun s ->
                             option_arg
                               (Str.matched_group 1 s)
                               "n"
                               (Str.matched_group 2 s));
 
-                         " *\\(-[a-z_-]+\\) +\\(.*\\)", 
+                         " *\\(-[a-z_-]+\\) +\\(.*\\)",
                          (fun s ->
                             option_no_arg
                               (Str.matched_group 1 s)
                               (Str.matched_group 2 s));
                        ])
                     @
-                    (List.map 
+                    (List.map
                        (fun s -> Str.regexp s, ignore)
                        [
                          "Options:";
@@ -71,21 +71,21 @@ let () =
                     open_in fn
                   in
                     begin
-                      try 
-                        while true do 
+                      try
+                        while true do
                           let line =
                             input_line chn
                           in
-                            try 
+                            try
                               let (r, a) =
                                 List.find
-                                  (fun (r, a) -> 
+                                  (fun (r, a) ->
                                      Str.string_match r line 0)
                                   actions
                               in
                               let _b : bool =
                                 (* Ensure that we run string_match just
-                                   before calling a, to fill the good 
+                                   before calling a, to fill the good
                                    variable in Str
                                  *)
                                 Str.string_match r line 0
@@ -93,7 +93,7 @@ let () =
                                 a line
 
                             with Not_found ->
-                              failwith 
+                              failwith
                                 (Printf.sprintf
                                    "No matching regexp for '%s'"
                                    line)

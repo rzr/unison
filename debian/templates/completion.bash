@@ -27,7 +27,7 @@ _@UNISON_SELF_VAR@() {
         done
       fi
       COMPREPLY=( $( compgen -W '$profiles' -- $cur ) );
-    fi 
+    fi
 
     return 0
 }
