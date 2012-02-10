@@ -15,7 +15,7 @@ unison2.27.57 (2.27.57-3) unstable; urgency=low
   [ Stéphane Glondu ]
   * Team upload
   * Switch source package format to 3.0 (quilt)
-  * Add patch to fix build with OCaml 3.12 (Closes: #585453)
+  * Add patch to fix build with OCaml 3.12 (Closes: #585454)
   * Add "set -e" to maintainer scripts
   * Remove conflicts older than oldstable
   * Bump Standards-Version to 3.9.1
