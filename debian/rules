@@ -126,7 +126,7 @@ common-binary-arch:: debian/unison-manual.txt debian/unison.1.in
 #
 
 debian/$(UNISON_GTK_PACKAGE).png: debian/unison-gtk.svg.in
-	 rsvg -f png -w 32 -h 32 $^ $@
+	 rsvg-convert -f png -w 32 -h 32 -o $@ $^
 
 debian/$(UNISON_GTK_PACKAGE).xpm: debian/$(UNISON_GTK_PACKAGE).png
 	convert $^ $@
