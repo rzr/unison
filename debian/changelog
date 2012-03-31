@@ -1,3 +1,10 @@
+unison (2.40.63-3) unstable; urgency=low
+
+  * Suggest unison-all
+  * Use rsvg-convert instead of rsvg (Closes: #666312)
+
+ -- Stéphane Glondu <glondu@debian.org>  Sat, 31 Mar 2012 19:16:19 +0200
+
 unison (2.40.63-2) unstable; urgency=low
 
   * Remove unison-gtk alternative on uninstall (Closes: #657420)
