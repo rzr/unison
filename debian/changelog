@@ -1,3 +1,11 @@
+unison2.27.57 (2.27.57-7) unstable; urgency=low
+
+  * Suggest unison-all
+  * Use rsvg-convert instead of rsvg (Closes: #666314)
+  * Restrict debian/watch to versions 2.27.x
+
+ -- Stéphane Glondu <glondu@debian.org>  Sat, 31 Mar 2012 19:26:35 +0200
+
 unison2.27.57 (2.27.57-5) unstable; urgency=low
 
   * Add myself to Uploaders, remove Sylvain
