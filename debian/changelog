@@ -1,3 +1,10 @@
+unison (2.40.65-1) unstable; urgency=low
+
+  * New upstream release
+    - fix -doc option (Closes: #657496, LP: #949895)
+
+ -- Stéphane Glondu <glondu@debian.org>  Mon, 02 Apr 2012 17:55:06 +0200
+
 unison (2.40.63-3) unstable; urgency=low
 
   * Suggest unison-all
