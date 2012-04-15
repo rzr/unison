@@ -10,4 +10,4 @@ Abstract: Unison is a file-synchronization tool for Unix and
 Section: File Management
 
 Format: text
-Files: /usr/share/doc/@UNISON_PACKAGE@/unison-manual.txt
+Files: /usr/share/doc/@UNISON_PACKAGE@/unison-manual.txt.gz
