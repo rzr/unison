@@ -1,3 +1,10 @@
+unison (2.40.65-2.0~rzr1) lucid; urgency=low
+
+  * Non-maintainer upload.
+  * http://rzr.online.fr/q/harmattan
+
+ -- Philippe Coval <rzr@gna.org>  Wed, 29 Aug 2012 11:58:23 +0200
+
 unison (2.40.65-2) unstable; urgency=low
 
   * Refer to unison-manual.txt.gz in doc-base (Closes: #657496)
